@@ -114,6 +114,10 @@ class ShortcutLayer extends StatelessWidget {
       state.toggleLeft();
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.keyC && state.mode == ViewMode.grid) {
+      state.toggleCrop();
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.f5) {
       state.rescan();
       return KeyEventResult.handled;

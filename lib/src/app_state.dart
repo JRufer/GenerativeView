@@ -109,6 +109,10 @@ class AppState extends ChangeNotifier {
   double rightWidth = 380;
   bool prewarm = true;
 
+  /// Grid tiles either crop each image to fill its square or shrink it to
+  /// fit whole.
+  bool cropTiles = true;
+
   // ---------------------------------------------------------------- folders
 
   List<Place> places = const [];
@@ -155,6 +159,7 @@ class AppState extends ChangeNotifier {
     rightOpen = flag('right_open', rightOpen);
     recursive = flag('recursive', recursive);
     prewarm = flag('prewarm', prewarm);
+    cropTiles = flag('crop_tiles', cropTiles);
     sort = (saved['sort'] as String?) ?? sort;
 
     await loadPlaces();
@@ -455,6 +460,12 @@ class AppState extends ChangeNotifier {
     if (v == tileSize) return;
     tileSize = v;
     _save('tile_size', v.toStringAsFixed(0), debounce: true);
+    notifyListeners();
+  }
+
+  void toggleCrop() {
+    cropTiles = !cropTiles;
+    _save('crop_tiles', '$cropTiles');
     notifyListeners();
   }
 

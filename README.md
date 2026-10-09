@@ -8,7 +8,7 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 
 ## What it does
 
-- **Grid** of images and videos from a folder and, optionally, its sub-folders. Resize tiles with the slider, pinch, `Ctrl` + scroll or `Ctrl` `+`/`-`.
+- **Grid** of images and videos from a folder and, optionally, its sub-folders. Resize tiles with the slider, pinch, `Ctrl` + scroll or `Ctrl` `+`/`-`. The crop button (or `C`) switches tiles between cropped-to-fill and showing the whole image.
 - **Focus view**: double tap (or `Enter`) opens one image; swipe or use the arrow keys to move through the folder; pinch or `Ctrl` + scroll to zoom; double tap (or `Esc`) to go back.
 - **Metadata panel** on the right for the selected image: prompt, negative prompt, seed, model, LoRAs with weights, other models (VAE, text encoders, ControlNet, upscalers), sampler settings, the full ComfyUI node graph, and the raw JSON exactly as stored. Tap a value to copy it. "Copy as tags" gives `<lora:name:weight>`; "Copy all" gives every field as text.
 - **Search** across the folder as you type. It matches anywhere inside prompts, models, LoRAs, settings and file names.
@@ -43,6 +43,7 @@ Matching is case-insensitive and by substring, so `lond` finds `blonde`.
 | `Ctrl` `+` / `-` | tile size | |
 | `I` or `]` | toggle metadata panel | same |
 | `[` | toggle folder panel | |
+| `C` | thumbnails cropped to fill / whole image | |
 | `F5` | rescan the folder | |
 
 ### Metadata it reads
