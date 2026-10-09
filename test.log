@@ -1,0 +1,17 @@
+
+::group::✅ Passing tests
+✅ /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: packed query results decode lazily and exactly
+✅ /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generation info from the core's JSON
+✅ /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: formatting
+::endgroup::
+::group::✅ /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+GALLERY: 127 items, 30 thumbnails on screen after 614 ms
+GALLERY: "fennec model:flux" -> 8 items
+::endgroup::
+::group::✅ Passing tests
+✅ /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+✅ /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the grid follows files being added and removed
+✅ /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+::endgroup::
+
+🎉 7 tests passed.

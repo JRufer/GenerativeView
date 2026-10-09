@@ -1,0 +1,20 @@
+build/linux/x64/release/bundle:
+total 48
+drwxr-xr-x 5 runner runner  4096 Oct  9 18:00 .
+drwxr-xr-x 9 runner runner  4096 Oct  9 18:00 ..
+drwxr-xr-x 3 runner runner  4096 Oct  9 18:00 data
+-rwxr-xr-x 1 runner runner 24104 Oct  9 18:00 generativeview
+-rwxr-xr-x 1 runner runner  1663 Oct  9 18:00 install.sh
+drwxr-xr-x 2 runner runner  4096 Oct  9 18:00 lib
+drwxr-xr-x 2 runner runner  4096 Oct  9 18:00 share
+
+build/linux/x64/release/bundle/lib:
+total 31080
+drwxr-xr-x 2 runner runner     4096 Oct  9 18:00 .
+drwxr-xr-x 5 runner runner     4096 Oct  9 18:00 ..
+-rw-r--r-- 1 runner runner  6407048 Oct  9 18:00 libapp.so
+-rw-r--r-- 1 runner runner   157320 Oct  9 18:00 libdartjni.so
+-rw-r--r-- 1 runner runner 17218152 Oct  9 18:00 libflutter_linux_gtk.so
+-rw-r--r-- 1 runner runner  7958952 Oct  9 17:59 libgvcore.so
+-rw-r--r-- 1 runner runner    15744 Oct  9 18:00 libmedia_kit_libs_linux_plugin.so
+-rw-r--r-- 1 runner runner    47120 Oct  9 18:00 libmedia_kit_video_plugin.so

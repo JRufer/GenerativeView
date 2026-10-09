@@ -1,0 +1,24 @@
+Resolving dependencies...
+Downloading packages...
+  code_assets 1.2.1 (2.1.0 available)
++ file 7.0.1
++ flutter_driver 0.0.0 from sdk flutter
++ fuchsia_remote_debug_protocol 0.0.0 from sdk flutter
+  hooks 2.0.2 (2.2.0 available)
++ integration_test 0.0.0 from sdk flutter
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.2 available)
+  petitparser 7.0.2 (7.1.0 available)
++ process 5.0.6
+  record_use 0.6.0 (1.1.1 available)
++ sync_http 0.3.1
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.3 available)
++ webdriver 3.2.0
+  xml 7.0.1 (7.1.0 available)
+These packages are no longer being depended on:
+- cupertino_icons 1.0.9
+Changed 8 dependencies!
+10 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.

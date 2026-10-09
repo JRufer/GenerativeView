@@ -1,0 +1,29 @@
+
+Building Linux application...                                   
+✓ Built build/linux/x64/debug/bundle/generativeview
+::group::✅ index a folder, browse it, read metadata, follow changes
+media_kit: NativeReferenceHolder: Allocated 94608983078432
+VideoOutput.Resize
+{handle: 94608998443680, id: 94609000091504, rect: {left: 0, top: 0, width: 1, height: 1}}
+NativeVideoController: Texture ID: 94609000091504
+video playing: false
+video duration: 0:00:00.000000
+video log: [playlist] Reading plaintext playlist.
+video playing: true
+video log: [ffmpeg] AVHWDeviceContext: Cannot load libcuda.so.1
+video log: [ffmpeg] AVHWDeviceContext: Could not dynamically load CUDA
+video log: [vaapi] libva: vaGetDriverNames() failed with unknown libva error
+video duration: 0:00:01.000000
+video log: [ffmpeg] AVHWDeviceContext: Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER
+video log: [ffmpeg] AVHWDeviceContext: Cannot load libcuda.so.1
+video log: [ffmpeg] AVHWDeviceContext: Could not dynamically load CUDA
+video log: [ffmpeg/video] h264_v4l2m2m: Could not find a valid device
+video log: [ffmpeg/video] h264_v4l2m2m: can't configure decoder
+video log: [vd] Could not open codec.
+video: Could not open codec.
+VIDEO: failure banner shown = false
+VideoOutput.Resize
+{handle: 94608998443680, id: 94609000091504, rect: {left: 0, top: 0, width: 64, height: 48}}
+::endgroup::
+
+🎉 1 test passed.
