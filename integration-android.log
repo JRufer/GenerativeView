@@ -1,0 +1,32 @@
+
+Running Gradle task 'assembleDebug'...                             18.8s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Installing build/app/outputs/flutter-apk/app-debug.apk...          687ms
+::group::✅ index a folder, browse it, read metadata, follow changes
+media_kit: NativeReferenceHolder: Allocated 140415777030656
+video log: [media_kit] error: property not found _setProperty(osc, 1)
+media_kit: Emulator detected.
+media_kit: Enforcing S/W rendering.
+video playing: false
+video duration: 0:00:00.000000
+video log: [playlist] Reading plaintext playlist.
+video playing: true
+video log: [lavf] Failed to create file cache.
+video duration: 0:00:01.000000
+VideoOutput.Resize
+{rect: {top: 0, left: 0, width: 64, height: 48}, wid: 12878, handle: 140417387892704, id: 0}
+video playing: false
+video log: [vo/gpu/opengl] Could not create EGL context for GLES 2.x +!
+video log: [vo/gpu/opengl] Could not create a GL context.
+video log: [vo/gpu] Failed initializing any suitable GPU context!
+video log: [cplayer] Error opening/initializing the selected video_out (--vo) device.
+video log: [vo/gpu/opengl] Could not create EGL context for GLES 2.x +!
+video log: [vo/gpu/opengl] Could not create a GL context.
+video log: [vo/gpu] Failed initializing any suitable GPU context!
+video log: [cplayer] Error opening/initializing the VO window.
+VIDEO: failure banner shown = false
+VideoOutput.Resize
+{rect: {top: 0, left: 0, width: 64, height: 48}, wid: 0, handle: 140417387892704, id: 0}
+::endgroup::
+
+🎉 1 test passed.
