@@ -1,0 +1,28 @@
+name: generativeview
+description: "A fast browser for folders of AI-generated images, with searchable generation metadata."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.2.0
+  path_provider: ^2.1.6
+  permission_handler: ^13.0.2
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_linux: ^1.2.1
+  media_kit_libs_android_video: ^1.3.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

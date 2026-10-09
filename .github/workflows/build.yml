@@ -1,0 +1,196 @@
+name: build
+
+# Builds and tests everything on each push:
+#   core      Rust unit and integration tests
+#   linux     analyzer, UI tests against the real core, release bundle, and
+#             the built app driven inside a virtual display
+#   android   release APKs for arm64-v8a, armeabi-v7a and x86_64
+#   emulator  the app installed and driven on an emulated Android tablet
+#
+# Pushing a tag like v0.1.0 also publishes the bundle and APKs as a release.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.7
+  CARGO_TERM_COLOR: never
+
+jobs:
+  core:
+    name: Rust core tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - name: Test
+        working-directory: core
+        run: cargo test
+
+  linux:
+    name: Linux app
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv ffmpeg xvfb libgl1-mesa-dri imagemagick
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Rust core
+        working-directory: core
+        run: cargo build --release --lib
+      - run: flutter pub get
+      - name: Analyze
+        run: |
+          # Echo each finding as an annotation so it shows on the run page.
+          set -o pipefail
+          flutter analyze 2>&1 | tee /dev/stderr \
+            | sed -E -n 's/^ *(info|warning|error) • (.*) • ([^ ]+):([0-9]+):[0-9]+ • ([a-z_]+)$/::warning file=\3,line=\4::\2 [\5]/p'
+      - name: Test (the real UI against the real core)
+        env:
+          GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
+        run: flutter test
+      - name: Build Linux bundle
+        run: |
+          flutter build linux --release
+          bundle=build/linux/x64/release/bundle
+          mkdir -p "$bundle/share"
+          cp linux/packaging/generativeview.desktop "$bundle/share/"
+          cp assets/icon.png "$bundle/share/generativeview.png"
+          cp tool/install-linux.sh "$bundle/install.sh"
+          tar -C build/linux/x64/release -czf generativeview-linux-x64.tar.gz bundle
+      - name: Integration test (the built app in a virtual display)
+        env:
+          GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
+          GV_FIXTURES: ${{ github.workspace }}/core/tests/fixtures
+          GV_TEST_VIDEO: "1"
+        run: xvfb-run -a -s "-screen 0 1440x900x24" flutter test integration_test/app_test.dart -d linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generativeview-linux-x64
+          path: generativeview-linux-x64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/screens
+          if-no-files-found: ignore
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+          key: android
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install Rust Android targets and cargo-ndk
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo install cargo-ndk --locked
+      - name: Build Rust core for Android
+        run: tool/build-android-core.sh
+      - name: Build APKs
+        run: |
+          flutter pub get
+          flutter build apk --release --split-per-abi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generativeview-android
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+
+  emulator:
+    name: Android emulator test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+          key: android-x64
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Rust core for the emulator
+        run: |
+          rustup target add x86_64-linux-android
+          cargo install cargo-ndk --locked
+          tool/build-android-core.sh x86_64
+          flutter pub get
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Integration test on an emulated tablet
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          OUT: ${{ runner.temp }}/emulator
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          profile: pixel_tablet
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: tool/ci-android-emulator.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-screenshots
+          path: ${{ runner.temp }}/emulator
+          if-no-files-found: ignore
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [core, linux, android, emulator]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes \
+            dist/generativeview-linux-x64/generativeview-linux-x64.tar.gz \
+            dist/generativeview-android/*.apk
