@@ -159,7 +159,7 @@ void main() {
     expect(find.byType(FocusView), findsOneWidget);
     await shot(tester, 'it-03-focus');
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-    await waitFor(tester, () => find.text('a1b2c3.png').evaluate().isNotEmpty, what: 'the previous image');
+    await waitFor(tester, () => find.text('ComfyUI_00002_.png').evaluate().isNotEmpty, what: 'the previous image');
 
     if (videos > 0 && _testVideo) {
       await tester.sendKeyEvent(LogicalKeyboardKey.end);

@@ -100,7 +100,8 @@ class _MetaPanelState extends State<MetaPanel> {
     if (info == null || _shownVersion == null) {
       return const SizedBox.expand();
     }
-    return Scrollbar(
+    return ExcludeFocus(
+      child: Scrollbar(
       controller: _scroll,
       child: ListView(
         controller: _scroll,
@@ -200,6 +201,7 @@ class _MetaPanelState extends State<MetaPanel> {
               ),
             ),
         ],
+      ),
       ),
     );
   }

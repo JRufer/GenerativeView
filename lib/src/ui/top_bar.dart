@@ -17,16 +17,9 @@ String _groupThousands(int n) {
 
 /// The single strip of chrome above the content.
 class TopBar extends StatelessWidget {
-  const TopBar({
-    super.key,
-    required this.state,
-    required this.searchController,
-    required this.searchFocus,
-  });
+  const TopBar({super.key, required this.state});
 
   final AppState state;
-  final TextEditingController searchController;
-  final FocusNode searchFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -41,56 +34,75 @@ class TopBar extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 760;
+          // Buttons, menus and the slider never hold keyboard focus (see
+          // ShortcutLayer); only the search field does.
           return Row(
             children: [
-              if (focus)
-                _BarButton(
-                  icon: Icons.arrow_back,
-                  tooltip: 'Back to grid (Esc)',
-                  onTap: state.closeFocus,
-                )
-              else
-                _BarButton(
-                  icon: Icons.folder_outlined,
-                  tooltip: 'Folders ([)',
-                  active: state.leftOpen,
-                  onTap: state.toggleLeft,
+              Expanded(
+                child: ExcludeFocus(
+                  child: Row(
+                    children: [
+                      if (focus)
+                        _BarButton(
+                          icon: Icons.arrow_back,
+                          tooltip: 'Back to grid (Esc)',
+                          onTap: state.closeFocus,
+                        )
+                      else
+                        _BarButton(
+                          icon: Icons.folder_outlined,
+                          tooltip: 'Folders ([)',
+                          active: state.leftOpen,
+                          onTap: state.toggleLeft,
+                        ),
+                      const SizedBox(width: 6),
+                      Expanded(child: focus ? _FocusTitle(state: state) : _FolderTitle(state: state)),
+                    ],
+                  ),
                 ),
-              const SizedBox(width: 6),
-              Expanded(child: focus ? _FocusTitle(state: state) : _FolderTitle(state: state, showPath: wide)),
+              ),
               if (!focus) ...[
                 const SizedBox(width: 8),
                 SizedBox(
                   width: wide ? 320 : 170,
-                  child: _SearchField(state: state, controller: searchController, focusNode: searchFocus),
+                  child: _SearchField(state: state, controller: state.searchText, focusNode: state.searchFocus),
                 ),
                 const SizedBox(width: 4),
-                _SortMenu(state: state),
-                _BarButton(
-                  icon: Icons.account_tree_outlined,
-                  tooltip: state.recursive ? 'Sub-folders are included' : 'Sub-folders are not included',
-                  active: state.recursive,
-                  onTap: () => state.setRecursive(!state.recursive),
-                ),
-                if (wide) ...[
-                  const SizedBox(width: 6),
-                  const Icon(Icons.photo_size_select_small, size: 15, color: Palette.faint),
-                  SizedBox(
-                    width: 120,
-                    child: Slider(
-                      value: state.tileSize,
-                      min: minTileSize,
-                      max: maxTileSize,
-                      onChanged: state.setTileSize,
-                    ),
-                  ),
-                ],
               ],
-              _BarButton(
-                icon: Icons.info_outline,
-                tooltip: 'Generation data (I)',
-                active: state.rightOpen,
-                onTap: state.toggleRight,
+              ExcludeFocus(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!focus) ...[
+                      _SortMenu(state: state),
+                      _BarButton(
+                        icon: Icons.account_tree_outlined,
+                        tooltip: state.recursive ? 'Sub-folders are included' : 'Sub-folders are not included',
+                        active: state.recursive,
+                        onTap: () => state.setRecursive(!state.recursive),
+                      ),
+                      if (wide) ...[
+                        const SizedBox(width: 6),
+                        const Icon(Icons.photo_size_select_small, size: 15, color: Palette.faint),
+                        SizedBox(
+                          width: 120,
+                          child: Slider(
+                            value: state.tileSize,
+                            min: minTileSize,
+                            max: maxTileSize,
+                            onChanged: state.setTileSize,
+                          ),
+                        ),
+                      ],
+                    ],
+                    _BarButton(
+                      icon: Icons.info_outline,
+                      tooltip: 'Generation data (I)',
+                      active: state.rightOpen,
+                      onTap: state.toggleRight,
+                    ),
+                  ],
+                ),
               ),
             ],
           );
@@ -130,9 +142,8 @@ class _BarButton extends StatelessWidget {
 }
 
 class _FolderTitle extends StatelessWidget {
-  const _FolderTitle({required this.state, required this.showPath});
+  const _FolderTitle({required this.state});
   final AppState state;
-  final bool showPath;
 
   @override
   Widget build(BuildContext context) {

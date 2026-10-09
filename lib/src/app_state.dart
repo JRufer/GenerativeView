@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/models.dart';
 import 'core/native_core.dart';
@@ -84,7 +85,17 @@ class AppState extends ChangeNotifier {
 
   final ValueNotifier<ScanStatus> scan = ValueNotifier(ScanStatus.idle);
 
+  // ---------------------------------------------------------------- search box
+
+  /// Owned here so keyboard shortcuts can reach the search box from anywhere.
+  final TextEditingController searchText = TextEditingController();
+  final FocusNode searchFocus = FocusNode(debugLabel: 'search');
+
   // ---------------------------------------------------------------- layout
+
+  /// True when the window is too narrow for panels beside the content, and
+  /// they slide over it instead. Set by the home page as it lays out.
+  bool narrowLayout = false;
 
   double tileSize = 190;
   bool leftOpen = true;
@@ -411,6 +422,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void closePanels() {
+    if (!leftOpen && !rightOpen) return;
+    if (leftOpen) _save('left_open', 'false');
+    if (rightOpen) _save('right_open', 'false');
+    leftOpen = false;
+    rightOpen = false;
+    notifyListeners();
+  }
+
   void setLeftWidth(double value) {
     leftWidth = value.clamp(200, 520).toDouble();
     _save('left_width', leftWidth.toStringAsFixed(0), debounce: true);
@@ -450,6 +470,8 @@ class AppState extends ChangeNotifier {
       t.cancel();
     }
     scan.dispose();
+    searchText.dispose();
+    searchFocus.dispose();
     super.dispose();
   }
 }

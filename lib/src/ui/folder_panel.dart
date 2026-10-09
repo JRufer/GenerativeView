@@ -144,7 +144,8 @@ class _FolderPanelState extends State<FolderPanel> {
                     style: TextStyle(color: Palette.muted, fontSize: 13),
                   ),
                 )
-              : Scrollbar(
+              : ExcludeFocus(
+                  child: Scrollbar(
                   controller: _scroll,
                   child: ListView.builder(
                     controller: _scroll,
@@ -161,6 +162,7 @@ class _FolderPanelState extends State<FolderPanel> {
                         onToggle: () => state.toggleExpanded(row.path),
                       );
                     },
+                  ),
                   ),
                 ),
         ),

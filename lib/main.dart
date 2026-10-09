@@ -9,6 +9,7 @@ import 'src/core/thumb_cache.dart';
 import 'src/platform.dart';
 import 'src/theme.dart';
 import 'src/ui/home_page.dart';
+import 'src/ui/shortcut_layer.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,19 +51,29 @@ Future<void> main(List<String> args) async {
   runApp(GenerativeViewApp(state: state, failure: failure));
 }
 
-class GenerativeViewApp extends StatelessWidget {
+class GenerativeViewApp extends StatefulWidget {
   const GenerativeViewApp({super.key, required this.state, this.failure});
   final AppState? state;
   final Object? failure;
 
   @override
+  State<GenerativeViewApp> createState() => _GenerativeViewAppState();
+}
+
+class _GenerativeViewAppState extends State<GenerativeViewApp> {
+  final RouteCounter _routes = RouteCounter();
+
+  @override
   Widget build(BuildContext context) {
-    final state = this.state;
+    final state = widget.state;
     return MaterialApp(
       title: 'GenerativeView',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
-      home: state == null ? _StartupFailure(failure: failure) : HomePage(state: state),
+      navigatorObservers: [_routes],
+      builder: (context, child) =>
+          state == null ? child! : ShortcutLayer(state: state, routes: _routes, child: child!),
+      home: state == null ? _StartupFailure(failure: widget.failure) : HomePage(state: state),
     );
   }
 }
