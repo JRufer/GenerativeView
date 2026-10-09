@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -70,8 +71,15 @@ class _VideoPageState extends State<VideoPage> {
   void _start() {
     if (!widget.playbackAvailable || _player != null) return;
     try {
-      final player = Player();
+      final player = Player(
+        configuration: const PlayerConfiguration(logLevel: kDebugMode ? MPVLogLevel.warn : MPVLogLevel.error),
+      );
       _player = player;
+      if (kDebugMode) {
+        player.stream.log.listen((l) => debugPrint('video log: [${l.prefix}] ${l.text.trim()}'));
+        player.stream.duration.listen((d) => debugPrint('video duration: $d'));
+        player.stream.playing.listen((p) => debugPrint('video playing: $p'));
+      }
       _controller = VideoController(player);
       unawaited(player.setPlaylistMode(PlaylistMode.single));
       unawaited(player.open(Media(Uri.file(widget.item.path).toString())));
@@ -131,7 +139,14 @@ class _VideoPageState extends State<VideoPage> {
         if (controller != null && player != null) ...[
           // Our own controls: the stock ones claim double-tap, which here
           // means "back to the grid".
-          Video(controller: controller, fill: Colors.transparent, controls: NoVideoControls),
+          Video(
+            controller: controller,
+            fill: Colors.transparent,
+            controls: NoVideoControls,
+            // We already know the shape from the file; do not wait for the
+            // player to report it.
+            aspectRatio: widget.item.width > 0 && widget.item.height > 0 ? widget.item.aspect : null,
+          ),
           GestureDetector(behavior: HitTestBehavior.translucent, onTap: player.playOrPause),
           if (!showMessage)
             Align(
