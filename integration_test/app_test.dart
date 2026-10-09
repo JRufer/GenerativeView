@@ -126,9 +126,21 @@ void main() {
       await tester.tap(find.byTooltip('Generation data (I)'));
     }
     await waitFor(tester, () => find.text('cinematic photo of a lighthouse on a cliff').evaluate().isNotEmpty, what: 'the prompt');
-    expect(find.text('219670278747233'), findsOneWidget);
-    expect(find.text('style/inkwash_v2.safetensors'), findsOneWidget);
     await shot(tester, 'it-02-metadata');
+    String panelText() => tester
+        .widgetList<Text>(find.descendant(of: find.byType(MetaPanel), matching: find.byType(Text)))
+        .map((t) => t.data ?? '')
+        .join(' | ');
+    expect(find.text('219670278747233'), findsOneWidget, reason: panelText());
+    // The panel is a lazy list; on a short screen the lower rows need a scroll.
+    await tester.scrollUntilVisible(
+      find.text('style/inkwash_v2.safetensors'),
+      120,
+      scrollable: find.descendant(of: find.byType(MetaPanel), matching: find.byType(Scrollable)).first,
+    );
+    expect(find.text('style/inkwash_v2.safetensors'), findsOneWidget, reason: panelText());
+    await tester.drag(find.byType(MetaPanel), const Offset(0, 600));
+    await tester.pump(const Duration(milliseconds: 300));
 
     // Tap to copy puts the prompt on the real clipboard.
     await tester.tap(find.text('cinematic photo of a lighthouse on a cliff'));

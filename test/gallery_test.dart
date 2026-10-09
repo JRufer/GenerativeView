@@ -42,8 +42,6 @@ void main() {
         .widgetList<RawImage>(find.descendant(of: find.byType(MediaGrid), matching: find.byType(RawImage)))
         .where((w) => w.image != null)
         .length;
-    int tiles() => find.descendant(of: find.byType(MediaGrid), matching: find.byType(RawImage)).evaluate().length +
-        0;
 
     // Indexing and thumbnailing ~130 real 1-2 MB images.
     final started = DateTime.now();
@@ -54,7 +52,7 @@ void main() {
       timeout: const Duration(minutes: 3),
     );
     // Not a benchmark (debug-mode test harness on a CI VM), just a sanity figure.
-    debugPrint('GALLERY: ${state.items.length} items, $shown() first thumbnails after ${DateTime.now().difference(started).inMilliseconds} ms; tiles=${tiles()}');
+    debugPrint('GALLERY: ${state.items.length} items, ${shown()} thumbnails on screen after ${DateTime.now().difference(started).inMilliseconds} ms');
     if (state.leftOpen) state.toggleLeft();
     state.setTileSize(210);
     await pumpUntil(tester, () => shown() >= 35, what: 'a full screen of thumbnails', timeout: const Duration(minutes: 2));

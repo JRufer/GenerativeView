@@ -25,7 +25,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  final FocusNode _keys = FocusNode(debugLabel: 'shortcuts');
   final FocusNode _searchFocus = FocusNode(debugLabel: 'search');
   final TextEditingController _search = TextEditingController();
   // Keeps the grid's state (scroll position, loaded tiles) when the layout
@@ -40,6 +39,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Shortcuts are handled for the whole window rather than through the
+    // focus tree: clicking a panel or leaving the search box must never
+    // leave the keyboard dead.
+    HardwareKeyboard.instance.addHandler(_onKey);
     state.addListener(_onState);
     _search.text = state.query;
     _checkStorage();
@@ -48,8 +51,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    HardwareKeyboard.instance.removeHandler(_onKey);
     state.removeListener(_onState);
-    _keys.dispose();
     _searchFocus.dispose();
     _search.dispose();
     super.dispose();
@@ -94,8 +97,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return context != null && context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
-  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (event is KeyUpEvent) return KeyEventResult.ignored;
+  void _stopTyping() => FocusManager.instance.primaryFocus?.unfocus();
+
+  /// Returns true when the key was ours, which stops it going any further.
+  bool _onKey(KeyEvent event) {
+    if (!mounted || event is KeyUpEvent) return false;
+    // A menu or dialog is open above us: the keys belong to it.
+    if (Navigator.of(context).canPop()) return false;
     final key = event.logicalKey;
     final ctrl = HardwareKeyboard.instance.isControlPressed;
 
@@ -105,50 +113,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _search.clear();
           state.setQuery('');
         }
-        _keys.requestFocus();
-        return KeyEventResult.handled;
+        _stopTyping();
+        return true;
       }
       // Down from the search box drops into the results.
       if (key == LogicalKeyboardKey.arrowDown && _searchFocus.hasFocus) {
-        _keys.requestFocus();
+        _stopTyping();
         state.move(state.selectedIndex < 0 ? 1 : 0);
-        return KeyEventResult.handled;
+        return true;
       }
-      return KeyEventResult.ignored;
+      return false;
     }
 
-    if (ctrl && key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.slash) {
-      if (state.mode == ViewMode.grid) {
-        _searchFocus.requestFocus();
-        _search.selection = TextSelection(baseOffset: 0, extentOffset: _search.text.length);
-        return KeyEventResult.handled;
-      }
+    if ((ctrl && key == LogicalKeyboardKey.keyF) || key == LogicalKeyboardKey.slash) {
+      if (state.mode != ViewMode.grid) return false;
+      _searchFocus.requestFocus();
+      _search.selection = TextSelection(baseOffset: 0, extentOffset: _search.text.length);
+      return true;
     }
     if (ctrl && key == LogicalKeyboardKey.keyC) {
       _copyPrompt();
-      return KeyEventResult.handled;
+      return true;
     }
     if (ctrl && (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.add || key == LogicalKeyboardKey.numpadAdd)) {
       state.setTileSize(state.tileSize * 1.15);
-      return KeyEventResult.handled;
+      return true;
     }
     if (ctrl && (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract)) {
       state.setTileSize(state.tileSize / 1.15);
-      return KeyEventResult.handled;
+      return true;
     }
-    if (ctrl) return KeyEventResult.ignored;
+    if (ctrl || HardwareKeyboard.instance.isAltPressed || HardwareKeyboard.instance.isMetaPressed) return false;
 
     if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.bracketRight) {
       state.toggleRight();
-      return KeyEventResult.handled;
+      return true;
     }
     if (key == LogicalKeyboardKey.bracketLeft) {
       state.toggleLeft();
-      return KeyEventResult.handled;
+      return true;
     }
     if (key == LogicalKeyboardKey.f5) {
       state.rescan();
-      return KeyEventResult.handled;
+      return true;
     }
 
     final focus = state.mode == ViewMode.focus;
@@ -176,11 +183,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } else if (key == LogicalKeyboardKey.backspace && focus) {
       state.move(-1);
     } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter || key == LogicalKeyboardKey.space) {
-      if (event is KeyRepeatEvent) return KeyEventResult.handled;
+      if (event is KeyRepeatEvent) return true;
       if (focus) {
         state.closeFocus();
-      } else {
+      } else if (state.selectedIndex >= 0) {
         state.openFocus();
+      } else {
+        return false;
       }
     } else if (key == LogicalKeyboardKey.escape) {
       if (focus) {
@@ -191,9 +200,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         state.clearSelection();
       }
     } else {
-      return KeyEventResult.ignored;
+      return false;
     }
-    return KeyEventResult.handled;
+    return true;
   }
 
   Future<void> _copyPrompt() async {
@@ -234,18 +243,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           child: Scaffold(
             backgroundColor: Palette.canvas,
             body: SafeArea(
-              child: Focus(
-                focusNode: _keys,
-                autofocus: true,
-                onKeyEvent: _onKey,
-                child: Column(
-                  children: [
-                    TopBar(state: state, searchController: _search, searchFocus: _searchFocus),
-                    _ScanBar(state: state),
-                    if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
-                    Expanded(child: narrow ? _narrowBody(constraints.maxWidth) : _wideBody()),
-                  ],
-                ),
+              child: Column(
+                children: [
+                  TopBar(state: state, searchController: _search, searchFocus: _searchFocus),
+                  _ScanBar(state: state),
+                  if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
+                  Expanded(child: narrow ? _narrowBody(constraints.maxWidth) : _wideBody()),
+                ],
               ),
             ),
           ),
@@ -258,9 +262,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final focus = state.mode == ViewMode.focus;
     return Listener(
       key: _contentKey,
-      // Clicking the content takes keyboard focus back from the text fields.
+      // Touching the content ends text entry (and puts the soft keyboard away).
       onPointerDown: (_) {
-        if (!_keys.hasPrimaryFocus) _keys.requestFocus();
+        if (_typing) _stopTyping();
       },
       child: Stack(
         fit: StackFit.expand,
