@@ -1,8 +1,22 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- The app browses folders the user picks anywhere on shared storage and
+         watches them for new files, which needs real file paths. That is the
+         "All files access" permission on Android 11+, and plain storage
+         permission before that. Fine for a sideloaded app; Google Play would
+         not accept it for this use. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
     <application
-        android:label="generativeview"
+        android:label="GenerativeView"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
+        android:largeHeap="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

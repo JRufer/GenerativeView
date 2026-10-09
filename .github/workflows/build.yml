@@ -1,0 +1,161 @@
+name: build
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: 3.47.7
+  CARGO_TERM_COLOR: never
+
+jobs:
+  core:
+    name: Rust core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - name: Prepare output folder
+        run: mkdir -p "$RUNNER_TEMP/out" && echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+      - name: Test
+        working-directory: core
+        run: |
+          set -o pipefail
+          cargo test 2>&1 | tee "$OUT/cargo-test.log"
+      - name: Publish output (dev branch only)
+        if: always() && github.ref_name == 'dev'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$OUT" && git init -q -b ci-out-core
+          git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$GITHUB_SHA ${{ job.status }}" > STATUS && git add -A && git commit -qm "core output for $GITHUB_SHA"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-out-core
+
+  linux:
+    name: Linux app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv xvfb
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Prepare output folder
+        run: mkdir -p "$RUNNER_TEMP/out/screens" && echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+      - name: Build Rust core
+        working-directory: core
+        run: |
+          set -o pipefail
+          cargo build --release --lib 2>&1 | tee "$OUT/cargo-build.log"
+      - name: Resolve packages
+        run: |
+          set -o pipefail
+          flutter pub get 2>&1 | tee "$OUT/pub-get.log"
+      - name: Analyze
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos 2>&1 | tee "$OUT/analyze.log"
+      - name: Test (real app against the real core)
+        if: always()
+        env:
+          GV_SCREENSHOT_DIR: ${{ runner.temp }}/out/screens
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee "$OUT/test.log"
+      - name: Build Linux bundle
+        if: always()
+        run: |
+          set -o pipefail
+          flutter build linux --release 2>&1 | tee "$OUT/build-linux.log"
+          mkdir -p build/linux/x64/release/bundle/share
+          cp linux/packaging/generativeview.desktop build/linux/x64/release/bundle/share/
+          cp assets/icon.png build/linux/x64/release/bundle/share/generativeview.png
+          cp tool/install-linux.sh build/linux/x64/release/bundle/install.sh
+          ls -la build/linux/x64/release/bundle build/linux/x64/release/bundle/lib | tee "$OUT/bundle-listing.log"
+          tar -C build/linux/x64/release -czf generativeview-linux-x64.tar.gz bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generativeview-linux-x64
+          path: generativeview-linux-x64.tar.gz
+          if-no-files-found: error
+      - name: Publish output (dev branch only)
+        if: always() && github.ref_name == 'dev'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dart format lib test > "$OUT/format.log" 2>&1 || true
+          mkdir -p "$OUT/formatted" && cp -r lib test "$OUT/formatted/"
+          cp pubspec.lock "$OUT/" || true
+          cd "$OUT" && git init -q -b ci-out-linux
+          git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$GITHUB_SHA ${{ job.status }}" > STATUS && git add -A && git commit -qm "linux output for $GITHUB_SHA"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-out-linux
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+          key: android
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Prepare output folder
+        run: mkdir -p "$RUNNER_TEMP/out" && echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+      - name: Install Rust Android targets and cargo-ndk
+        run: |
+          set -o pipefail
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo install cargo-ndk --locked 2>&1 | tail -5 | tee "$OUT/cargo-ndk.log"
+      - name: Build Rust core for Android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: |
+          set -o pipefail
+          tool/build-android-core.sh 2>&1 | tee "$OUT/cargo-android.log"
+          find android/app/src/main/jniLibs -type f -exec ls -la {} + | tee -a "$OUT/cargo-android.log"
+      - name: Build APKs
+        run: |
+          set -o pipefail
+          flutter pub get
+          flutter build apk --release --split-per-abi 2>&1 | tee "$OUT/build-apk.log"
+          ls -la build/app/outputs/flutter-apk | tee -a "$OUT/build-apk.log"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generativeview-android
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+      - name: Publish output (dev branch only)
+        if: always() && github.ref_name == 'dev'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$OUT" && git init -q -b ci-out-android
+          git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$GITHUB_SHA ${{ job.status }}" > STATUS && git add -A && git commit -qm "android output for $GITHUB_SHA"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-out-android

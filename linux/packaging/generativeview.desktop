@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GenerativeView
+Comment=Browse and search folders of AI-generated images
+Exec=generativeview %f
+Icon=generativeview
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=inode/directory;
+StartupWMClass=com.jrufer.generativeview
