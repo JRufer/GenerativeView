@@ -19,6 +19,14 @@ import 'package:integration_test/integration_test.dart';
 
 import '../test/support.dart';
 
+// Settings come from --dart-define on a device (which has no access to the
+// host's environment) and from the environment on desktop.
+const String _fixturesDefine = String.fromEnvironment('GV_FIXTURES');
+const String _videoDefine = String.fromEnvironment('GV_TEST_VIDEO');
+
+String? get _fixtures => _fixturesDefine.isNotEmpty ? _fixturesDefine : Platform.environment['GV_FIXTURES'];
+bool get _testVideo => (_videoDefine.isNotEmpty ? _videoDefine : Platform.environment['GV_TEST_VIDEO']) == '1';
+
 Future<void> waitFor(
   WidgetTester tester,
   bool Function() done, {
@@ -27,7 +35,11 @@ Future<void> waitFor(
 }) async {
   final deadline = DateTime.now().add(timeout);
   while (!done()) {
-    if (DateTime.now().isAfter(deadline)) fail('timed out waiting for $what');
+    if (DateTime.now().isAfter(deadline)) {
+      final focus = FocusManager.instance.primaryFocus;
+      await shot(tester, 'it-99-failure');
+      fail('timed out waiting for $what (keyboard focus: ${focus?.debugLabel ?? focus})');
+    }
     await tester.pump(const Duration(milliseconds: 100));
   }
 }
@@ -74,7 +86,7 @@ void main() {
     var expected = 5;
 
     // Videos, when the run supplies the fixtures (CI does).
-    final fixtures = Platform.environment['GV_FIXTURES'];
+    final fixtures = _fixtures;
     var videos = 0;
     if (fixtures != null && fixtures.isNotEmpty) {
       for (final name in ['comfy_tags.mp4', 'comfy_tags.webm']) {
@@ -126,6 +138,7 @@ void main() {
 
     // ---- focus view -------------------------------------------------------
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await waitFor(tester, () => find.byType(FocusView).evaluate().isNotEmpty, what: 'the focus view to open');
     await waitFor(
       tester,
       () => tester.widgetList<RawImage>(find.descendant(of: find.byType(Image), matching: find.byType(RawImage))).any((w) => w.image != null),
@@ -136,7 +149,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await waitFor(tester, () => find.text('a1b2c3.png').evaluate().isNotEmpty, what: 'the previous image');
 
-    if (videos > 0 && Platform.environment['GV_TEST_VIDEO'] == '1') {
+    if (videos > 0 && _testVideo) {
       await tester.sendKeyEvent(LogicalKeyboardKey.end);
       await waitFor(tester, () => find.byType(VideoPage).evaluate().isNotEmpty, what: 'the video page');
       await tester.pump(const Duration(seconds: 2));
