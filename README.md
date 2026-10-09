@@ -58,10 +58,18 @@ ComfyUI has no fixed schema, so prompts and settings are found by walking the gr
 
 ## Install
 
-Every push to `main` builds both platforms. Open the latest run under **Actions → build** and download from its Artifacts section (pushing a tag such as `v0.1.0` publishes the same files as a release):
+Every merge to `main` is built, tested and published under [Releases](https://github.com/JRufer/GenerativeView/releases) as `build-<n>`. Grab the newest:
 
-- `generativeview-linux-x64` — unpack, then run `bundle/install.sh` (installs to `~/.local`, no root) or just run `bundle/generativeview`.
-- `generativeview-android` — `app-arm64-v8a-release.apk` is the one for tablets and phones.
+- **Linux**: `GenerativeView-x86_64.AppImage`. Make it executable and run it:
+
+  ```sh
+  chmod +x GenerativeView-x86_64.AppImage
+  ./GenerativeView-x86_64.AppImage            # or: ./GenerativeView-x86_64.AppImage /path/to/folder
+  ```
+
+  `generativeview-linux-x64.tar.gz` is the same app as a plain folder; run `bundle/install.sh` to install it under `~/.local` with a menu entry.
+
+- **Android**: `GenerativeView-arm64-v8a.apk` for tablets and phones. Sideload it.
 
 **Linux needs** GTK 3, and for video `mpv` (playback) and `ffmpeg` (video thumbnails). On CachyOS / Arch:
 
@@ -69,9 +77,21 @@ Every push to `main` builds both platforms. Open the latest run under **Actions 
 sudo pacman -S --needed gtk3 mpv ffmpeg
 ```
 
-**Android**: sideload the APK. On first launch tap **Allow access** and turn on "All files access" for GenerativeView; it needs real folder paths to scan and watch, which Android only gives through that permission. (That permission is also why this is a sideload app rather than a Play Store one.)
+**Android**: on first launch tap **Allow access** and turn on "All files access" for GenerativeView; it needs real folder paths to scan and watch, which Android only gives through that permission. (That permission is also why this is a sideload app rather than a Play Store one.)
 
-CI-built APKs are signed with a throwaway debug key that changes from run to run, so Android will refuse to install one build over another. Uninstall first, or build locally, where your debug key stays the same.
+### Signing key
+
+Android only installs an update over an existing app if both are signed with the same key. Until the repository has a key of its own, each CI run signs with a throwaway one, and you have to uninstall before installing a newer build. To fix that once:
+
+```sh
+keytool -genkeypair -keystore generativeview.jks -storetype PKCS12 -alias generativeview \
+  -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=GenerativeView" -storepass 'choose-a-password'
+
+base64 -w0 generativeview.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo JRufer/GenerativeView
+gh secret set ANDROID_KEYSTORE_PASSWORD --repo JRufer/GenerativeView --body 'choose-a-password'
+```
+
+Keep `generativeview.jks` somewhere safe and out of the repository. Builds from then on all carry that signature.
 
 ## Build from source
 
@@ -83,6 +103,7 @@ You need Flutter 3.47 or newer and a Rust toolchain.
 sudo pacman -S --needed clang cmake ninja pkgconf gtk3 mpv ffmpeg rustup   # CachyOS / Arch
 flutter build linux --release      # also runs `cargo build --release` for the core
 tool/install-linux.sh              # optional: install to ~/.local with a menu entry
+tool/build-appimage.sh             # optional: wrap the bundle as a single-file AppImage
 ```
 
 `generativeview /path/to/folder` opens that folder directly.

@@ -7,7 +7,14 @@ name: build
 #   android   release APKs for arm64-v8a, armeabi-v7a and x86_64
 #   emulator  the app installed and driven on an emulated Android tablet
 #
-# Pushing a tag like v0.1.0 also publishes the bundle and APKs as a release.
+# Every push to main then publishes what was built as a release named
+# build-<run number> (the newest ten are kept). Pushing a tag like v0.1.0
+# publishes a release under that name instead.
+#
+# Android signing: set the repository secrets ANDROID_KEYSTORE_BASE64 and
+# ANDROID_KEYSTORE_PASSWORD (see README) and every APK carries the same
+# signature, so a new build installs over the last. Without them each run
+# signs with a throwaway key and Android asks for an uninstall first.
 
 on:
   push:
@@ -67,25 +74,46 @@ jobs:
         env:
           GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
         run: flutter test
-      - name: Build Linux bundle
+      - name: Build Linux bundle and AppImage
         run: |
-          flutter build linux --release
+          flutter build linux --release --build-number="$GITHUB_RUN_NUMBER"
           bundle=build/linux/x64/release/bundle
-          mkdir -p "$bundle/share"
+          mkdir -p "$bundle/share" dist
           cp linux/packaging/generativeview.desktop "$bundle/share/"
           cp assets/icon.png "$bundle/share/generativeview.png"
           cp tool/install-linux.sh "$bundle/install.sh"
-          tar -C build/linux/x64/release -czf generativeview-linux-x64.tar.gz bundle
+          tar -C build/linux/x64/release -czf dist/generativeview-linux-x64.tar.gz bundle
+          tool/build-appimage.sh "$bundle" dist/GenerativeView-x86_64.AppImage
       - name: Integration test (the built app in a virtual display)
         env:
           GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
           GV_FIXTURES: ${{ github.workspace }}/core/tests/fixtures
           GV_TEST_VIDEO: "1"
         run: xvfb-run -a -s "-screen 0 1440x900x24" flutter test integration_test/app_test.dart -d linux
+      - name: Smoke-test the AppImage
+        env:
+          GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
+        run: |
+          # Start it on the folder the integration test left behind, then
+          # check that it stayed up and actually rendered thumbnails (which
+          # only happens if the bundled Rust core loaded and indexed).
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export XDG_DATA_HOME="$RUNNER_TEMP/appimage-data" XDG_CACHE_HOME="$RUNNER_TEMP/appimage-cache"
+          xvfb-run -a -s "-screen 0 1440x900x24" bash -c '
+            dist/GenerativeView-x86_64.AppImage /tmp/gv-integration &
+            pid=$!
+            sleep 15
+            import -window root "$GV_SCREENSHOT_DIR/appimage.png" || true
+            kill -0 "$pid" || { echo "::error::The AppImage exited on its own"; exit 1; }
+            kill "$pid"
+          '
+          thumbs=$(find "$XDG_CACHE_HOME" -name '*.jpg' | wc -l)
+          echo "::notice::AppImage rendered $thumbs thumbnails"
+          test "$thumbs" -ge 5
       - uses: actions/upload-artifact@v4
         with:
           name: generativeview-linux-x64
-          path: generativeview-linux-x64.tar.gz
+          path: dist/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
@@ -118,10 +146,38 @@ jobs:
           cargo install cargo-ndk --locked
       - name: Build Rust core for Android
         run: tool/build-android-core.sh
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          keystore="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+            password="$KEYSTORE_PASSWORD"
+          else
+            echo "::notice::No ANDROID_KEYSTORE_BASE64 secret, so these APKs are signed with a throwaway key and will not install over an earlier build. See README, 'Signing key'."
+            password=throwaway
+            keytool -genkeypair -keystore "$keystore" -storetype PKCS12 -storepass "$password" \
+              -alias generativeview -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=GenerativeView throwaway"
+          fi
+          echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$password" >> "$GITHUB_ENV"
       - name: Build APKs
         run: |
           flutter pub get
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi --build-number="$GITHUB_RUN_NUMBER"
+      - name: Check the APK signature
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          certs=$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)
+          echo "$certs"
+          # The release key must have been used, not Gradle's debug fallback.
+          if echo "$certs" | grep -q "Android Debug"; then
+            echo "::error::APK was signed with the debug key"
+            exit 1
+          fi
+          echo "::notice::Signed by: $(echo "$certs" | grep -m1 'certificate DN')"
       - uses: actions/upload-artifact@v4
         with:
           name: generativeview-android
@@ -178,7 +234,7 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push'
     needs: [core, linux, android, emulator]
     runs-on: ubuntu-24.04
     permissions:
@@ -187,10 +243,37 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-      - name: Create release
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT_SUBJECT: ${{ github.event.head_commit.message }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes \
-            dist/generativeview-linux-x64/generativeview-linux-x64.tar.gz \
-            dist/generativeview-android/*.apk
+          set -euo pipefail
+          mkdir out
+          cp dist/generativeview-linux-x64/GenerativeView-x86_64.AppImage out/
+          cp dist/generativeview-linux-x64/generativeview-linux-x64.tar.gz out/
+          for apk in dist/generativeview-android/app-*-release.apk; do
+            abi=$(basename "$apk" | sed -E 's/^app-(.*)-release\.apk$/\1/')
+            cp "$apk" "out/GenerativeView-$abi.apk"
+          done
+          ls -la out
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes out/*
+            exit 0
+          fi
+
+          tag="build-$GITHUB_RUN_NUMBER"
+          {
+            echo "Automatic build of \`${GITHUB_SHA::7}\`: $(echo "$COMMIT_SUBJECT" | head -1)"
+            echo
+            echo "- **Linux**: \`GenerativeView-x86_64.AppImage\` — \`chmod +x\` it and run. Needs GTK 3, plus \`mpv\` and \`ffmpeg\` for video. The \`.tar.gz\` is the same app as a plain folder with an \`install.sh\`."
+            echo "- **Android**: \`GenerativeView-arm64-v8a.apk\` for tablets and phones."
+          } > notes.md
+          gh release create "$tag" --target "$GITHUB_SHA" --title "Build $GITHUB_RUN_NUMBER" --notes-file notes.md --latest out/*
+
+          # Keep the ten newest automatic builds.
+          gh api "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name | select(startswith("build-"))' \
+            | sort -t- -k2 -n -r | tail -n +11 \
+            | while read -r old; do gh release delete "$old" --yes --cleanup-tag; done
