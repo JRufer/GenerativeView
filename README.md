@@ -58,7 +58,7 @@ ComfyUI has no fixed schema, so prompts and settings are found by walking the gr
 
 ## Install
 
-Every push to `main` builds both platforms. Open the latest run under **Actions → build** and download:
+Every push to `main` builds both platforms. Open the latest run under **Actions → build** and download from its Artifacts section (pushing a tag such as `v0.1.0` publishes the same files as a release):
 
 - `generativeview-linux-x64` — unpack, then run `bundle/install.sh` (installs to `~/.local`, no root) or just run `bundle/generativeview`.
 - `generativeview-android` — `app-arm64-v8a-release.apk` is the one for tablets and phones.
@@ -109,7 +109,7 @@ core/       Rust library: metadata parsing, index, file watching, thumbnails
 
 The UI talks to the core through a small hand-written `dart:ffi` layer (`lib/src/core/native_core.dart` ↔ `core/src/ffi.rs`). Every call is asynchronous, so the UI thread never waits on disk.
 
-- **Metadata** is read without decoding pixels: the core walks the file's chunk or box structure and pulls out the text. Ten thousand PNGs take about a second on first visit.
+- **Metadata** is read without decoding pixels: the core walks the file's chunk or box structure and pulls out the text. Indexing ten thousand PNGs for the first time took about a second on a two-core test machine; reopening the folder took under a tenth of a second.
 - **The index** is one SQLite file holding a row per image and its lower-cased search text. Opening a folder answers from the index at once, then compares it with the disk and parses only what is new or changed.
 - **Live updates** come from file-system notifications, with a cheap check of folder timestamps every few seconds as a backstop for storage that sends none (Android shared storage, network mounts).
 - **Thumbnails** are generated in two sizes on demand, newest request first, and cached on disk. Requests for tiles that scrolled away are dropped. The rest of the folder is pre-rendered in the background at low priority.
@@ -128,7 +128,9 @@ cargo run --release --example bench -- /path/to/folder   # time indexing, search
 xvfb-run -a flutter test integration_test -d linux       # the built app in a virtual display
 ```
 
-`flutter test` drives the actual app against the actual Rust library on a folder of generated images: it searches, opens the metadata panel, copies values, steps through the focus view and checks that added and deleted files appear and disappear.
+`flutter test` drives the actual app against the actual Rust library on a folder of generated images: it searches, opens the metadata panel, copies values, steps through the focus view and checks that added and deleted files appear and disappear. CI runs the same flow against the built Linux app in a virtual display and against the APK on an emulated Android tablet (`tool/ci-android-emulator.sh`).
+
+Set `GV_SCREENSHOT_DIR` to have the tests save a PNG of each stage, and `GV_SAMPLE_DIR` to point `test/gallery_test.dart` at a folder of your own images.
 
 ## Known limits
 

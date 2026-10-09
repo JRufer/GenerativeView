@@ -42,16 +42,24 @@ class _FolderPanelState extends State<FolderPanel> {
   void _scrollToCurrent(List<_Row> rows) {
     if (state.treeRevealTick == _seenReveal) return;
     final index = rows.indexWhere((r) => r.path == state.folder && r.depth > 0);
-    final fallback = index >= 0 ? index : rows.indexWhere((r) => r.path == state.folder);
+    final fallback = index >= 0
+        ? index
+        : rows.indexWhere((r) => r.path == state.folder);
     if (fallback < 0) return;
     _seenReveal = state.treeRevealTick;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
       final position = _scroll.position;
       final top = fallback * _rowHeight;
-      final visible = top >= position.pixels && top + _rowHeight * 3 <= position.pixels + position.viewportDimension;
+      final visible =
+          top >= position.pixels &&
+          top + _rowHeight * 3 <= position.pixels + position.viewportDimension;
       if (!visible) {
-        _scroll.jumpTo((top - position.viewportDimension / 4).clamp(0.0, position.maxScrollExtent).toDouble());
+        _scroll.jumpTo(
+          (top - position.viewportDimension / 4)
+              .clamp(0.0, position.maxScrollExtent)
+              .toDouble(),
+        );
       }
     });
   }
@@ -76,8 +84,17 @@ class _FolderPanelState extends State<FolderPanel> {
     final rows = <_Row>[];
     void addChildren(String parent, int depth) {
       for (final child in state.children[parent] ?? const <DirNode>[]) {
-        rows.add(_Row(child.name, child.path, depth, child.hasChildren, Icons.folder_outlined));
-        if (state.expanded.contains(child.path)) addChildren(child.path, depth + 1);
+        rows.add(
+          _Row(
+            child.name,
+            child.path,
+            depth,
+            child.hasChildren,
+            Icons.folder_outlined,
+          ),
+        );
+        if (state.expanded.contains(child.path))
+          addChildren(child.path, depth + 1);
       }
     }
 
@@ -122,11 +139,18 @@ class _FolderPanelState extends State<FolderPanel> {
                 isDense: true,
                 hintText: 'Go to folder path…',
                 hintStyle: const TextStyle(color: Palette.faint, fontSize: 13),
-                prefixIcon: const Icon(Icons.subdirectory_arrow_right, size: 16, color: Palette.faint),
+                prefixIcon: const Icon(
+                  Icons.subdirectory_arrow_right,
+                  size: 16,
+                  color: Palette.faint,
+                ),
                 prefixIconConstraints: const BoxConstraints(minWidth: 32),
                 filled: true,
                 fillColor: Palette.raised,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 9,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
                   borderSide: BorderSide.none,
@@ -146,23 +170,23 @@ class _FolderPanelState extends State<FolderPanel> {
                 )
               : ExcludeFocus(
                   child: Scrollbar(
-                  controller: _scroll,
-                  child: ListView.builder(
                     controller: _scroll,
-                    padding: const EdgeInsets.only(bottom: 16),
-                    itemExtent: _rowHeight,
-                    itemCount: rows.length,
-                    itemBuilder: (context, index) {
-                      final row = rows[index];
-                      return _FolderRow(
-                        row: row,
-                        current: row.path == state.folder,
-                        expanded: state.expanded.contains(row.path),
-                        onOpen: () => _pick(row.path),
-                        onToggle: () => state.toggleExpanded(row.path),
-                      );
-                    },
-                  ),
+                    child: ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      itemExtent: _rowHeight,
+                      itemCount: rows.length,
+                      itemBuilder: (context, index) {
+                        final row = rows[index];
+                        return _FolderRow(
+                          row: row,
+                          current: row.path == state.folder,
+                          expanded: state.expanded.contains(row.path),
+                          onOpen: () => _pick(row.path),
+                          onToggle: () => state.toggleExpanded(row.path),
+                        );
+                      },
+                    ),
                   ),
                 ),
         ),
@@ -189,7 +213,9 @@ class _FolderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: current ? Palette.accent.withValues(alpha: 0.16) : Colors.transparent,
+      color: current
+          ? Palette.accent.withValues(alpha: 0.16)
+          : Colors.transparent,
       child: InkWell(
         onTap: onOpen,
         hoverColor: Palette.hover,
@@ -212,7 +238,11 @@ class _FolderRow extends StatelessWidget {
                       )
                     : null,
               ),
-              Icon(row.icon, size: 16, color: current ? Palette.accent : Palette.muted),
+              Icon(
+                row.icon,
+                size: 16,
+                color: current ? Palette.accent : Palette.muted,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

@@ -77,8 +77,6 @@ class _VideoPageState extends State<VideoPage> {
       _player = player;
       if (kDebugMode) {
         player.stream.log.listen((l) => debugPrint('video log: [${l.prefix}] ${l.text.trim()}'));
-        player.stream.duration.listen((d) => debugPrint('video duration: $d'));
-        player.stream.playing.listen((p) => debugPrint('video playing: $p'));
       }
       _controller = VideoController(player);
       unawaited(player.setPlaylistMode(PlaylistMode.single));

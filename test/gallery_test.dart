@@ -18,7 +18,9 @@ void main() {
   final samples = Platform.environment['GV_SAMPLE_DIR'] ?? '';
   final skip = samples.isEmpty || !Directory(samples).existsSync();
 
-  testWidgets('real images: grid, search, metadata, focus', skip: skip, (tester) async {
+  testWidgets('real images: grid, search, metadata, focus', skip: skip, (
+    tester,
+  ) async {
     await tester.runAsync(loadAppFonts);
     final scratch = Directory.systemTemp.createTempSync('gv-gallery-');
     addTearDown(() => scratch.deleteSync(recursive: true));
@@ -32,14 +34,27 @@ void main() {
     addTearDown(tester.view.reset);
 
     final boundary = GlobalKey();
-    final state = AppState(core: core, thumbs: ThumbCache(core, maxBytes: 256 << 20));
-    await tester.pumpWidget(RepaintBoundary(key: boundary, child: GenerativeViewApp(state: state)));
+    final state = AppState(
+      core: core,
+      thumbs: ThumbCache(core, maxBytes: 256 << 20),
+    );
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundary,
+        child: GenerativeViewApp(state: state),
+      ),
+    );
     var opened = false;
     state.restore(initialFolder: samples).whenComplete(() => opened = true);
     await pumpUntil(tester, () => opened, what: 'the folder to open');
 
     int shown() => tester
-        .widgetList<RawImage>(find.descendant(of: find.byType(MediaGrid), matching: find.byType(RawImage)))
+        .widgetList<RawImage>(
+          find.descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(RawImage),
+          ),
+        )
         .where((w) => w.image != null)
         .length;
 
@@ -47,31 +62,67 @@ void main() {
     final started = DateTime.now();
     await pumpUntil(
       tester,
-      () => !state.scan.value.running && state.items.length > 100 && shown() >= 30,
+      () =>
+          !state.scan.value.running &&
+          state.items.length > 100 &&
+          shown() >= 30,
       what: 'real thumbnails',
       timeout: const Duration(minutes: 3),
     );
     // Not a benchmark (debug-mode test harness on a CI VM), just a sanity figure.
-    debugPrint('GALLERY: ${state.items.length} items, ${shown()} thumbnails on screen after ${DateTime.now().difference(started).inMilliseconds} ms');
+    debugPrint(
+      'GALLERY: ${state.items.length} items, ${shown()} thumbnails on screen after ${DateTime.now().difference(started).inMilliseconds} ms',
+    );
     if (state.leftOpen) state.toggleLeft();
     state.setTileSize(210);
-    await pumpUntil(tester, () => shown() >= 35, what: 'a full screen of thumbnails', timeout: const Duration(minutes: 2));
+    await pumpUntil(
+      tester,
+      () => shown() >= 35,
+      what: 'a full screen of thumbnails',
+      timeout: const Duration(minutes: 2),
+    );
     await screenshot(tester, boundary, '10-real-grid');
 
-    final search = find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == 'Search prompts, models, names');
+    final search = find.byWidgetPredicate(
+      (w) =>
+          w is TextField &&
+          w.decoration?.hintText == 'Search prompts, models, names',
+    );
     await tester.enterText(search, 'fennec model:flux');
-    await pumpUntil(tester, () => state.items.length < 40 && state.items.isNotEmpty && shown() >= state.items.length.clamp(1, 12), what: 'search results');
+    await pumpUntil(
+      tester,
+      () =>
+          state.items.length < 40 &&
+          state.items.isNotEmpty &&
+          shown() >= state.items.length.clamp(1, 12),
+      what: 'search results',
+    );
     debugPrint('GALLERY: "fennec model:flux" -> ${state.items.length} items');
     state.select(0);
     if (!state.rightOpen) state.toggleRight();
-    await pumpUntil(tester, () => find.text('PROMPT').evaluate().isNotEmpty, what: 'metadata');
-    await pumpUntil(tester, () => shown() >= state.items.length.clamp(1, 9), what: 'results thumbnails');
+    await pumpUntil(
+      tester,
+      () => find.text('PROMPT').evaluate().isNotEmpty,
+      what: 'metadata',
+    );
+    await pumpUntil(
+      tester,
+      () => shown() >= state.items.length.clamp(1, 9),
+      what: 'results thumbnails',
+    );
     await screenshot(tester, boundary, '11-real-search-metadata');
 
     state.openFocus(0);
     await pumpUntil(
       tester,
-      () => tester.widgetList<RawImage>(find.descendant(of: find.byType(Image), matching: find.byType(RawImage))).any((w) => w.image != null),
+      () => tester
+          .widgetList<RawImage>(
+            find.descendant(
+              of: find.byType(Image),
+              matching: find.byType(RawImage),
+            ),
+          )
+          .any((w) => w.image != null),
       what: 'the full image',
       timeout: const Duration(minutes: 1),
     );

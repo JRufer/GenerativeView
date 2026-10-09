@@ -56,7 +56,11 @@ class TopBar extends StatelessWidget {
                           onTap: state.toggleLeft,
                         ),
                       const SizedBox(width: 6),
-                      Expanded(child: focus ? _FocusTitle(state: state) : _FolderTitle(state: state)),
+                      Expanded(
+                        child: focus
+                            ? _FocusTitle(state: state)
+                            : _FolderTitle(state: state),
+                      ),
                     ],
                   ),
                 ),
@@ -65,7 +69,11 @@ class TopBar extends StatelessWidget {
                 const SizedBox(width: 8),
                 SizedBox(
                   width: wide ? 320 : 170,
-                  child: _SearchField(state: state, controller: state.searchText, focusNode: state.searchFocus),
+                  child: _SearchField(
+                    state: state,
+                    controller: state.searchText,
+                    focusNode: state.searchFocus,
+                  ),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -77,13 +85,19 @@ class TopBar extends StatelessWidget {
                       _SortMenu(state: state),
                       _BarButton(
                         icon: Icons.account_tree_outlined,
-                        tooltip: state.recursive ? 'Sub-folders are included' : 'Sub-folders are not included',
+                        tooltip: state.recursive
+                            ? 'Sub-folders are included'
+                            : 'Sub-folders are not included',
                         active: state.recursive,
                         onTap: () => state.setRecursive(!state.recursive),
                       ),
                       if (wide) ...[
                         const SizedBox(width: 6),
-                        const Icon(Icons.photo_size_select_small, size: 15, color: Palette.faint),
+                        const Icon(
+                          Icons.photo_size_select_small,
+                          size: 15,
+                          color: Palette.faint,
+                        ),
                         SizedBox(
                           width: 120,
                           child: Slider(
@@ -113,7 +127,12 @@ class TopBar extends StatelessWidget {
 }
 
 class _BarButton extends StatelessWidget {
-  const _BarButton({required this.icon, required this.tooltip, required this.onTap, this.active = false});
+  const _BarButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.active = false,
+  });
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
@@ -133,7 +152,11 @@ class _BarButton extends StatelessWidget {
           child: SizedBox(
             width: 36,
             height: 36,
-            child: Icon(icon, size: 19, color: active ? Palette.text : Palette.muted),
+            child: Icon(
+              icon,
+              size: 19,
+              color: active ? Palette.text : Palette.muted,
+            ),
           ),
         ),
       ),
@@ -149,7 +172,10 @@ class _FolderTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final folder = state.folder;
     if (folder == null) {
-      return const Text('GenerativeView', style: TextStyle(fontSize: 14, color: Palette.muted));
+      return const Text(
+        'GenerativeView',
+        style: TextStyle(fontSize: 14, color: Palette.muted),
+      );
     }
     final name = folder == '/' ? '/' : folder.split('/').last;
     final count = state.items.length;
@@ -163,7 +189,11 @@ class _FolderTitle extends StatelessWidget {
               name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Palette.text),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Palette.text,
+              ),
             ),
           ),
           if (state.loaded) ...[
@@ -197,7 +227,11 @@ class _FocusTitle extends StatelessWidget {
             item.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Palette.text),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Palette.text,
+            ),
           ),
         ),
         const SizedBox(width: 10),
@@ -212,7 +246,11 @@ class _FocusTitle extends StatelessWidget {
 }
 
 class _SearchField extends StatelessWidget {
-  const _SearchField({required this.state, required this.controller, required this.focusNode});
+  const _SearchField({
+    required this.state,
+    required this.controller,
+    required this.focusNode,
+  });
   final AppState state;
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -242,12 +280,19 @@ class _SearchField extends StatelessWidget {
                     controller.clear();
                     state.setQuery('');
                   },
-                  child: const Icon(Icons.close, size: 16, color: Palette.muted),
+                  child: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: Palette.muted,
+                  ),
                 ),
           suffixIconConstraints: const BoxConstraints(minWidth: 30),
           filled: true,
           fillColor: Palette.raised,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: 9,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(6),
             borderSide: BorderSide.none,
@@ -309,7 +354,10 @@ class _SortMenu extends StatelessWidget {
           height: 36,
           child: Row(
             children: [
-              SizedBox(width: 24, child: Icon(Icons.refresh, size: 16, color: Palette.muted)),
+              SizedBox(
+                width: 24,
+                child: Icon(Icons.refresh, size: 16, color: Palette.muted),
+              ),
               Text('Rescan folder (F5)'),
             ],
           ),

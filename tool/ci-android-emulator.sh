@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # CI only: run the integration test on a booted Android emulator.
-# Expects OUT (a folder for logs and screenshots) in the environment.
+# OUT is a folder for logs and screenshots.
 set -uxo pipefail
+OUT="${OUT:-${RUNNER_TEMP:-/tmp}/emulator}"
 
 pkg=com.jrufer.generativeview
 mkdir -p "$OUT/screens"

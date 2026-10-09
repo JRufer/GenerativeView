@@ -36,11 +36,21 @@ ThemeData buildTheme() {
     splashFactory: InkRipple.splashFactory,
   );
   // Derive from the theme's own text style so these keep its font family.
-  final small = (base.textTheme.bodyMedium ?? const TextStyle()).copyWith(color: Palette.text, fontSize: 13);
+  final small = (base.textTheme.bodyMedium ?? const TextStyle()).copyWith(
+    color: Palette.text,
+    fontSize: 13,
+  );
   return base.copyWith(
-    textTheme: base.textTheme.apply(bodyColor: Palette.text, displayColor: Palette.text),
+    textTheme: base.textTheme.apply(
+      bodyColor: Palette.text,
+      displayColor: Palette.text,
+    ),
     iconTheme: const IconThemeData(color: Palette.muted, size: 20),
-    dividerTheme: const DividerThemeData(color: Palette.line, thickness: 1, space: 1),
+    dividerTheme: const DividerThemeData(
+      color: Palette.line,
+      thickness: 1,
+      space: 1,
+    ),
     tooltipTheme: TooltipThemeData(
       waitDuration: const Duration(milliseconds: 500),
       decoration: BoxDecoration(
@@ -79,7 +89,9 @@ ThemeData buildTheme() {
       thickness: WidgetStateProperty.all(8),
       radius: const Radius.circular(4),
       thumbColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.dragged) || states.contains(WidgetState.hovered)
+        (states) =>
+            states.contains(WidgetState.dragged) ||
+                states.contains(WidgetState.hovered)
             ? Palette.muted
             : Palette.faint.withValues(alpha: 0.7),
       ),

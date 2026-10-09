@@ -16,7 +16,8 @@ class RouteCounter extends NavigatorObserver {
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => depth--;
 
   @override
-  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) => depth--;
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      depth--;
 }
 
 /// Keyboard shortcuts for the whole window.
@@ -27,7 +28,12 @@ class RouteCounter extends NavigatorObserver {
 /// [ExcludeFocus] elsewhere, so a clicked button never keeps focus and
 /// swallows Enter or Space.
 class ShortcutLayer extends StatelessWidget {
-  const ShortcutLayer({super.key, required this.state, required this.routes, required this.child});
+  const ShortcutLayer({
+    super.key,
+    required this.state,
+    required this.routes,
+    required this.child,
+  });
 
   final AppState state;
   final RouteCounter routes;
@@ -35,7 +41,8 @@ class ShortcutLayer extends StatelessWidget {
 
   bool get _typing {
     final context = FocusManager.instance.primaryFocus?.context;
-    return context != null && context.findAncestorWidgetOfExactType<EditableText>() != null;
+    return context != null &&
+        context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
   void _stopTyping() => FocusManager.instance.primaryFocus?.unfocus();
@@ -67,27 +74,38 @@ class ShortcutLayer extends StatelessWidget {
       return KeyEventResult.ignored;
     }
 
-    if ((ctrl && key == LogicalKeyboardKey.keyF) || key == LogicalKeyboardKey.slash) {
+    if ((ctrl && key == LogicalKeyboardKey.keyF) ||
+        key == LogicalKeyboardKey.slash) {
       if (state.mode != ViewMode.grid) return KeyEventResult.ignored;
       state.searchFocus.requestFocus();
-      search.selection = TextSelection(baseOffset: 0, extentOffset: search.text.length);
+      search.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: search.text.length,
+      );
       return KeyEventResult.handled;
     }
     if (ctrl && key == LogicalKeyboardKey.keyC) {
       _copyPrompt(context);
       return KeyEventResult.handled;
     }
-    if (ctrl && (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.add || key == LogicalKeyboardKey.numpadAdd)) {
+    if (ctrl &&
+        (key == LogicalKeyboardKey.equal ||
+            key == LogicalKeyboardKey.add ||
+            key == LogicalKeyboardKey.numpadAdd)) {
       state.setTileSize(state.tileSize * 1.15);
       return KeyEventResult.handled;
     }
-    if (ctrl && (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract)) {
+    if (ctrl &&
+        (key == LogicalKeyboardKey.minus ||
+            key == LogicalKeyboardKey.numpadSubtract)) {
       state.setTileSize(state.tileSize / 1.15);
       return KeyEventResult.handled;
     }
-    if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed) return KeyEventResult.ignored;
+    if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed)
+      return KeyEventResult.ignored;
 
-    if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.bracketRight) {
+    if (key == LogicalKeyboardKey.keyI ||
+        key == LogicalKeyboardKey.bracketRight) {
       state.toggleRight();
       return KeyEventResult.handled;
     }
@@ -104,13 +122,17 @@ class ShortcutLayer extends StatelessWidget {
     final columns = focus ? 1 : state.gridColumns;
     final page = focus ? 10 : state.gridColumns * state.gridRowsPerPage;
 
-    if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.keyD) {
       state.move(1);
-    } else if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+    } else if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.keyA) {
       state.move(-1);
-    } else if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyS) {
+    } else if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.keyS) {
       state.move(columns);
-    } else if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.keyW) {
+    } else if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.keyW) {
       state.move(-columns);
     } else if (key == LogicalKeyboardKey.pageDown) {
       state.move(page);
@@ -124,7 +146,9 @@ class ShortcutLayer extends StatelessWidget {
       state.move(keyboard.isShiftPressed ? -1 : 1);
     } else if (key == LogicalKeyboardKey.backspace && focus) {
       state.move(-1);
-    } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter || key == LogicalKeyboardKey.space) {
+    } else if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space) {
       if (event is KeyRepeatEvent) return KeyEventResult.handled;
       if (focus) {
         state.closeFocus();

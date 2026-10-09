@@ -11,7 +11,12 @@ enum ViewMode { grid, focus }
 
 @immutable
 class ScanStatus {
-  const ScanStatus({this.running = false, this.done = 0, this.total = 0, this.error});
+  const ScanStatus({
+    this.running = false,
+    this.done = 0,
+    this.total = 0,
+    this.error,
+  });
   final bool running;
   final int done;
   final int total;
@@ -123,7 +128,9 @@ class AppState extends ChangeNotifier {
   final Map<String, GenInfo> _metaCache = {};
 
   MediaItem? get selected =>
-      (selectedIndex >= 0 && selectedIndex < items.length) ? items[selectedIndex] : null;
+      (selectedIndex >= 0 && selectedIndex < items.length)
+      ? items[selectedIndex]
+      : null;
 
   // ================================================================ startup
 
@@ -133,10 +140,15 @@ class AppState extends ChangeNotifier {
     try {
       saved = (await core.call('settings')) as Map<String, dynamic>;
     } catch (_) {}
-    double number(String key, double fallback) => double.tryParse('${saved[key]}') ?? fallback;
-    bool flag(String key, bool fallback) => saved[key] == null ? fallback : saved[key] == 'true';
+    double number(String key, double fallback) =>
+        double.tryParse('${saved[key]}') ?? fallback;
+    bool flag(String key, bool fallback) =>
+        saved[key] == null ? fallback : saved[key] == 'true';
 
-    tileSize = number('tile_size', tileSize).clamp(minTileSize, maxTileSize).toDouble();
+    tileSize = number(
+      'tile_size',
+      tileSize,
+    ).clamp(minTileSize, maxTileSize).toDouble();
     leftWidth = number('left_width', leftWidth).clamp(200, 520).toDouble();
     rightWidth = number('right_width', rightWidth).clamp(260, 720).toDouble();
     leftOpen = flag('left_open', leftOpen);
@@ -160,7 +172,8 @@ class AppState extends ChangeNotifier {
   }
 
   void _save(String key, String value, {bool debounce = false}) {
-    void write() => _fire(core.call('set_setting', {'key': key, 'value': value}));
+    void write() =>
+        _fire(core.call('set_setting', {'key': key, 'value': value}));
 
     _saveTimers.remove(key)?.cancel();
     if (debounce) {
@@ -177,7 +190,12 @@ class AppState extends ChangeNotifier {
       final raw = (await core.call('roots')) as List;
       places = [
         for (final p in raw)
-          if (p is Map) Place(p['name'] as String, p['path'] as String, p['kind'] as String),
+          if (p is Map)
+            Place(
+              p['name'] as String,
+              p['path'] as String,
+              p['kind'] as String,
+            ),
       ];
     } catch (_) {
       places = const [];
@@ -190,7 +208,12 @@ class AppState extends ChangeNotifier {
       final raw = (await core.call('list_dirs', {'path': path})) as List;
       return [
         for (final d in raw)
-          if (d is Map) DirNode(d['name'] as String, d['path'] as String, d['has_sub'] as bool? ?? false),
+          if (d is Map)
+            DirNode(
+              d['name'] as String,
+              d['path'] as String,
+              d['has_sub'] as bool? ?? false,
+            ),
       ];
     } catch (_) {
       return const [];
@@ -212,16 +235,24 @@ class AppState extends ChangeNotifier {
   Future<void> revealInTree(String path) async {
     Place? best;
     for (final p in places) {
-      final under = path == p.path || path.startsWith(p.path.endsWith('/') ? p.path : '${p.path}/');
+      final under =
+          path == p.path ||
+          path.startsWith(p.path.endsWith('/') ? p.path : '${p.path}/');
       if (under && (best == null || p.path.length > best.path.length)) best = p;
     }
     if (best == null) return;
     var current = best.path;
-    final rest = path.substring(current.length).split('/').where((s) => s.isNotEmpty).toList();
+    final rest = path
+        .substring(current.length)
+        .split('/')
+        .where((s) => s.isNotEmpty)
+        .toList();
     for (final segment in rest) {
       expanded.add(current);
       children[current] ??= await _list(current);
-      current = current.endsWith('/') ? '$current$segment' : '$current/$segment';
+      current = current.endsWith('/')
+          ? '$current$segment'
+          : '$current/$segment';
     }
     // ...and open the folder itself, so its sub-folders are one tap away.
     final own = await _list(current);
@@ -250,7 +281,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     if (remember) _save('folder', dir);
     try {
-      await core.call('set_folder', {'dir': dir, 'recursive': recursive, 'poll_ms': pollMs});
+      await core.call('set_folder', {
+        'dir': dir,
+        'recursive': recursive,
+        'poll_ms': pollMs,
+      });
     } catch (e) {
       scan.value = ScanStatus(error: '$e');
     }
@@ -308,7 +343,9 @@ class AppState extends ChangeNotifier {
         final done = (e['done'] as num?)?.toInt() ?? 0;
         final total = (e['total'] as num?)?.toInt() ?? 0;
         if (state == 'error') {
-          scan.value = ScanStatus(error: e['error'] as String? ?? 'Could not read this folder');
+          scan.value = ScanStatus(
+            error: e['error'] as String? ?? 'Could not read this folder',
+          );
         } else if (state == 'done') {
           scan.value = ScanStatus.idle;
           if (prewarm) _warm();
@@ -321,7 +358,9 @@ class AppState extends ChangeNotifier {
   void _warm() {
     final dir = folder;
     if (dir == null) return;
-    _fire(core.call('warm', {'dir': dir, 'recursive': recursive, 'sort': sort}));
+    _fire(
+      core.call('warm', {'dir': dir, 'recursive': recursive, 'sort': sort}),
+    );
   }
 
   Future<void> _reload() async {
@@ -330,7 +369,14 @@ class AppState extends ChangeNotifier {
     final ticket = ++_queryTicket;
     final ItemList list;
     try {
-      list = ItemList.parse(await core.query(dir: dir, recursive: recursive, text: query, sort: sort));
+      list = ItemList.parse(
+        await core.query(
+          dir: dir,
+          recursive: recursive,
+          text: query,
+          sort: sort,
+        ),
+      );
     } catch (e) {
       if (ticket == _queryTicket && !_disposed) {
         scan.value = ScanStatus(error: '$e');
@@ -379,7 +425,9 @@ class AppState extends ChangeNotifier {
   /// Move the selection, clamped to the list. Used by keyboard navigation.
   void move(int delta) {
     if (items.isEmpty) return;
-    final from = selectedIndex < 0 ? (delta > 0 ? -1 : items.length) : selectedIndex;
+    final from = selectedIndex < 0
+        ? (delta > 0 ? -1 : items.length)
+        : selectedIndex;
     final to = (from + delta).clamp(0, items.length - 1).toInt();
     select(to, reveal: true);
   }

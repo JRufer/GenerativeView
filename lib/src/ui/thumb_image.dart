@@ -100,13 +100,19 @@ class _ThumbImageState extends State<ThumbImage> {
   Widget build(BuildContext context) {
     final image = _image;
     if (image != null) {
-      return RawImage(image: image, fit: widget.fit, filterQuality: FilterQuality.medium);
+      return RawImage(
+        image: image,
+        fit: widget.fit,
+        filterQuality: FilterQuality.medium,
+      );
     }
     if (!widget.showPlaceholderIcon) return const SizedBox.expand();
     if (_failed) {
       return Center(
         child: Icon(
-          widget.item.isVideo ? Icons.movie_outlined : Icons.broken_image_outlined,
+          widget.item.isVideo
+              ? Icons.movie_outlined
+              : Icons.broken_image_outlined,
           color: Palette.faint,
           size: 22,
         ),

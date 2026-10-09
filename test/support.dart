@@ -52,7 +52,12 @@ List<int> _chunk(String type, List<int> data) {
 
 /// A real PNG — a soft two-colour gradient, different per [seed] — with
 /// `tEXt` chunks ahead of the pixels, the way image generators write them.
-Uint8List pngWithText(int width, int height, int seed, Map<String, String> texts) {
+Uint8List pngWithText(
+  int width,
+  int height,
+  int seed,
+  Map<String, String> texts,
+) {
   final hueA = (seed * 47) % 360;
   final hueB = (hueA + 40 + seed * 13) % 360;
   final a = HSVColor.fromAHSV(1, hueA.toDouble(), 0.55, 0.85).toColor();
@@ -145,11 +150,19 @@ String comfyGraph({
   });
 }
 
-String a1111Parameters(String prompt, {int seed = 7, String model = 'sd_xl_base_1.0'}) =>
+String a1111Parameters(
+  String prompt, {
+  int seed = 7,
+  String model = 'sd_xl_base_1.0',
+}) =>
     '$prompt\nNegative prompt: lowres, blurry\n'
     'Steps: 30, Sampler: DPM++ 2M Karras, CFG scale: 7, Seed: $seed, Size: 832x1216, Model: $model, Version: v1.9.4';
 
-String invokeMetadata(String prompt, {int seed = 9, String model = 'Juggernaut XL v9'}) => jsonEncode({
+String invokeMetadata(
+  String prompt, {
+  int seed = 9,
+  String model = 'Juggernaut XL v9',
+}) => jsonEncode({
   'generation_mode': 'sdxl_txt2img',
   'positive_prompt': prompt,
   'negative_prompt': 'people',
@@ -159,10 +172,22 @@ String invokeMetadata(String prompt, {int seed = 9, String model = 'Juggernaut X
   'cfg_scale': 5.5,
   'steps': 28,
   'scheduler': 'dpmpp_2m_sde_k',
-  'model': {'key': 'k1', 'hash': 'blake3:aa', 'name': model, 'base': 'sdxl', 'type': 'main'},
+  'model': {
+    'key': 'k1',
+    'hash': 'blake3:aa',
+    'name': model,
+    'base': 'sdxl',
+    'type': 'main',
+  },
   'loras': [
     {
-      'model': {'key': 'k2', 'hash': 'blake3:bb', 'name': 'cutaway-diagram-xl', 'base': 'sdxl', 'type': 'lora'},
+      'model': {
+        'key': 'k2',
+        'hash': 'blake3:bb',
+        'name': 'cutaway-diagram-xl',
+        'base': 'sdxl',
+        'type': 'lora',
+      },
       'weight': 0.85,
     },
   ],
@@ -186,7 +211,11 @@ Future<void> loadAppFonts() async {
     if (any) await loader.load();
   }
 
-  await load('Roboto', ['Roboto-Regular.ttf', 'Roboto-Medium.ttf', 'Roboto-Bold.ttf']);
+  await load('Roboto', [
+    'Roboto-Regular.ttf',
+    'Roboto-Medium.ttf',
+    'Roboto-Bold.ttf',
+  ]);
   await load('MaterialIcons', ['MaterialIcons-Regular.otf']);
 }
 
@@ -200,7 +229,9 @@ Future<void> pumpUntil(
 }) async {
   final deadline = DateTime.now().add(timeout);
   while (true) {
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
     await tester.pump(const Duration(milliseconds: 150));
     if (done()) return;
     if (DateTime.now().isAfter(deadline)) {
@@ -210,10 +241,15 @@ Future<void> pumpUntil(
 }
 
 /// Save what is on screen as a PNG when GV_SCREENSHOT_DIR is set.
-Future<void> screenshot(WidgetTester tester, GlobalKey boundaryKey, String name) async {
+Future<void> screenshot(
+  WidgetTester tester,
+  GlobalKey boundaryKey,
+  String name,
+) async {
   final dir = Platform.environment['GV_SCREENSHOT_DIR'];
   if (dir == null || dir.isEmpty) return;
-  final boundary = boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {
     final ui.Image image = await boundary.toImage(pixelRatio: 1);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -226,11 +262,14 @@ Future<void> screenshot(WidgetTester tester, GlobalKey boundaryKey, String name)
 /// Capture clipboard writes instead of touching a real clipboard.
 List<String> captureClipboard(WidgetTester tester) {
   final copied = <String>[];
-  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-    if (call.method == 'Clipboard.setData') {
-      copied.add((call.arguments as Map)['text'] as String);
-    }
-    return null;
-  });
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied.add((call.arguments as Map)['text'] as String);
+      }
+      return null;
+    },
+  );
   return copied;
 }

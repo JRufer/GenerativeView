@@ -54,7 +54,9 @@ class _MetaPanelState extends State<MetaPanel> {
 
   void _sync() {
     final item = widget.state.selected;
-    final version = item == null ? null : '${item.path}/${item.mtime}/${item.size}';
+    final version = item == null
+        ? null
+        : '${item.path}/${item.mtime}/${item.size}';
     if (version == _wantedVersion) return;
     _wantedVersion = version;
     if (item == null) {
@@ -67,24 +69,26 @@ class _MetaPanelState extends State<MetaPanel> {
       }
       return;
     }
-    widget.state.metadata(item).then(
-      (info) {
-        if (!mounted || _wantedVersion != version) return;
-        setState(() {
-          _info = info;
-          _shownVersion = version;
-          _error = null;
-        });
-      },
-      onError: (Object e) {
-        if (!mounted || _wantedVersion != version) return;
-        setState(() {
-          _info = null;
-          _shownVersion = version;
-          _error = e;
-        });
-      },
-    );
+    widget.state
+        .metadata(item)
+        .then(
+          (info) {
+            if (!mounted || _wantedVersion != version) return;
+            setState(() {
+              _info = info;
+              _shownVersion = version;
+              _error = null;
+            });
+          },
+          onError: (Object e) {
+            if (!mounted || _wantedVersion != version) return;
+            setState(() {
+              _info = null;
+              _shownVersion = version;
+              _error = e;
+            });
+          },
+        );
   }
 
   @override
@@ -102,106 +106,117 @@ class _MetaPanelState extends State<MetaPanel> {
     }
     return ExcludeFocus(
       child: Scrollbar(
-      controller: _scroll,
-      child: ListView(
         controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
-        children: [
-          _FileHeader(item: item, info: info),
-          if (!info.hasGeneration) ...[
-            const SizedBox(height: 18),
-            const Text(
-              'No generation data found in this file.',
-              style: TextStyle(color: Palette.muted, fontSize: 13),
-            ),
+        child: ListView(
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+          children: [
+            _FileHeader(item: item, info: info),
+            if (!info.hasGeneration) ...[
+              const SizedBox(height: 18),
+              const Text(
+                'No generation data found in this file.',
+                style: TextStyle(color: Palette.muted, fontSize: 13),
+              ),
+            ],
+            if (info.prompt.isNotEmpty)
+              _Section(
+                label: 'Prompt',
+                child: _CopyBlock(
+                  text: info.prompt,
+                  what: 'prompt',
+                  semanticsLabel: 'Prompt',
+                ),
+              ),
+            if (info.negative.isNotEmpty)
+              _Section(
+                label: 'Negative prompt',
+                child: _CopyBlock(
+                  text: info.negative,
+                  what: 'negative prompt',
+                  semanticsLabel: 'Negative prompt',
+                ),
+              ),
+            if (info.seed.isNotEmpty || info.model.isNotEmpty)
+              _Section(
+                label: 'Generation',
+                child: Column(
+                  children: [
+                    if (info.seed.isNotEmpty)
+                      _Field(name: 'Seed', value: info.seed, mono: true),
+                    if (info.model.isNotEmpty)
+                      _Field(name: 'Model', value: info.model),
+                  ],
+                ),
+              ),
+            if (info.loras.isNotEmpty)
+              _Section(
+                label: 'LoRAs',
+                action: _SectionAction(
+                  label: 'Copy as tags',
+                  onTap: () => copyText(
+                    context,
+                    info.loras.map((l) => l.tag).join(' '),
+                    'LoRA tags',
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    for (final l in info.loras)
+                      _Field(
+                        name: l.name,
+                        value: l.weight == null
+                            ? ''
+                            : (l.weightClip != null && l.weightClip != l.weight
+                                  ? '${formatNumber(l.weight!)} / ${formatNumber(l.weightClip!)}'
+                                  : formatNumber(l.weight!)),
+                        copyValue: l.name,
+                        what: 'LoRA name',
+                        nameIsValue: true,
+                      ),
+                  ],
+                ),
+              ),
+            if (info.models.any((m) => m.name != info.model))
+              _Section(
+                label: 'Other models',
+                child: Column(
+                  children: [
+                    for (final m in info.models)
+                      if (m.name != info.model)
+                        _Field(name: GenInfo.kindLabel(m.kind), value: m.name),
+                  ],
+                ),
+              ),
+            if (info.params.isNotEmpty)
+              _Section(
+                label: 'Settings',
+                child: Column(
+                  children: [
+                    for (final p in info.params)
+                      _Field(name: p.key, value: p.value),
+                  ],
+                ),
+              ),
+            if (info.nodes.isNotEmpty) _WorkflowSection(nodes: info.nodes),
+            if (info.raw.isNotEmpty)
+              _Section(
+                label: 'Raw metadata',
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final r in info.raw)
+                      _Chip(
+                        label: '${r.key} · ${formatBytes(r.value.length)}',
+                        tooltip: 'Copy ${r.key} exactly as stored in the file',
+                        onTap: () => copyText(context, r.value, r.key),
+                      ),
+                  ],
+                ),
+              ),
           ],
-          if (info.prompt.isNotEmpty)
-            _Section(
-              label: 'Prompt',
-              child: _CopyBlock(text: info.prompt, what: 'prompt', semanticsLabel: 'Prompt'),
-            ),
-          if (info.negative.isNotEmpty)
-            _Section(
-              label: 'Negative prompt',
-              child: _CopyBlock(
-                text: info.negative,
-                what: 'negative prompt',
-                semanticsLabel: 'Negative prompt',
-              ),
-            ),
-          if (info.seed.isNotEmpty || info.model.isNotEmpty)
-            _Section(
-              label: 'Generation',
-              child: Column(
-                children: [
-                  if (info.seed.isNotEmpty) _Field(name: 'Seed', value: info.seed, mono: true),
-                  if (info.model.isNotEmpty) _Field(name: 'Model', value: info.model),
-                ],
-              ),
-            ),
-          if (info.loras.isNotEmpty)
-            _Section(
-              label: 'LoRAs',
-              action: _SectionAction(
-                label: 'Copy as tags',
-                onTap: () => copyText(context, info.loras.map((l) => l.tag).join(' '), 'LoRA tags'),
-              ),
-              child: Column(
-                children: [
-                  for (final l in info.loras)
-                    _Field(
-                      name: l.name,
-                      value: l.weight == null
-                          ? ''
-                          : (l.weightClip != null && l.weightClip != l.weight
-                                ? '${formatNumber(l.weight!)} / ${formatNumber(l.weightClip!)}'
-                                : formatNumber(l.weight!)),
-                      copyValue: l.name,
-                      what: 'LoRA name',
-                      nameIsValue: true,
-                    ),
-                ],
-              ),
-            ),
-          if (info.models.any((m) => m.name != info.model))
-            _Section(
-              label: 'Other models',
-              child: Column(
-                children: [
-                  for (final m in info.models)
-                    if (m.name != info.model)
-                      _Field(name: GenInfo.kindLabel(m.kind), value: m.name),
-                ],
-              ),
-            ),
-          if (info.params.isNotEmpty)
-            _Section(
-              label: 'Settings',
-              child: Column(
-                children: [
-                  for (final p in info.params) _Field(name: p.key, value: p.value),
-                ],
-              ),
-            ),
-          if (info.nodes.isNotEmpty) _WorkflowSection(nodes: info.nodes),
-          if (info.raw.isNotEmpty)
-            _Section(
-              label: 'Raw metadata',
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final r in info.raw)
-                    _Chip(
-                      label: '${r.key} · ${formatBytes(r.value.length)}',
-                      tooltip: 'Copy ${r.key} exactly as stored in the file',
-                      onTap: () => copyText(context, r.value, r.key),
-                    ),
-                ],
-              ),
-            ),
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -219,7 +234,11 @@ class _PanelMessage extends StatelessWidget {
         child: Text(
           text,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Palette.muted, fontSize: 13, height: 1.4),
+          style: const TextStyle(
+            color: Palette.muted,
+            fontSize: 13,
+            height: 1.4,
+          ),
         ),
       ),
     );
@@ -249,7 +268,12 @@ class _FileHeader extends StatelessWidget {
           onTap: () => copyText(context, item.name, 'file name'),
           child: Text(
             item.name,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Palette.text, height: 1.3),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Palette.text,
+              height: 1.3,
+            ),
           ),
         ),
         const SizedBox(height: 2),
@@ -257,7 +281,11 @@ class _FileHeader extends StatelessWidget {
           onTap: () => copyText(context, item.path, 'file path'),
           child: Text(
             item.dir,
-            style: const TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.3),
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: Palette.faint,
+              height: 1.3,
+            ),
           ),
         ),
         const SizedBox(height: 6),
@@ -274,7 +302,11 @@ class _FileHeader extends StatelessWidget {
                 ),
                 child: Text(
                   source,
-                  style: const TextStyle(fontSize: 11.5, color: Palette.accent, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: Palette.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             const Spacer(),
@@ -282,7 +314,8 @@ class _FileHeader extends StatelessWidget {
               _Chip(
                 label: 'Copy all',
                 tooltip: 'Copy every field as text',
-                onTap: () => copyText(context, info.summary(), 'all generation data'),
+                onTap: () =>
+                    copyText(context, info.summary(), 'all generation data'),
               ),
           ],
         ),
@@ -326,7 +359,13 @@ class _Section extends StatelessWidget {
               if (action != null)
                 _Tappable(
                   onTap: action!.onTap,
-                  child: Text(action!.label, style: const TextStyle(fontSize: 11.5, color: Palette.accent)),
+                  child: Text(
+                    action!.label,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      color: Palette.accent,
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -340,7 +379,11 @@ class _Section extends StatelessWidget {
 
 /// Hover/press feedback without Material ink's height requirements.
 class _Tappable extends StatelessWidget {
-  const _Tappable({required this.onTap, required this.child, this.padding = EdgeInsets.zero});
+  const _Tappable({
+    required this.onTap,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+  });
   final VoidCallback onTap;
   final Widget child;
   final EdgeInsets padding;
@@ -361,7 +404,11 @@ class _Tappable extends StatelessWidget {
 
 /// A block of text that copies itself when tapped.
 class _CopyBlock extends StatelessWidget {
-  const _CopyBlock({required this.text, required this.what, required this.semanticsLabel});
+  const _CopyBlock({
+    required this.text,
+    required this.what,
+    required this.semanticsLabel,
+  });
   final String text;
   final String what;
   final String semanticsLabel;
@@ -382,7 +429,11 @@ class _CopyBlock extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
             child: Text(
               text,
-              style: const TextStyle(fontSize: 13, height: 1.45, color: Palette.text),
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.45,
+                color: Palette.text,
+              ),
             ),
           ),
         ),
@@ -406,6 +457,7 @@ class _Field extends StatelessWidget {
   final String value;
   final String? copyValue;
   final String? what;
+
   /// Fixed-width digits, for long numbers.
   final bool mono;
 
@@ -426,7 +478,8 @@ class _Field extends StatelessWidget {
       fontFeatures: mono ? const [FontFeature.tabularFigures()] : null,
     );
     return _Tappable(
-      onTap: () => copyText(context, copyValue ?? value, what ?? name.toLowerCase()),
+      onTap: () =>
+          copyText(context, copyValue ?? value, what ?? name.toLowerCase()),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -466,7 +519,10 @@ class _Chip extends StatelessWidget {
         hoverColor: Palette.hover,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-          child: Text(label, style: const TextStyle(fontSize: 12, color: Palette.text)),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Palette.text),
+          ),
         ),
       ),
     );
@@ -511,7 +567,11 @@ class _WorkflowSectionState extends State<_WorkflowSection> {
                     ),
                   ),
                 ),
-                Icon(_open ? Icons.expand_less : Icons.expand_more, size: 18, color: Palette.faint),
+                Icon(
+                  _open ? Icons.expand_less : Icons.expand_more,
+                  size: 18,
+                  color: Palette.faint,
+                ),
               ],
             ),
           ),
@@ -526,7 +586,9 @@ class _WorkflowSectionState extends State<_WorkflowSection> {
                 child: Row(
                   children: [
                     Icon(
-                      _expanded.contains(node.id) ? Icons.arrow_drop_down : Icons.arrow_right,
+                      _expanded.contains(node.id)
+                          ? Icons.arrow_drop_down
+                          : Icons.arrow_right,
                       size: 18,
                       color: Palette.faint,
                     ),
@@ -534,12 +596,20 @@ class _WorkflowSectionState extends State<_WorkflowSection> {
                       child: Text(
                         node.title.isEmpty ? node.type : node.title,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12.5, color: Palette.text),
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: Palette.text,
+                        ),
                       ),
                     ),
                     Text(
-                      node.title == node.type || node.title.isEmpty ? '#${node.id}' : '${node.type}  #${node.id}',
-                      style: const TextStyle(fontSize: 11, color: Palette.faint),
+                      node.title == node.type || node.title.isEmpty
+                          ? '#${node.id}'
+                          : '${node.type}  #${node.id}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Palette.faint,
+                      ),
                     ),
                   ],
                 ),
@@ -549,7 +619,8 @@ class _WorkflowSectionState extends State<_WorkflowSection> {
                   padding: const EdgeInsets.only(left: 18),
                   child: Column(
                     children: [
-                      for (final input in node.inputs) _Field(name: input.key, value: input.value),
+                      for (final input in node.inputs)
+                        _Field(name: input.key, value: input.value),
                     ],
                   ),
                 ),

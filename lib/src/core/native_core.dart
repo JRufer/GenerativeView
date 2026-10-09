@@ -85,10 +85,9 @@ class NativeCore {
               int,
             )
           >('gv_thumb_put'),
-      _cancel = lib
-          .lookupFunction<Void Function(Int64), void Function(int)>(
-            'gv_cancel',
-          );
+      _cancel = lib.lookupFunction<Void Function(Int64), void Function(int)>(
+        'gv_cancel',
+      );
 
   final void Function(_PostCObject) _init;
   final int Function(Pointer<Utf8>, Pointer<Utf8>, int) _open;
@@ -230,7 +229,15 @@ class NativeCore {
     final units = utf8.encode(path);
     final ptr = malloc<Uint8>(units.length);
     ptr.asTypedList(units.length).setAll(0, units);
-    _thumb(_replies.sendPort.nativePort, id, ptr, units.length, mtime, size, tier);
+    _thumb(
+      _replies.sendPort.nativePort,
+      id,
+      ptr,
+      units.length,
+      mtime,
+      size,
+      tier,
+    );
     malloc.free(ptr);
     return id;
   }

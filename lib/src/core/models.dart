@@ -51,7 +51,24 @@ class ItemList {
   final List<MediaItem?> _cache;
 
   static final ItemList empty = ItemList.parse(
-    Uint8List.fromList(const [0x47, 0x56, 0x51, 0x31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    Uint8List.fromList(const [
+      0x47,
+      0x56,
+      0x51,
+      0x31,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]),
   );
 
   factory ItemList.parse(Uint8List bytes) {
@@ -66,7 +83,9 @@ class ItemList {
     final dirs = List<String>.generate(dirCount, (i) {
       final off = d.getUint32(dirTable + i * 8, Endian.little);
       final len = d.getUint32(dirTable + i * 8 + 4, Endian.little);
-      return utf8.decode(Uint8List.sublistView(bytes, strings + off, strings + off + len));
+      return utf8.decode(
+        Uint8List.sublistView(bytes, strings + off, strings + off + len),
+      );
     }, growable: false);
     return ItemList._(d, rows, dirs, strings);
   }
@@ -284,7 +303,10 @@ class GenInfo {
     'hypernetwork' => 'Hypernetwork',
     'style_model' => 'Style model',
     'model' => 'Model',
-    _ => kind.isEmpty ? 'Model' : '${kind[0].toUpperCase()}${kind.substring(1).replaceAll('_', ' ')}',
+    _ =>
+      kind.isEmpty
+          ? 'Model'
+          : '${kind[0].toUpperCase()}${kind.substring(1).replaceAll('_', ' ')}',
   };
 }
 

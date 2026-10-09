@@ -81,7 +81,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   bool get _typing {
     final context = FocusManager.instance.primaryFocus?.context;
-    return context != null && context.findAncestorWidgetOfExactType<EditableText>() != null;
+    return context != null &&
+        context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
   void _closeOverlays() => state.closePanels();
@@ -114,7 +115,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   TopBar(state: state),
                   _ScanBar(state: state),
                   if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
-                  Expanded(child: narrow ? _narrowBody(constraints.maxWidth) : _wideBody()),
+                  Expanded(
+                    child: narrow
+                        ? _narrowBody(constraints.maxWidth)
+                        : _wideBody(),
+                  ),
                 ],
               ),
             ),
@@ -135,16 +140,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Nothing in the content area takes keyboard focus; see ShortcutLayer.
       child: ExcludeFocus(
         child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // The grid stays alive under the focus view so it keeps its place.
-          Offstage(
-            offstage: focus,
-            child: MediaGrid(state: state),
-          ),
-          if (focus) FocusView(state: state),
-        ],
-      ),
+          fit: StackFit.expand,
+          children: [
+            // The grid stays alive under the focus view so it keeps its place.
+            Offstage(
+              offstage: focus,
+              child: MediaGrid(state: state),
+            ),
+            if (focus) FocusView(state: state),
+          ],
+        ),
       ),
     );
   }
@@ -156,16 +161,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (state.leftOpen && !focus) ...[
           SizedBox(
             width: state.leftWidth,
-            child: ColoredBox(color: Palette.panel, child: FolderPanel(state: state)),
+            child: ColoredBox(
+              color: Palette.panel,
+              child: FolderPanel(state: state),
+            ),
           ),
           _DragHandle(onDrag: (dx) => state.setLeftWidth(state.leftWidth + dx)),
         ],
         Expanded(child: _content()),
         if (state.rightOpen) ...[
-          _DragHandle(onDrag: (dx) => state.setRightWidth(state.rightWidth - dx)),
+          _DragHandle(
+            onDrag: (dx) => state.setRightWidth(state.rightWidth - dx),
+          ),
           SizedBox(
             width: state.rightWidth,
-            child: ColoredBox(color: Palette.panel, child: MetaPanel(state: state)),
+            child: ColoredBox(
+              color: Palette.panel,
+              child: MetaPanel(state: state),
+            ),
           ),
         ],
       ],
@@ -203,7 +216,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             alignment: Alignment.centerRight,
             child: SizedBox(
               width: panelWidth,
-              child: ColoredBox(color: Palette.panel, child: MetaPanel(state: state)),
+              child: ColoredBox(
+                color: Palette.panel,
+                child: MetaPanel(state: state),
+              ),
             ),
           ),
       ],
@@ -258,7 +274,12 @@ class _StorageBanner extends StatelessWidget {
               style: const TextStyle(fontSize: 13, color: Palette.text),
             ),
           ),
-          ExcludeFocus(child: TextButton(onPressed: onGrant, child: const Text('Allow access'))),
+          ExcludeFocus(
+            child: TextButton(
+              onPressed: onGrant,
+              child: const Text('Allow access'),
+            ),
+          ),
         ],
       ),
     );
@@ -279,7 +300,9 @@ class _DragHandle extends StatelessWidget {
         onHorizontalDragUpdate: (d) => onDrag(d.delta.dx),
         child: const SizedBox(
           width: 7,
-          child: Center(child: VerticalDivider(width: 1, thickness: 1, color: Palette.line)),
+          child: Center(
+            child: VerticalDivider(width: 1, thickness: 1, color: Palette.line),
+          ),
         ),
       ),
     );

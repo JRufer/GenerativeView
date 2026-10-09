@@ -37,7 +37,12 @@ Future<void> main(List<String> args) async {
       maxBytes: thumbCacheBytes,
       hostFrame: Platform.isAndroid ? androidVideoFrame : null,
     );
-    state = AppState(core: core, thumbs: thumbs, pollMs: pollIntervalMs, videoPlayback: videoPlayback);
+    state = AppState(
+      core: core,
+      thumbs: thumbs,
+      pollMs: pollIntervalMs,
+      videoPlayback: videoPlayback,
+    );
     // `generativeview /some/folder` opens that folder.
     final requested = args.where((a) => !a.startsWith('-')).firstOrNull;
     final initial = requested != null && Directory(requested).existsSync()
@@ -71,9 +76,12 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       navigatorObservers: [_routes],
-      builder: (context, child) =>
-          state == null ? child! : ShortcutLayer(state: state, routes: _routes, child: child!),
-      home: state == null ? _StartupFailure(failure: widget.failure) : HomePage(state: state),
+      builder: (context, child) => state == null
+          ? child!
+          : ShortcutLayer(state: state, routes: _routes, child: child!),
+      home: state == null
+          ? _StartupFailure(failure: widget.failure)
+          : HomePage(state: state),
     );
   }
 }
@@ -93,12 +101,19 @@ class _StartupFailure extends StatelessWidget {
             children: [
               const Icon(Icons.error_outline, size: 36, color: Palette.danger),
               const SizedBox(height: 14),
-              const Text('GenerativeView could not start', style: TextStyle(fontSize: 17)),
+              const Text(
+                'GenerativeView could not start',
+                style: TextStyle(fontSize: 17),
+              ),
               const SizedBox(height: 8),
               SelectableText(
                 '$failure',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, color: Palette.muted, height: 1.4),
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Palette.muted,
+                  height: 1.4,
+                ),
               ),
             ],
           ),

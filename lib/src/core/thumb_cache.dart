@@ -69,11 +69,16 @@ class ThumbCache {
     return null;
   }
 
-  bool hasFailed(MediaItem item, int tier) => _failed.contains(_key(item, tier));
+  bool hasFailed(MediaItem item, int tier) =>
+      _failed.contains(_key(item, tier));
 
   /// Load a thumbnail. [onImage] receives a handle the caller must dispose,
   /// or null if the file could not be decoded.
-  ThumbRequest load(MediaItem item, int tier, void Function(ui.Image? image) onImage) {
+  ThumbRequest load(
+    MediaItem item,
+    int tier,
+    void Function(ui.Image? image) onImage,
+  ) {
     final key = _key(item, tier);
     final request = ThumbRequest._(this, key, onImage);
     final existing = _loads[key];
@@ -83,7 +88,10 @@ class ThumbCache {
     }
     final load = _Load()..listeners.add(onImage);
     _loads[key] = load;
-    load.requestId = _core.thumb(item.path, item.mtime, item.size, tier, (bytes, needHost) {
+    load.requestId = _core.thumb(item.path, item.mtime, item.size, tier, (
+      bytes,
+      needHost,
+    ) {
       if (bytes != null) {
         _decode(key, load, bytes);
       } else if (needHost && hostFrame != null) {
@@ -95,7 +103,12 @@ class ThumbCache {
     return request;
   }
 
-  Future<void> _fromHost(String key, _Load load, MediaItem item, int tier) async {
+  Future<void> _fromHost(
+    String key,
+    _Load load,
+    MediaItem item,
+    int tier,
+  ) async {
     Uint8List? frame;
     try {
       frame = await hostFrame!(item.path);
@@ -106,13 +119,20 @@ class ThumbCache {
       _finish(key, load, null);
       return;
     }
-    load.requestId = _core.thumbPut(item.path, item.mtime, item.size, tier, frame, (bytes, _) {
-      if (bytes != null) {
-        _decode(key, load, bytes);
-      } else {
-        _finish(key, load, null);
-      }
-    });
+    load.requestId = _core.thumbPut(
+      item.path,
+      item.mtime,
+      item.size,
+      tier,
+      frame,
+      (bytes, _) {
+        if (bytes != null) {
+          _decode(key, load, bytes);
+        } else {
+          _finish(key, load, null);
+        }
+      },
+    );
   }
 
   Future<void> _decode(String key, _Load load, Uint8List bytes) async {

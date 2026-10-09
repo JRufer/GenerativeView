@@ -5,7 +5,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/src/core/models.dart';
 
 /// Build a packed query result the way `core/src/db.rs` does.
-Uint8List pack(List<String> dirs, List<(int id, int dir, String name, int kind, int w, int h, int mtime, int size, int dur)> rows) {
+Uint8List pack(
+  List<String> dirs,
+  List<
+    (
+      int id,
+      int dir,
+      String name,
+      int kind,
+      int w,
+      int h,
+      int mtime,
+      int size,
+      int dur,
+    )
+  >
+  rows,
+) {
   final strings = BytesBuilder();
   final body = BytesBuilder();
   for (final r in rows) {
@@ -37,7 +53,11 @@ Uint8List pack(List<String> dirs, List<(int id, int dir, String name, int kind, 
     ..setUint32(4, rows.length, Endian.little)
     ..setUint32(8, dirs.length, Endian.little)
     ..setUint32(12, strings.length, Endian.little);
-  return Uint8List.fromList([...header.buffer.asUint8List(), ...body.toBytes(), ...strings.toBytes()]);
+  return Uint8List.fromList([
+    ...header.buffer.asUint8List(),
+    ...body.toBytes(),
+    ...strings.toBytes(),
+  ]);
 }
 
 void main() {
@@ -58,12 +78,18 @@ void main() {
     expect(list.indexOfId(404), -1);
 
     final a = list[0];
-    expect((a.id, a.name, a.dir, a.isVideo, a.width, a.height, a.mtime, a.size), (7, 'x.png', '/out', false, 640, 480, 1700000000123, 99));
+    expect(
+      (a.id, a.name, a.dir, a.isVideo, a.width, a.height, a.mtime, a.size),
+      (7, 'x.png', '/out', false, 640, 480, 1700000000123, 99),
+    );
     expect(a.path, '/out/x.png');
     expect(identical(list[0], a), isTrue);
 
     final b = list[1];
-    expect((b.name, b.dir, b.isVideo, b.durationMs, b.size), ('ü.mp4', '/out/bé', true, 2500, 1 << 33));
+    expect(
+      (b.name, b.dir, b.isVideo, b.durationMs, b.size),
+      ('ü.mp4', '/out/bé', true, 2500, 1 << 33),
+    );
     expect(b.aspect, closeTo(16 / 9, 1e-9));
 
     expect(ItemList.empty.length, 0);
@@ -80,14 +106,16 @@ void main() {
        "nodes":[{"id":"3","class":"KSampler","title":"KSampler","inputs":[["seed","42"],["model","→ Load #4"]]}],
        "width":1024,"height":768,"duration_ms":0,
        "raw":[["prompt","{}"],["workflow","{\\"a\\":1}"]]}
-      ''')
-          as Map<String, dynamic>,
+      ''') as Map<String, dynamic>,
     );
     expect(info.hasGeneration, isTrue);
     expect(info.models[1].hash, 'abc');
     expect(info.loras[0].tag, '<lora:inkwash_v2:0.6>');
     expect(info.loras[1].tag, '<lora:plain:1>');
-    expect(info.params.map((p) => '${p.key}=${p.value}'), ['Steps=20', 'CFG=3.5']);
+    expect(info.params.map((p) => '${p.key}=${p.value}'), [
+      'Steps=20',
+      'CFG=3.5',
+    ]);
     expect(info.nodes.single.inputs.last.value, '→ Load #4');
     expect(info.raw.last.value, '{"a":1}');
     expect(

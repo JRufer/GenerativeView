@@ -31,7 +31,9 @@ class _FocusViewState extends State<FocusView> {
   @override
   void initState() {
     super.initState();
-    _pages = PageController(initialPage: state.selectedIndex < 0 ? 0 : state.selectedIndex);
+    _pages = PageController(
+      initialPage: state.selectedIndex < 0 ? 0 : state.selectedIndex,
+    );
     state.addListener(_onState);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _precacheAround(state.selectedIndex);
@@ -55,7 +57,10 @@ class _FocusViewState extends State<FocusView> {
     final current = _pages.page?.round();
     if (current != target) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _pages.hasClients && _pages.page?.round() != state.selectedIndex && state.selectedIndex >= 0) {
+        if (mounted &&
+            _pages.hasClients &&
+            _pages.page?.round() != state.selectedIndex &&
+            state.selectedIndex >= 0) {
           _pages.jumpToPage(state.selectedIndex);
         }
       });
@@ -76,7 +81,9 @@ class _FocusViewState extends State<FocusView> {
     // Trackpads send a stream of small deltas; turn them into discrete steps.
     _wheelDebt += e.scrollDelta.dy;
     final now = DateTime.now();
-    if (_wheelDebt.abs() < 30 || now.difference(_lastWheelStep) < const Duration(milliseconds: 70)) return;
+    if (_wheelDebt.abs() < 30 ||
+        now.difference(_lastWheelStep) < const Duration(milliseconds: 70))
+      return;
     final forward = _wheelDebt > 0;
     _wheelDebt = 0;
     _lastWheelStep = now;
@@ -92,7 +99,9 @@ class _FocusViewState extends State<FocusView> {
       child: PageView.builder(
         controller: _pages,
         allowImplicitScrolling: true,
-        physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
+        physics: _zoomed
+            ? const NeverScrollableScrollPhysics()
+            : const PageScrollPhysics(),
         itemCount: items.length,
         onPageChanged: (index) {
           if (index != state.selectedIndex) state.select(index);
@@ -164,7 +173,10 @@ class _FocusPageState extends State<_FocusPage> {
     GestureBinding.instance.pointerSignalResolver.register(event, (e) {
       final scroll = e as PointerScrollEvent;
       if (HardwareKeyboard.instance.isControlPressed) {
-        _zoomAt(scroll.localPosition, scroll.scrollDelta.dy > 0 ? 1 / 1.2 : 1.2);
+        _zoomAt(
+          scroll.localPosition,
+          scroll.scrollDelta.dy > 0 ? 1 / 1.2 : 1.2,
+        );
       } else if (!_zoomed) {
         widget.onWheel(scroll);
       }
@@ -219,7 +231,11 @@ class _FocusPageState extends State<_FocusPage> {
             gaplessPlayback: true,
             filterQuality: FilterQuality.medium,
             errorBuilder: (context, error, stack) => const Center(
-              child: Icon(Icons.broken_image_outlined, color: Palette.faint, size: 40),
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: Palette.faint,
+                size: 40,
+              ),
             ),
           ),
         ],

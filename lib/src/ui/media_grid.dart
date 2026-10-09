@@ -59,7 +59,9 @@ class _MediaGridState extends State<MediaGrid> {
     state.addListener(_onState);
     HardwareKeyboard.instance.addHandler(_onKey);
     if (state.selectedIndex >= 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal(state.selectedIndex));
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _reveal(state.selectedIndex),
+      );
     }
   }
 
@@ -87,7 +89,9 @@ class _MediaGridState extends State<MediaGrid> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
         final target = (anchor ~/ _columns) * _rowExtent;
-        _scroll.jumpTo(target.clamp(0.0, _scroll.position.maxScrollExtent).toDouble());
+        _scroll.jumpTo(
+          target.clamp(0.0, _scroll.position.maxScrollExtent).toDouble(),
+        );
       });
       return;
     }
@@ -98,7 +102,9 @@ class _MediaGridState extends State<MediaGrid> {
     setState(() {});
     if (state.revealTick != _seenReveal) {
       _seenReveal = state.revealTick;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal(state.selectedIndex));
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _reveal(state.selectedIndex),
+      );
     }
   }
 
@@ -115,13 +121,17 @@ class _MediaGridState extends State<MediaGrid> {
       target = bottom - _viewport;
     }
     if (target != null) {
-      _scroll.jumpTo(target.clamp(0.0, _scroll.position.maxScrollExtent).toDouble());
+      _scroll.jumpTo(
+        target.clamp(0.0, _scroll.position.maxScrollExtent).toDouble(),
+      );
     }
   }
 
   void _tap(int index, MediaItem item) {
     final now = DateTime.now();
-    final again = item.id == _lastTapId && now.difference(_lastTapAt) < const Duration(milliseconds: 350);
+    final again =
+        item.id == _lastTapId &&
+        now.difference(_lastTapAt) < const Duration(milliseconds: 350);
     _lastTapId = item.id;
     _lastTapAt = now;
     if (again) {
@@ -180,10 +190,18 @@ class _MediaGridState extends State<MediaGrid> {
         valueListenable: state.scan,
         builder: (context, scan, _) {
           if (scan.error != null) {
-            return _Hint(icon: Icons.error_outline, title: 'Could not read this folder', detail: scan.error!);
+            return _Hint(
+              icon: Icons.error_outline,
+              title: 'Could not read this folder',
+              detail: scan.error!,
+            );
           }
           if (scan.running) {
-            return const _Hint(icon: Icons.hourglass_empty, title: 'Reading folder…', detail: '');
+            return const _Hint(
+              icon: Icons.hourglass_empty,
+              title: 'Reading folder…',
+              detail: '',
+            );
           }
           if (state.query.trim().isNotEmpty) {
             return _Hint(
@@ -206,7 +224,10 @@ class _MediaGridState extends State<MediaGrid> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final columns = math.max(1, ((width - _gap) / (state.tileSize + _gap)).floor());
+        final columns = math.max(
+          1,
+          ((width - _gap) / (state.tileSize + _gap)).floor(),
+        );
         final tile = (width - _gap * (columns + 1)) / columns;
         _columns = columns;
         _rowExtent = tile + _gap;
@@ -286,7 +307,9 @@ class _Tile extends StatelessWidget {
         child: DecoratedBox(
           position: DecorationPosition.foreground,
           decoration: BoxDecoration(
-            border: selected ? Border.all(color: Palette.accent, width: 2) : null,
+            border: selected
+                ? Border.all(color: Palette.accent, width: 2)
+                : null,
             borderRadius: BorderRadius.circular(3),
           ),
           child: ClipRRect(
@@ -330,7 +353,11 @@ class _VideoBadge extends StatelessWidget {
             if (durationMs > 0)
               Text(
                 formatDuration(durationMs),
-                style: const TextStyle(color: Colors.white, fontSize: 11, height: 1.2),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  height: 1.2,
+                ),
               ),
           ],
         ),
@@ -355,7 +382,11 @@ class _Hint extends StatelessWidget {
           children: [
             Icon(icon, size: 36, color: Palette.faint),
             const SizedBox(height: 14),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, color: Palette.text)),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16, color: Palette.text),
+            ),
             if (detail.isNotEmpty) ...[
               const SizedBox(height: 6),
               ConstrainedBox(
@@ -363,7 +394,11 @@ class _Hint extends StatelessWidget {
                 child: Text(
                   detail,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13, color: Palette.muted, height: 1.4),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Palette.muted,
+                    height: 1.4,
+                  ),
                 ),
               ),
             ],
