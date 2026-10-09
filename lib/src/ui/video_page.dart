@@ -32,7 +32,16 @@ class VideoPage extends StatefulWidget {
 class _VideoPageState extends State<VideoPage> {
   Player? _player;
   VideoController? _controller;
-  bool _failed = false;
+
+  /// The last error mpv reported. Many are harmless (a hardware decoder it
+  /// probed and could not load, say), so this only counts as a failure while
+  /// no picture has arrived.
+  String? _error;
+  bool _hasPicture = false;
+  bool _graceOver = false;
+  Timer? _grace;
+
+  bool get _failed => _error != null && !_hasPicture && _graceOver;
 
   @override
   void initState() {
@@ -66,11 +75,23 @@ class _VideoPageState extends State<VideoPage> {
       _controller = VideoController(player);
       unawaited(player.setPlaylistMode(PlaylistMode.single));
       unawaited(player.open(Media(Uri.file(widget.item.path).toString())));
-      player.stream.error.listen((_) {
-        if (mounted) setState(() => _failed = true);
+      player.stream.error.listen((message) {
+        debugPrint('video: $message');
+        if (!mounted || _player != player) return;
+        setState(() => _error = message);
+        // Give the picture a moment to arrive before calling it a failure.
+        _grace ??= Timer(const Duration(seconds: 3), () {
+          if (mounted) setState(() => _graceOver = true);
+        });
       });
-    } catch (_) {
-      _failed = true;
+      player.stream.width.listen((width) {
+        if (mounted && _player == player && (width ?? 0) > 0 && !_hasPicture) {
+          setState(() => _hasPicture = true);
+        }
+      });
+    } catch (e) {
+      _error = '$e';
+      _graceOver = true;
     }
   }
 
@@ -78,7 +99,11 @@ class _VideoPageState extends State<VideoPage> {
     final player = _player;
     _player = null;
     _controller = null;
-    _failed = false;
+    _error = null;
+    _hasPicture = false;
+    _graceOver = false;
+    _grace?.cancel();
+    _grace = null;
     if (player != null) unawaited(player.dispose());
   }
 
@@ -97,46 +122,45 @@ class _VideoPageState extends State<VideoPage> {
       tier: 1,
       fit: BoxFit.contain,
     );
-    if (controller == null || _failed) {
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          poster,
-          if (!widget.playbackAvailable || _failed)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Container(
-                margin: const EdgeInsets.all(20),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Palette.raised,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Palette.line),
-                ),
-                child: Text(
-                  _failed
-                      ? 'This video could not be played.'
-                      : 'Video playback is unavailable. On Linux, install mpv to enable it.',
-                  style: const TextStyle(fontSize: 13, color: Palette.muted),
-                ),
-              ),
-            ),
-        ],
-      );
-    }
-    final player = _player!;
+    final player = _player;
+    final showMessage = !widget.playbackAvailable || _failed;
     return Stack(
       fit: StackFit.expand,
       children: [
         poster,
-        // Our own controls: the stock ones claim double-tap, which here
-        // means "back to the grid".
-        Video(controller: controller, fill: Colors.transparent, controls: NoVideoControls),
-        GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: player.playOrPause,
-        ),
-        Align(alignment: Alignment.bottomCenter, child: _Transport(player: player)),
+        if (controller != null && player != null) ...[
+          // Our own controls: the stock ones claim double-tap, which here
+          // means "back to the grid".
+          Video(controller: controller, fill: Colors.transparent, controls: NoVideoControls),
+          GestureDetector(behavior: HitTestBehavior.translucent, onTap: player.playOrPause),
+          if (!showMessage)
+            Align(
+              alignment: Alignment.bottomCenter,
+              // A Slider grows to whatever height it is offered; pin the bar.
+              child: SizedBox(height: 60, child: _Transport(player: player)),
+            ),
+        ],
+        if (showMessage)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
+              margin: const EdgeInsets.all(20),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Palette.raised,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Palette.line),
+              ),
+              child: Text(
+                _failed
+                    ? 'This video could not be played. ${_error ?? ''}'.trim()
+                    : 'Video playback is unavailable. On Linux, install mpv to enable it.',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: Palette.muted),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -150,6 +174,7 @@ class _Transport extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      height: 44,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       padding: const EdgeInsets.symmetric(horizontal: 6),
       constraints: const BoxConstraints(maxWidth: 640),

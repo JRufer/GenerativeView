@@ -164,7 +164,9 @@ void main() {
     if (videos > 0 && _testVideo) {
       await tester.sendKeyEvent(LogicalKeyboardKey.end);
       await waitFor(tester, () => find.byType(VideoPage).evaluate().isNotEmpty, what: 'the video page');
-      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 6));
+      final banner = find.textContaining('could not be played').evaluate().isNotEmpty;
+      debugPrint('VIDEO: failure banner shown = $banner');
       await shot(tester, 'it-04-video');
     }
 
