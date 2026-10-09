@@ -91,6 +91,14 @@ class TopBar extends StatelessWidget {
                         active: state.recursive,
                         onTap: () => state.setRecursive(!state.recursive),
                       ),
+                      _BarButton(
+                        icon: Icons.crop,
+                        tooltip: state.cropTiles
+                            ? 'Thumbnails are cropped to fill (C)'
+                            : 'Thumbnails show the whole image (C)',
+                        active: state.cropTiles,
+                        onTap: state.toggleCrop,
+                      ),
                       if (wide) ...[
                         const SizedBox(width: 6),
                         const Icon(

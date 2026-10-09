@@ -16,8 +16,8 @@ const double _gap = 3;
 /// The resizable thumbnail grid.
 ///
 /// Tile size changes by slider, by pinch, or by Ctrl + scroll wheel, and the
-/// grid keeps its place while it does. Tap selects, double tap opens the
-/// image.
+/// grid keeps its place while it does. Tiles crop to fill or show the whole
+/// image, per [AppState.cropTiles]. Tap selects, double tap opens the image.
 class MediaGrid extends StatefulWidget {
   const MediaGrid({super.key, required this.state});
   final AppState state;
@@ -267,6 +267,7 @@ class _MediaGridState extends State<MediaGrid> {
                   item: item,
                   tier: tier,
                   cache: state.thumbs,
+                  fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
                   selected: index == state.selectedIndex,
                   onTap: () => _tap(index, item),
                 );
@@ -285,6 +286,7 @@ class _Tile extends StatelessWidget {
     required this.item,
     required this.tier,
     required this.cache,
+    required this.fit,
     required this.selected,
     required this.onTap,
   });
@@ -292,6 +294,9 @@ class _Tile extends StatelessWidget {
   final MediaItem item;
   final int tier;
   final ThumbCache cache;
+
+  /// cover = cropped to fill the square, contain = the whole image.
+  final BoxFit fit;
   final bool selected;
   final VoidCallback onTap;
 
@@ -319,7 +324,7 @@ class _Tile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  ThumbImage(cache: cache, item: item, tier: tier),
+                  ThumbImage(cache: cache, item: item, tier: tier, fit: fit),
                   if (item.isVideo) _VideoBadge(durationMs: item.durationMs),
                 ],
               ),

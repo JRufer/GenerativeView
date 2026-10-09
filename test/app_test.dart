@@ -218,6 +218,29 @@ void main() {
     expect(state.items[8].name, 'ComfyUI_00001_.png');
     await screenshot(tester, boundary, '01-grid');
 
+    // ---- thumbnails: cropped to fill, or the whole image -------------------
+    Set<BoxFit?> fits() => tester
+        .widgetList<RawImage>(
+          find.descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(RawImage),
+          ),
+        )
+        .map((w) => w.fit)
+        .toSet();
+    expect(fits(), {BoxFit.cover});
+    await tester.tap(find.byTooltip('Thumbnails are cropped to fill (C)'));
+    await tester.pump();
+    expect(state.cropTiles, isFalse);
+    expect(fits(), {BoxFit.contain});
+    await screenshot(tester, boundary, '01b-grid-whole-images');
+    // The key does the same, and the choice is put back for the next test.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.pump();
+    expect(state.cropTiles, isTrue);
+    expect(fits(), {BoxFit.cover});
+    expect(find.byTooltip('Thumbnails are cropped to fill (C)'), findsOneWidget);
+
     // ---- the folder tree shows where we are --------------------------------
     await tester.pump(const Duration(milliseconds: 200));
     expect(state.leftOpen, isTrue);
