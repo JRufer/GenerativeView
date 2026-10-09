@@ -6,11 +6,19 @@
 #
 #   tool/install-linux.sh [path/to/bundle]
 #
-# With no argument it uses the bundle `flutter build linux --release` makes.
+# With no argument it installs the bundle it sits in (release downloads ship
+# it as bundle/install.sh) or, run from a checkout, the one that
+# `flutter build linux --release` makes.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-bundle="${1:-$here/../build/linux/x64/release/bundle}"
+if [ "$#" -gt 0 ]; then
+  bundle="$1"
+elif [ -x "$here/generativeview" ]; then
+  bundle="$here"
+else
+  bundle="$here/../build/linux/x64/release/bundle"
+fi
 if [ ! -x "$bundle/generativeview" ]; then
   echo "No bundle at $bundle. Build one with: flutter build linux --release" >&2
   exit 1
