@@ -82,8 +82,9 @@ class _FocusViewState extends State<FocusView> {
     _wheelDebt += e.scrollDelta.dy;
     final now = DateTime.now();
     if (_wheelDebt.abs() < 30 ||
-        now.difference(_lastWheelStep) < const Duration(milliseconds: 70))
+        now.difference(_lastWheelStep) < const Duration(milliseconds: 70)) {
       return;
+    }
     final forward = _wheelDebt > 0;
     _wheelDebt = 0;
     _lastWheelStep = now;

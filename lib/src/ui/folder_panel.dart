@@ -93,8 +93,9 @@ class _FolderPanelState extends State<FolderPanel> {
             Icons.folder_outlined,
           ),
         );
-        if (state.expanded.contains(child.path))
+        if (state.expanded.contains(child.path)) {
           addChildren(child.path, depth + 1);
+        }
       }
     }
 

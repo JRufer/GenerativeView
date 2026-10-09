@@ -101,8 +101,9 @@ class ShortcutLayer extends StatelessWidget {
       state.setTileSize(state.tileSize / 1.15);
       return KeyEventResult.handled;
     }
-    if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed)
+    if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed) {
       return KeyEventResult.ignored;
+    }
 
     if (key == LogicalKeyboardKey.keyI ||
         key == LogicalKeyboardKey.bracketRight) {
