@@ -1,0 +1,14 @@
+    Building arm64-v8a (aarch64-linux-android)
+   Compiling gvcore v0.1.0 (/home/runner/work/GenerativeView/GenerativeView/core)
+    Finished `release` profile [optimized] target(s) in 43.66s
+    Building armeabi-v7a (armv7-linux-androideabi)
+   Compiling gvcore v0.1.0 (/home/runner/work/GenerativeView/GenerativeView/core)
+    Finished `release` profile [optimized] target(s) in 6.69s
+    Building x86_64 (x86_64-linux-android)
+   Compiling gvcore v0.1.0 (/home/runner/work/GenerativeView/GenerativeView/core)
+    Finished `release` profile [optimized] target(s) in 21.98s
+     Copying libraries to /home/runner/work/GenerativeView/GenerativeView/android/app/src/main/jniLibs
+Built libgvcore.so for: arm64-v8a armeabi-v7a x86_64
+-rwxr-xr-x 1 runner runner 6092912 Oct  9 17:58 android/app/src/main/jniLibs/arm64-v8a/libgvcore.so
+-rwxr-xr-x 1 runner runner 3906912 Oct  9 17:58 android/app/src/main/jniLibs/armeabi-v7a/libgvcore.so
+-rwxr-xr-x 1 runner runner 7974616 Oct  9 17:58 android/app/src/main/jniLibs/x86_64/libgvcore.so
