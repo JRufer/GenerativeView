@@ -404,6 +404,7 @@ class _Field extends StatelessWidget {
   final String value;
   final String? copyValue;
   final String? what;
+  /// Fixed-width digits, for long numbers.
   final bool mono;
 
   /// For rows like LoRAs where the left side is the thing worth copying.
@@ -420,7 +421,7 @@ class _Field extends StatelessWidget {
       fontSize: 12.5,
       height: 1.35,
       color: nameIsValue ? Palette.muted : Palette.text,
-      fontFamily: mono ? monoFont : null,
+      fontFeatures: mono ? const [FontFeature.tabularFigures()] : null,
     );
     return _Tappable(
       onTap: () => copyText(context, copyValue ?? value, what ?? name.toLowerCase()),

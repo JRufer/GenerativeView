@@ -133,8 +133,6 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
           cargo install cargo-ndk --locked 2>&1 | tail -5 | tee "$OUT/cargo-ndk.log"
       - name: Build Rust core for Android
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
           set -o pipefail
           tool/build-android-core.sh 2>&1 | tee "$OUT/cargo-android.log"

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
@@ -48,9 +47,14 @@ class _VideoPageState extends State<VideoPage> {
       _stop();
       if (widget.active) _start();
     } else if (widget.active && !old.active) {
-      _player == null ? _start() : _player!.play();
+      final player = _player;
+      if (player == null) {
+        _start();
+      } else {
+        unawaited(player.play());
+      }
     } else if (!widget.active && old.active) {
-      _player?.pause();
+      unawaited(_player?.pause());
     }
   }
 

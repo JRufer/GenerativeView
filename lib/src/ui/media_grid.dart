@@ -229,7 +229,7 @@ class _MediaGridState extends State<MediaGrid> {
               // With Ctrl held the wheel resizes tiles instead of scrolling.
               physics: _ctrl ? const NeverScrollableScrollPhysics() : null,
               padding: const EdgeInsets.all(_gap),
-              cacheExtent: _viewport * 0.75,
+              scrollCacheExtent: const ScrollCacheExtent.viewport(0.75),
               addAutomaticKeepAlives: false,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: columns,

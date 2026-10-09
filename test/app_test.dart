@@ -218,6 +218,11 @@ void main() {
     // Swipe right-to-left goes forward; we are at the end, so swipe back.
     await tester.fling(find.byType(FocusView), const Offset(500, 0), 2000);
     await pumpUntil(tester, () => state.selectedIndex == 7, what: 'swipe to the previous image');
+    // Let the page settle: while a pager is still gliding, taps stop it
+    // rather than reaching the page.
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
 
     // ---- double tap returns to the grid ------------------------------------
     await tester.tap(find.byType(FocusView));
@@ -297,7 +302,8 @@ void main() {
     // Whatever was saved, start from a known layout.
     if (!state.leftOpen) state.toggleLeft();
     if (state.rightOpen) state.toggleRight();
-    await tester.pump();
+    // The tree opens down to the current folder and scrolls it into view.
+    await pumpUntil(tester, () => find.text('portraits').evaluate().isNotEmpty, what: 'the sub-folder row');
     await screenshot(tester, boundary, '07-narrow-folders');
 
     // Picking a folder closes the folder panel.

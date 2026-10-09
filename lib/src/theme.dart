@@ -15,8 +15,6 @@ abstract final class Palette {
   static const Color tile = Color(0xFF1A1A1E);
 }
 
-const String monoFont = 'monospace';
-
 ThemeData buildTheme() {
   const scheme = ColorScheme.dark(
     primary: Palette.accent,
@@ -37,6 +35,8 @@ ThemeData buildTheme() {
     visualDensity: VisualDensity.compact,
     splashFactory: InkRipple.splashFactory,
   );
+  // Derive from the theme's own text style so these keep its font family.
+  final small = (base.textTheme.bodyMedium ?? const TextStyle()).copyWith(color: Palette.text, fontSize: 13);
   return base.copyWith(
     textTheme: base.textTheme.apply(bodyColor: Palette.text, displayColor: Palette.text),
     iconTheme: const IconThemeData(color: Palette.muted, size: 20),
@@ -48,11 +48,11 @@ ThemeData buildTheme() {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Palette.line),
       ),
-      textStyle: const TextStyle(color: Palette.text, fontSize: 12),
+      textStyle: small.copyWith(fontSize: 12),
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: Palette.raised,
-      contentTextStyle: const TextStyle(color: Palette.text, fontSize: 13),
+      contentTextStyle: small,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
@@ -73,7 +73,7 @@ ThemeData buildTheme() {
         borderRadius: BorderRadius.circular(8),
         side: const BorderSide(color: Palette.line),
       ),
-      textStyle: const TextStyle(color: Palette.text, fontSize: 13),
+      textStyle: small,
     ),
     scrollbarTheme: ScrollbarThemeData(
       thickness: WidgetStateProperty.all(8),
