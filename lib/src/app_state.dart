@@ -45,6 +45,10 @@ class DirNode {
 const double minTileSize = 72;
 const double maxTileSize = 520;
 
+/// How much of the height the metadata panel may take as a footer.
+const double minBottomShare = 0.15;
+const double maxBottomShare = 0.7;
+
 /// Everything the UI shows, and the operations that change it.
 class AppState extends ChangeNotifier {
   AppState({
@@ -102,11 +106,20 @@ class AppState extends ChangeNotifier {
   /// they slide over it instead. Set by the home page as it lays out.
   bool narrowLayout = false;
 
+  /// True when the window is taller than it is wide. The metadata panel then
+  /// sits under the content as a footer instead of beside (or over) it. Set
+  /// by the home page as it lays out.
+  bool portraitLayout = false;
+
   double tileSize = 190;
   bool leftOpen = true;
   bool rightOpen = false;
   double leftWidth = 280;
   double rightWidth = 380;
+
+  /// The metadata panel's height as a footer, as a share of the space under
+  /// the top bar.
+  double bottomShare = 0.36;
   bool prewarm = true;
 
   /// Grid tiles either crop each image to fill its square or shrink it to
@@ -136,6 +149,13 @@ class AppState extends ChangeNotifier {
       ? items[selectedIndex]
       : null;
 
+  /// The folder panel is showing, slid over the content.
+  bool get leftFloats => leftOpen && narrowLayout && mode != ViewMode.focus;
+
+  /// The metadata panel is open as a slide-over rather than docked beside or
+  /// under the content.
+  bool get rightFloats => rightOpen && narrowLayout && !portraitLayout;
+
   // ================================================================ startup
 
   /// Load saved settings and reopen the last folder.
@@ -155,6 +175,10 @@ class AppState extends ChangeNotifier {
     ).clamp(minTileSize, maxTileSize).toDouble();
     leftWidth = number('left_width', leftWidth).clamp(200, 520).toDouble();
     rightWidth = number('right_width', rightWidth).clamp(260, 720).toDouble();
+    bottomShare = number(
+      'bottom_share',
+      bottomShare,
+    ).clamp(minBottomShare, maxBottomShare).toDouble();
     leftOpen = flag('left_open', leftOpen);
     rightOpen = flag('right_open', rightOpen);
     recursive = flag('recursive', recursive);
@@ -481,12 +505,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void closePanels() {
-    if (!leftOpen && !rightOpen) return;
-    if (leftOpen) _save('left_open', 'false');
-    if (rightOpen) _save('right_open', 'false');
-    leftOpen = false;
-    rightOpen = false;
+  /// Close whichever panels are slid over the content. A docked metadata
+  /// panel stays where it is.
+  void closeOverlays() {
+    if (!narrowLayout) return;
+    final right = rightFloats;
+    if (!leftOpen && !right) return;
+    if (leftOpen) {
+      leftOpen = false;
+      _save('left_open', 'false');
+    }
+    if (right) {
+      rightOpen = false;
+      _save('right_open', 'false');
+    }
     notifyListeners();
   }
 
@@ -499,6 +531,12 @@ class AppState extends ChangeNotifier {
   void setRightWidth(double value) {
     rightWidth = value.clamp(260, 720).toDouble();
     _save('right_width', rightWidth.toStringAsFixed(0), debounce: true);
+    notifyListeners();
+  }
+
+  void setBottomShare(double value) {
+    bottomShare = value.clamp(minBottomShare, maxBottomShare).toDouble();
+    _save('bottom_share', bottomShare.toStringAsFixed(3), debounce: true);
     notifyListeners();
   }
 

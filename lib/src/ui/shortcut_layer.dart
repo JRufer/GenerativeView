@@ -162,8 +162,8 @@ class ShortcutLayer extends StatelessWidget {
     } else if (key == LogicalKeyboardKey.escape) {
       if (focus) {
         state.closeFocus();
-      } else if (state.narrowLayout && (state.leftOpen || state.rightOpen)) {
-        state.closePanels();
+      } else if (state.leftFloats || state.rightFloats) {
+        state.closeOverlays();
       } else {
         state.clearSelection();
       }

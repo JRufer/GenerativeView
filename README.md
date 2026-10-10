@@ -15,7 +15,7 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 - **Live**: images that appear, change or disappear while the folder is open show up in the grid and in search on their own.
 - **Folder panel** on the left: a lazily loaded tree, plus a box to paste a path into.
 
-Both side panels collapse; on narrow screens they slide over the grid instead of sitting beside it.
+Both panels collapse; on narrow screens they slide over the grid instead of sitting beside it. When the window is taller than it is wide — a tablet held upright, a window tiled to half the screen — the metadata panel moves under the grid or the focused image as a footer, with a top edge you can drag to resize it.
 
 ### Search syntax
 
