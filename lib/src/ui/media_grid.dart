@@ -108,6 +108,15 @@ class _MediaGridState extends State<MediaGrid> {
     }
   }
 
+  /// Whether any of the selected tile is on screen.
+  bool _selectionInView() {
+    final index = state.selectedIndex;
+    if (index < 0 || !_scroll.hasClients) return false;
+    final top = (index ~/ _columns) * _rowExtent;
+    final offset = _scroll.offset;
+    return top + _rowExtent > offset && top < offset + _viewport;
+  }
+
   /// Scroll just far enough that item [index] is fully visible.
   void _reveal(int index) {
     if (!mounted || index < 0 || !_scroll.hasClients) return;
@@ -223,6 +232,14 @@ class _MediaGridState extends State<MediaGrid> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        // When the view gets shorter under a selection that was on screen
+        // (the metadata footer opening, the soft keyboard coming up), keep
+        // that tile in sight.
+        if (constraints.maxHeight < _viewport && _selectionInView()) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _reveal(state.selectedIndex),
+          );
+        }
         final width = constraints.maxWidth;
         final columns = math.max(
           1,

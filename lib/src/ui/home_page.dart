@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -15,6 +16,13 @@ import 'top_bar.dart';
 /// sitting beside it.
 const double _sideBySideWidth = 820;
 
+/// The metadata footer never squeezes the content below this height, and
+/// steps aside altogether when it would get no useful height of its own
+/// (a small window, or the soft keyboard up on a phone).
+const double _minContentHeight = 160;
+const double _minFooterHeight = 96;
+const double _footerHandleHeight = 18;
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.state});
   final AppState state;
@@ -27,6 +35,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // Keeps the grid's state (scroll position, loaded tiles) when the layout
   // flips between side-by-side and overlay panels.
   final GlobalKey _contentKey = GlobalKey(debugLabel: 'content');
+  // Likewise the metadata panel, as it moves between the side and the foot
+  // of the window when a tablet turns.
+  final GlobalKey _metaKey = GlobalKey(debugLabel: 'metadata');
   bool _storageOk = true;
 
   AppState get state => widget.state;
@@ -85,7 +96,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
-  void _closeOverlays() => state.closePanels();
+  void _closeOverlays() => state.closeOverlays();
 
   // ------------------------------------------------------------ layout
 
@@ -94,9 +105,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final focus = state.mode == ViewMode.focus;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final narrow = constraints.maxWidth < _sideBySideWidth;
-        state.narrowLayout = narrow;
-        final overlayOpen = narrow && (state.leftOpen || state.rightOpen);
+        state.narrowLayout = constraints.maxWidth < _sideBySideWidth;
+        // The whole window, so the soft keyboard coming up changes nothing.
+        state.portraitLayout = constraints.maxWidth < constraints.maxHeight;
+        final overlayOpen = state.leftFloats || state.rightFloats;
         return PopScope(
           canPop: !focus && !overlayOpen,
           onPopInvokedWithResult: (didPop, _) {
@@ -115,11 +127,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   TopBar(state: state),
                   _ScanBar(state: state),
                   if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
-                  Expanded(
-                    child: narrow
-                        ? _narrowBody(constraints.maxWidth)
-                        : _wideBody(),
-                  ),
+                  Expanded(child: _body(constraints.maxWidth)),
                 ],
               ),
             ),
@@ -154,46 +162,60 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _wideBody() {
-    final focus = state.mode == ViewMode.focus;
-    return Row(
-      children: [
-        if (state.leftOpen && !focus) ...[
-          SizedBox(
-            width: state.leftWidth,
-            child: ColoredBox(
-              color: Palette.panel,
-              child: FolderPanel(state: state),
-            ),
-          ),
-          _DragHandle(onDrag: (dx) => state.setLeftWidth(state.leftWidth + dx)),
-        ],
-        Expanded(child: _content()),
-        if (state.rightOpen) ...[
-          _DragHandle(
-            onDrag: (dx) => state.setRightWidth(state.rightWidth - dx),
-          ),
-          SizedBox(
-            width: state.rightWidth,
-            child: ColoredBox(
-              color: Palette.panel,
-              child: MetaPanel(state: state),
-            ),
-          ),
-        ],
-      ],
+  Widget _metaPanel() {
+    return ColoredBox(
+      color: Palette.panel,
+      child: MetaPanel(key: _metaKey, state: state),
     );
   }
 
-  Widget _narrowBody(double width) {
+  /// Where everything under the top bar goes.
+  ///
+  /// The folder panel sits beside the content, or slides over it when the
+  /// window is narrow. The metadata panel does the same in a landscape
+  /// window; in a portrait one it is a footer across the full width instead,
+  /// which leaves the grid or the focused image all the width there is.
+  Widget _body(double width) {
     final focus = state.mode == ViewMode.focus;
-    final panelWidth = (width * 0.86).clamp(240.0, 380.0).toDouble();
+    final narrow = state.narrowLayout;
+    final portrait = state.portraitLayout;
     final showLeft = state.leftOpen && !focus;
-    final showRight = state.rightOpen && !showLeft;
+
+    Widget body = _content();
+    if (!narrow) {
+      body = Row(
+        children: [
+          if (showLeft) ...[
+            SizedBox(
+              width: state.leftWidth,
+              child: ColoredBox(
+                color: Palette.panel,
+                child: FolderPanel(state: state),
+              ),
+            ),
+            _DragHandle(
+              onDrag: (dx) => state.setLeftWidth(state.leftWidth + dx),
+            ),
+          ],
+          Expanded(child: body),
+          if (state.rightOpen && !portrait) ...[
+            _DragHandle(
+              onDrag: (dx) => state.setRightWidth(state.rightWidth - dx),
+            ),
+            SizedBox(width: state.rightWidth, child: _metaPanel()),
+          ],
+        ],
+      );
+    }
+    if (portrait) body = _withFooter(body);
+    if (!narrow) return body;
+
+    final panelWidth = (width * 0.86).clamp(240.0, 380.0).toDouble();
+    final showRight = state.rightFloats && !showLeft;
     return Stack(
       fit: StackFit.expand,
       children: [
-        _content(),
+        body,
         if (showLeft || showRight)
           GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -214,15 +236,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (showRight)
           Align(
             alignment: Alignment.centerRight,
-            child: SizedBox(
-              width: panelWidth,
-              child: ColoredBox(
-                color: Palette.panel,
-                child: MetaPanel(state: state),
-              ),
-            ),
+            child: SizedBox(width: panelWidth, child: _metaPanel()),
           ),
       ],
+    );
+  }
+
+  /// [above], with the metadata panel under it when that is open.
+  Widget _withFooter(Widget above) {
+    return LayoutBuilder(
+      builder: (context, box) {
+        final room = box.maxHeight - _footerHandleHeight;
+        final height = math.min(
+          room * state.bottomShare,
+          room - _minContentHeight,
+        );
+        final show = state.rightOpen && height >= _minFooterHeight;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: above),
+            if (show) ...[
+              _DragHandle(
+                axis: Axis.vertical,
+                // From the height on screen, which may be less than the
+                // saved share asks for.
+                onDrag: (dy) => state.setBottomShare(
+                  math.min(state.bottomShare, height / room) - dy / room,
+                ),
+              ),
+              SizedBox(height: height, child: _metaPanel()),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -288,11 +335,44 @@ class _StorageBanner extends StatelessWidget {
 
 /// A thin strip between panels that resizes them when dragged.
 class _DragHandle extends StatelessWidget {
-  const _DragHandle({required this.onDrag});
+  const _DragHandle({required this.onDrag, this.axis = Axis.horizontal});
+
+  /// Called with how far the handle has moved along [axis].
   final ValueChanged<double> onDrag;
+
+  /// The way the handle moves: sideways between columns, or up and down on
+  /// top of the footer.
+  final Axis axis;
 
   @override
   Widget build(BuildContext context) {
+    if (axis == Axis.vertical) {
+      // Taller than its sideways twin, with a grip: this one gets dragged by
+      // thumb on a tablet held upright.
+      return MouseRegion(
+        cursor: SystemMouseCursors.resizeRow,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragUpdate: (d) => onDrag(d.delta.dy),
+          child: Container(
+            height: _footerHandleHeight,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: Palette.panel,
+              border: Border(top: BorderSide(color: Palette.line)),
+            ),
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: const BoxDecoration(
+                color: Palette.line,
+                borderRadius: BorderRadius.all(Radius.circular(2)),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(

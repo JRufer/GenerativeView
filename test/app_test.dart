@@ -17,6 +17,7 @@ import 'package:generativeview/src/app_state.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/ui/focus_view.dart';
+import 'package:generativeview/src/ui/folder_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/thumb_image.dart';
@@ -586,6 +587,142 @@ void main() {
       what: 'its thumbnails',
     );
     await screenshot(tester, boundary, '08-narrow-grid');
+
+    await close(tester, state);
+  });
+
+  testWidgets('in a portrait window the metadata panel is a footer', (
+    tester,
+  ) async {
+    final state = await launch(tester, size: const Size(900, 1300));
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    // Whatever was saved, start from a known layout.
+    if (!state.leftOpen) state.toggleLeft();
+    if (!state.rightOpen) state.toggleRight();
+    state.setTileSize(190);
+    state.select(8); // ComfyUI_00001_.png
+    await pumpUntil(
+      tester,
+      () =>
+          find.text(lighthouse).evaluate().isNotEmpty &&
+          tilesWithImages(tester) == 9,
+      what: 'the grid and the prompt in the panel',
+    );
+
+    Rect rect(Type type) => tester.getRect(find.byType(type));
+    const seed = '219670278747233';
+
+    // ---- under the grid, across the whole window ----------------------------
+    expect(state.portraitLayout, isTrue);
+    expect(rect(MetaPanel).top, greaterThanOrEqualTo(rect(MediaGrid).bottom));
+    expect(rect(MetaPanel).left, 0);
+    expect(rect(MetaPanel).right, 900);
+    expect(rect(MetaPanel).bottom, 1300);
+    // The folder panel keeps its place beside the grid.
+    expect(rect(FolderPanel).right, lessThanOrEqualTo(rect(MediaGrid).left));
+    expect(rect(FolderPanel).bottom, lessThanOrEqualTo(rect(MetaPanel).top));
+    // Short and wide, so the sections sit in two columns.
+    expect(tester.getCenter(find.text(lighthouse)).dx, lessThan(450));
+    expect(tester.getCenter(find.text(seed)).dx, greaterThan(450));
+    await screenshot(tester, boundary, '09-portrait-footer');
+
+    // ---- its top edge drags to resize it ------------------------------------
+    final before = rect(MetaPanel);
+    final share = state.bottomShare;
+    await tester.dragFrom(
+      before.topCenter - const Offset(0, 9),
+      const Offset(0, -200),
+    );
+    await tester.pump();
+    expect(state.bottomShare, greaterThan(share));
+    expect(rect(MetaPanel).height, greaterThan(before.height + 100));
+    expect(rect(MetaPanel).bottom, 1300);
+    expect(rect(MetaPanel).top, greaterThanOrEqualTo(rect(MediaGrid).bottom));
+
+    // ---- and it stays there under the focus view ----------------------------
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await pumpUntil(
+      tester,
+      () => fullImageShown(tester),
+      what: 'the full-size image',
+    );
+    expect(state.mode, ViewMode.focus);
+    expect(find.byType(FolderPanel), findsNothing);
+    expect(rect(FocusView).left, 0);
+    expect(rect(FocusView).right, 900);
+    expect(rect(MetaPanel).top, greaterThanOrEqualTo(rect(FocusView).bottom));
+    expect(find.text(lighthouse), findsOneWidget);
+    await screenshot(tester, boundary, '10-portrait-focus');
+
+    // Esc leaves the image; the footer is docked, not an overlay to dismiss.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(state.mode, ViewMode.grid);
+    expect(state.rightOpen, isTrue);
+
+    // ---- turned to landscape it is a side panel again -----------------------
+    tester.view.physicalSize = const Size(1300, 900);
+    await tester.pump();
+    await tester.pump();
+    expect(state.portraitLayout, isFalse);
+    expect(rect(MetaPanel).left, greaterThanOrEqualTo(rect(MediaGrid).right));
+    expect(rect(MetaPanel).right, 1300);
+    expect(rect(MetaPanel).bottom, 900);
+    // Nothing was reloaded on the way over.
+    expect(find.text(lighthouse), findsOneWidget);
+    expect(
+      tester.getCenter(find.text(seed)).dy,
+      greaterThan(tester.getCenter(find.text(lighthouse)).dy),
+    );
+
+    // ---- a narrow portrait window: a phone, or a tiled half-screen ----------
+    tester.view.physicalSize = const Size(600, 900);
+    await tester.pump();
+    await tester.pump();
+    // The folder panel slides over everything, the footer included …
+    expect(state.leftFloats, isTrue);
+    expect(state.rightFloats, isFalse);
+    expect(rect(FolderPanel).bottom, 900);
+    expect(rect(MetaPanel).top, greaterThanOrEqualTo(rect(MediaGrid).bottom));
+    expect(rect(MetaPanel).left, 0);
+    expect(rect(MetaPanel).right, 600);
+    // … and Esc puts away the folder panel alone.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(state.leftOpen, isFalse);
+    expect(state.rightOpen, isTrue);
+    expect(find.byType(MetaPanel), findsOneWidget);
+    // Too narrow for two columns.
+    expect(
+      tester.getCenter(find.text(seed)).dy,
+      greaterThan(tester.getCenter(find.text(lighthouse)).dy),
+    );
+    await screenshot(tester, boundary, '11-portrait-narrow');
+
+    // ---- opening the footer never leaves the selected tile behind it --------
+    ScrollPosition gridScroll() => tester
+        .state<ScrollableState>(
+          find.descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(Scrollable),
+          ),
+        )
+        .position;
+    state.toggleRight();
+    await pumpUntil(
+      tester,
+      () =>
+          find.byType(MetaPanel).evaluate().isEmpty &&
+          gridScroll().pixels == 0,
+      what: 'the whole grid on screen',
+    );
+    expect(state.selectedIndex, 8); // in the bottom row
+    state.toggleRight();
+    await tester.pump();
+    await tester.pump();
+    // Scrolled so that the bottom row sits just above the footer.
+    expect(gridScroll().pixels, greaterThan(0));
+    expect(gridScroll().pixels, closeTo(gridScroll().maxScrollExtent, 0.5));
 
     await close(tester, state);
   });
