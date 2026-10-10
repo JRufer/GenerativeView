@@ -1,8 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/models.dart';
@@ -11,7 +9,7 @@ import 'thumb_image.dart';
 import 'video_page.dart';
 
 /// One image at a time. Swipe (or use the keyboard) to move through the
-/// folder, pinch or Ctrl + wheel to zoom, double tap to go back to the grid.
+/// folder, pinch or turn the wheel to zoom, double tap to go back to the grid.
 class FocusView extends StatefulWidget {
   const FocusView({super.key, required this.state});
   final AppState state;
@@ -23,8 +21,6 @@ class FocusView extends StatefulWidget {
 class _FocusViewState extends State<FocusView> {
   late final PageController _pages;
   bool _zoomed = false;
-  double _wheelDebt = 0;
-  DateTime _lastWheelStep = DateTime.fromMillisecondsSinceEpoch(0);
 
   AppState get state => widget.state;
 
@@ -77,20 +73,6 @@ class _FocusViewState extends State<FocusView> {
     }
   }
 
-  void _onWheel(PointerScrollEvent e) {
-    // Trackpads send a stream of small deltas; turn them into discrete steps.
-    _wheelDebt += e.scrollDelta.dy;
-    final now = DateTime.now();
-    if (_wheelDebt.abs() < 30 ||
-        now.difference(_lastWheelStep) < const Duration(milliseconds: 70)) {
-      return;
-    }
-    final forward = _wheelDebt > 0;
-    _wheelDebt = 0;
-    _lastWheelStep = now;
-    state.move(forward ? 1 : -1);
-  }
-
   @override
   Widget build(BuildContext context) {
     final items = state.items;
@@ -120,7 +102,6 @@ class _FocusViewState extends State<FocusView> {
             onZoomChanged: (zoomed) {
               if (active && zoomed != _zoomed) setState(() => _zoomed = zoomed);
             },
-            onWheel: _onWheel,
           );
         },
       ),
@@ -135,14 +116,12 @@ class _FocusPage extends StatefulWidget {
     required this.item,
     required this.active,
     required this.onZoomChanged,
-    required this.onWheel,
   });
 
   final AppState state;
   final MediaItem item;
   final bool active;
   final ValueChanged<bool> onZoomChanged;
-  final ValueChanged<PointerScrollEvent> onWheel;
 
   @override
   State<_FocusPage> createState() => _FocusPageState();
@@ -166,39 +145,6 @@ class _FocusPageState extends State<_FocusPage> {
   void dispose() {
     _transform.dispose();
     super.dispose();
-  }
-
-  void _signal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent) return;
-    // Claim the event so the zoom gesture underneath does not also take it.
-    GestureBinding.instance.pointerSignalResolver.register(event, (e) {
-      final scroll = e as PointerScrollEvent;
-      if (HardwareKeyboard.instance.isControlPressed) {
-        _zoomAt(
-          scroll.localPosition,
-          scroll.scrollDelta.dy > 0 ? 1 / 1.2 : 1.2,
-        );
-      } else if (!_zoomed) {
-        widget.onWheel(scroll);
-      }
-    });
-  }
-
-  void _zoomAt(Offset focal, double factor) {
-    final current = _transform.value.getMaxScaleOnAxis();
-    final next = (current * factor).clamp(1.0, 12.0).toDouble();
-    if (next == current) return;
-    if (next <= 1.0) {
-      _transform.value = Matrix4.identity();
-    } else {
-      // Keep the point under the cursor fixed while scaling.
-      final scene = _transform.toScene(focal);
-      _transform.value = Matrix4.identity()
-        ..translateByDouble(focal.dx, focal.dy, 0, 1)
-        ..scaleByDouble(next, next, 1, 1)
-        ..translateByDouble(-scene.dx, -scene.dy, 0, 1);
-    }
-    widget.onZoomChanged(_zoomed);
   }
 
   @override
@@ -243,6 +189,8 @@ class _FocusPageState extends State<_FocusPage> {
       );
     }
 
+    // The scroll wheel zooms and only zooms (InteractiveViewer's own
+    // behaviour); moving between images is for swipes and the keyboard.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onDoubleTap: widget.state.closeFocus,
@@ -253,11 +201,7 @@ class _FocusPageState extends State<_FocusPage> {
         panEnabled: _zoomed,
         scaleEnabled: !item.isVideo,
         onInteractionEnd: (_) => widget.onZoomChanged(_zoomed),
-        child: Listener(
-          onPointerSignal: _signal,
-          behavior: HitTestBehavior.opaque,
-          child: SizedBox.expand(child: content),
-        ),
+        child: SizedBox.expand(child: content),
       ),
     );
   }

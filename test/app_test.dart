@@ -7,6 +7,8 @@
 
 import 'dart:io';
 
+// ignore: unnecessary_import
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -362,6 +364,45 @@ void main() {
       what: 'the full-size image',
     );
     await screenshot(tester, boundary, '04-focus');
+
+    // ---- the wheel zooms, and only zooms -----------------------------------
+    double zoom() => tester
+        .widgetList<InteractiveViewer>(find.byType(InteractiveViewer))
+        .map((v) => v.transformationController!.value.getMaxScaleOnAxis())
+        .reduce((a, b) => a > b ? a : b);
+    final mouse = TestPointer(1, PointerDeviceKind.mouse);
+    final middle = tester.getCenter(find.byType(FocusView));
+    await tester.sendEventToBinding(mouse.hover(middle));
+    expect(zoom(), closeTo(1, 0.001));
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, -120)));
+    await tester.pump();
+    expect(zoom(), greaterThan(1.3), reason: 'wheel up zooms in');
+    expect(state.selectedIndex, 8, reason: 'wheel up does not change image');
+    // Wheel down zooms back out; once fully out it does nothing more.
+    for (var i = 0; i < 4; i++) {
+      await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
+      await tester.pump();
+    }
+    expect(zoom(), closeTo(1, 0.001));
+    expect(state.selectedIndex, 8, reason: 'wheel down does not change image');
+    expect(state.mode, ViewMode.focus);
+
+    // ---- Space and Enter flip between the image and the grid ---------------
+    for (final key in [LogicalKeyboardKey.space, LogicalKeyboardKey.enter]) {
+      await tester.sendKeyEvent(key);
+      await tester.pump();
+      expect(state.mode, ViewMode.grid, reason: '${key.keyLabel} leaves focus');
+      expect(state.selectedIndex, 8);
+      await tester.sendKeyEvent(key);
+      await tester.pump();
+      expect(state.mode, ViewMode.focus, reason: '${key.keyLabel} opens focus');
+      expect(state.selectedIndex, 8);
+    }
+    await pumpUntil(
+      tester,
+      () => fullImageShown(tester),
+      what: 'the full-size image again',
+    );
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await pumpUntil(
