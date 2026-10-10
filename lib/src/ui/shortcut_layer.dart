@@ -147,13 +147,12 @@ class ShortcutLayer extends StatelessWidget {
       state.move(-state.items.length);
     } else if (key == LogicalKeyboardKey.end) {
       state.move(state.items.length);
-    } else if (key == LogicalKeyboardKey.space && focus) {
-      state.move(keyboard.isShiftPressed ? -1 : 1);
     } else if (key == LogicalKeyboardKey.backspace && focus) {
       state.move(-1);
     } else if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter ||
         key == LogicalKeyboardKey.space) {
+      // Enter and Space both flip between the grid and the focus view.
       if (event is KeyRepeatEvent) return KeyEventResult.handled;
       if (focus) {
         state.closeFocus();
