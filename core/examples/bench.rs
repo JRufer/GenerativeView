@@ -49,18 +49,23 @@ fn main() {
     let done = wait_done();
     println!("revisit     : {:.2?} to confirm nothing changed ({} re-parsed)", t.elapsed(), done["total"]);
 
-    let query = |text: &str| {
+    let query_by = |text: &str, sort: &str| {
         let t = Instant::now();
-        let out = engine.call("query", &json!({ "dir": dir, "recursive": true, "text": text, "sort": "newest" })).unwrap();
+        let out = engine.call("query", &json!({ "dir": dir, "recursive": true, "text": text, "sort": sort })).unwrap();
         let elapsed = t.elapsed();
         let v: Value = serde_json::from_str(&out).unwrap();
         let n = v["rows"].as_array().map_or(0, Vec::len);
-        println!("query {:<22}: {n:>6} hits in {elapsed:.2?} ({} KB of JSON)", format!("{text:?}"), out.len() / 1024);
+        let label = if sort == "relevance" { format!("{text:?}, best first") } else { format!("{text:?}") };
+        println!("query {label:<30}: {n:>6} hits in {elapsed:.2?} ({} KB of JSON)", out.len() / 1024);
         v
     };
+    let query = |text: &str| query_by(text, "newest");
     let all = query("");
-    for term in ["fox", "blonde fox snow", "model:flux", "-fox", "ox", "lora:detail seed:1"] {
+    for term in ["fox", "blonde fox snow", "model:flux", "-fox", "ox", "*ox*", "lora:detail seed:1"] {
         query(term);
+    }
+    for term in ["fox", "blonde fox snow", "the", "model:flux"] {
+        query_by(term, "relevance");
     }
     for term in &search {
         query(term);

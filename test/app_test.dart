@@ -278,10 +278,69 @@ void main() {
       () => state.items.length == 2 && tiles().evaluate().length == 2,
       what: 'search results',
     );
-    expect(state.items[0].name, '00012-3958203417.png');
-    expect(state.items[1].name, 'ComfyUI_00001_.png');
+    // Best match first: the prompt that gets to the lighthouse sooner.
+    List<String> listed() => [
+      for (var i = 0; i < state.items.length; i++) state.items[i].name,
+    ];
+    expect(listed(), ['ComfyUI_00001_.png', '00012-3958203417.png']);
     expect(inBar('2 matches'), findsOneWidget);
     await screenshot(tester, boundary, '02-search');
+
+    // Part of a word is not a match, unless a star says it may be.
+    await tester.enterText(search, 'lighth');
+    await pumpUntil(
+      tester,
+      () =>
+          state.items.isEmpty &&
+          find.textContaining('Add * to match').evaluate().isNotEmpty,
+      what: 'part of a word to find nothing',
+    );
+    await tester.enterText(search, 'lighth*');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'lighth*');
+    // The word itself: "studio light" and "volumetric light", and neither
+    // lighthouse for being one.
+    await tester.enterText(search, 'light');
+    await pumpUntil(
+      tester,
+      () => listed().join() == '00013-1.pngComfyUI_00001_.png',
+      what: 'the whole word',
+    );
+    await tester.enterText(search, 'lighthouse');
+    await pumpUntil(
+      tester,
+      () => listed().join() == 'ComfyUI_00001_.png00012-3958203417.png',
+      what: 'the search',
+    );
+
+    // ---- search results can be put in another order, and stay that way -----
+    Future<void> sortBy(String label) async {
+      await tester.tap(find.byTooltip('Sort and refresh'));
+      await settle(tester);
+      await tester.tap(find.text(label));
+      await settle(tester);
+    }
+
+    expect(state.activeSort, 'relevance');
+    await sortBy('Name A to Z');
+    await pumpUntil(
+      tester,
+      () => listed().first == '00012-3958203417.png',
+      what: 'the matches by name',
+    );
+    expect(listed(), ['00012-3958203417.png', 'ComfyUI_00001_.png']);
+    expect((state.searchSort, state.sort), ('name', 'newest'));
+    await tester.enterText(search, 'fox');
+    await pumpUntil(tester, () => state.items.length == 1, what: 'fox');
+    expect(state.activeSort, 'name');
+    await tester.enterText(search, 'lighthouse');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the search');
+    await sortBy('Best match first');
+    await pumpUntil(
+      tester,
+      () => listed().first == 'ComfyUI_00001_.png',
+      what: 'the best match first again',
+    );
+    expect((state.searchSort, state.sort), ('relevance', 'newest'));
 
     await tester.enterText(search, 'model:juggernaut');
     await pumpUntil(
@@ -305,6 +364,15 @@ void main() {
       () => state.items.length == 9 && tilesWithImages(tester) == 9,
       what: 'full list again',
     );
+    // With nothing searched for there is no best match to offer, and the
+    // folder is in its own order.
+    await tester.tap(find.byTooltip('Sort and refresh'));
+    await settle(tester);
+    expect(find.text('Best match first'), findsNothing);
+    expect(find.text('Newest first'), findsOneWidget);
+    await tester.tapAt(const Offset(4, 890));
+    await settle(tester);
+    expect(state.activeSort, 'newest');
 
     // ---- select an image and read how it was made --------------------------
     await tester.tap(tiles().last); // ComfyUI_00001_.png
@@ -375,8 +443,15 @@ void main() {
     // ---- double tap opens the image; keys and swipes move through ----------
     expect(tiles(), findsNWidgets(9));
     final last = tiles().last;
+    // The grid times double taps by the real clock, and this tile was last
+    // tapped (to select it) a moment ago by that clock, however much test
+    // time has gone by since: let that tap grow old first.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
     await tester.tap(last);
     await tester.pump(const Duration(milliseconds: 40));
+    expect(state.mode, ViewMode.grid, reason: 'one tap only selects');
     await tester.tap(last);
     await tester.pump();
     expect(state.mode, ViewMode.focus);
@@ -1475,6 +1550,10 @@ void main() {
     await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
     clearPins(state);
     expect(state.contentSearch, isFalse);
+    // The stand-in model sees nothing in particular in any picture, so the
+    // bar a picture has to clear is set by hand: on the floor here, so that
+    // everything matches and what is checked is the order.
+    state.contentBar = -1e6;
 
     final box = find.byWidgetPredicate(
       (w) => w is TextField && w.focusNode == state.searchFocus,
@@ -1576,6 +1655,7 @@ void main() {
           'dir': library.path,
           'recursive': true,
           'text': text,
+          'bar': -1e6,
         }),
       );
       return [
@@ -1602,6 +1682,55 @@ void main() {
       what: 'the other description to be ranked',
     );
     expect(fox, isNot(cliff));
+
+    // ---- only what matches is listed: with the bar out of reach, nothing ----
+    state.contentBar = 1e6;
+    await tester.enterText(box, 'a red fox asleep');
+    await pumpUntil(
+      tester,
+      () =>
+          state.items.isEmpty &&
+          find
+              .text('No picture here shows “a red fox asleep”')
+              .evaluate()
+              .isNotEmpty,
+      what: 'a description nothing matches',
+    );
+    expect(inBar('0 matches'), findsOneWidget);
+    state.contentBar = -1e6;
+    await tester.enterText(box, 'a red fox');
+    await pumpUntil(
+      tester,
+      () => shown().join() == fox.join(),
+      what: 'the matches again',
+    );
+
+    // ---- and the matches can be put in another order -------------------------
+    await tester.tap(find.byTooltip('Sort and refresh'));
+    await settle(tester);
+    await tester.tap(find.text('Name A to Z'));
+    await pumpUntil(
+      tester,
+      () => shown().first == '00012-3958203417.png',
+      what: 'the matches by name',
+    );
+    expect(shown(), [
+      '00012-3958203417.png',
+      '00013-1.png',
+      'ComfyUI_00001_.png',
+      'ComfyUI_00002_.png',
+      'ComfyUI_00003_.png',
+      'ComfyUI_00004_.png',
+      'plain-photo.png',
+      'a1b2c3.png',
+      'd4e5f6.png',
+    ]);
+    state.setSort('relevance');
+    await pumpUntil(
+      tester,
+      () => shown().join() == fox.join(),
+      what: 'the best match first again',
+    );
 
     // ---- a content search pins as one, and comes back as one ----------------
     await tester.tap(find.byTooltip('Pin this search'));

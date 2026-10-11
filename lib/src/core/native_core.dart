@@ -204,33 +204,43 @@ class NativeCore {
   }
 
   /// The items of a folder view, in the packed layout described in
-  /// `core/src/db.rs` (decode with `ItemList.parse`).
+  /// `core/src/db.rs` (decode with `ItemList.parse`). With [sort]
+  /// 'relevance' the best matches for [text] come first, and equally good
+  /// ones in [then] order.
   Future<Uint8List> query({
     required String dir,
     required bool recursive,
     String text = '',
     String sort = 'newest',
+    String then = '',
   }) async {
     final reply = await _request('query', {
       'dir': dir,
       'recursive': recursive,
       'text': text,
       'sort': sort,
+      'then': then,
     });
     return reply as Uint8List;
   }
 
-  /// The pictures of a folder view that best match a description of what
-  /// they show, best first, in the same packed layout as [query].
+  /// The pictures of a folder view that match a description of what they
+  /// show, in the same packed layout as [query]: best match first when
+  /// [sort] is 'relevance'. [bar] replaces the core's own idea of how well
+  /// a picture has to fit to count as a match.
   Future<Uint8List> contentQuery({
     required String dir,
     required bool recursive,
     required String text,
+    String sort = 'relevance',
+    double? bar,
   }) async {
     final reply = await _request('content_query', {
       'dir': dir,
       'recursive': recursive,
       'text': text,
+      'sort': sort,
+      'bar': ?bar,
     });
     return reply as Uint8List;
   }

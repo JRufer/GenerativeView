@@ -243,8 +243,10 @@ class _MediaGridState extends State<MediaGrid> {
                 }
                 return _Hint(
                   icon: Icons.search_off,
-                  title: 'No picture here matches “${state.query.trim()}”',
-                  detail: 'Content search goes by what the pictures show.',
+                  title: 'No picture here shows “${state.query.trim()}”',
+                  detail:
+                      'Content search goes by what the pictures show, '
+                      'and lists only the ones that match.',
                 );
               },
             );
@@ -253,7 +255,9 @@ class _MediaGridState extends State<MediaGrid> {
             return _Hint(
               icon: Icons.search_off,
               title: 'Nothing matches “${state.query.trim()}”',
-              detail: 'Search looks at file names, prompts, models and LoRAs.',
+              detail:
+                  'Search looks for whole words in prompts, and at file, '
+                  'model and LoRA names. Add * to match part of a word: fox*',
             );
           }
           return _Hint(

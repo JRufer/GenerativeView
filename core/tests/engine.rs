@@ -128,8 +128,9 @@ fn index_search_and_live_updates() {
 
     // ---- search by prompt contents, across tools ---------------------------
     assert_eq!(h.names(&root, true, "lighthouse"), ["00003-a1111.png", "ComfyUI_00001_.png"]);
-    // Substring matching: "storm" also finds the other image's "stormy sea".
-    assert_eq!(h.names(&root, true, "lighthouse storm"), ["00003-a1111.png", "ComfyUI_00001_.png"]);
+    // Whole words: "storm" is not the other image's "stormy sea", unless asked.
+    assert_eq!(h.names(&root, true, "lighthouse storm"), ["ComfyUI_00001_.png"]);
+    assert_eq!(h.names(&root, true, "lighthouse storm*"), ["00003-a1111.png", "ComfyUI_00001_.png"]);
     assert_eq!(h.names(&root, true, "lighthouse \"a storm\""), ["ComfyUI_00001_.png"]);
     assert_eq!(h.names(&root, true, "lighthouse -stormy"), ["ComfyUI_00001_.png"]);
     assert_eq!(h.names(&root, true, "submarine"), ["invoke.png"]);
@@ -344,43 +345,95 @@ fn content_search_embeds_and_ranks() {
     let again = content_done(&h);
     assert_eq!((again["state"].as_str(), again["total"].as_u64()), (Some("done"), Some(0)));
 
-    // ---- a search ranks them as the model itself would ---------------------
+    // ---- a search answers as the model itself would ------------------------
+    // Worked out here from scratch: each picture's vector, how the everyday
+    // descriptions score against it, and so how well a description fits.
     let model_dir = h._dirs.path().join("data/models").join(gvcore::clip::MODEL);
     let vision = model::Vision::load(&model_dir).unwrap();
     let text = model::Text::load(&model_dir).unwrap();
     let tokenizer = Tokenizer::load(&model_dir.join("tokenizer.json")).unwrap();
+    let embed = |description: &str| text.embed(&tokenizer.encode(&description.to_lowercase())).unwrap();
+    let everyday: Vec<Vec<f32>> = include_str!("../src/clip/everyday.txt").lines().map(embed).collect();
     let all = h.call("query", json!({ "dir": dir, "recursive": true, "sort": "name" }));
-    let rank = |description: &str| {
-        let query = text.embed(&tokenizer.encode(description)).unwrap();
-        let mut scored: Vec<(f32, String)> = all["rows"]
-            .as_array()
-            .unwrap()
+    let pictures: Vec<(String, Vec<f32>)> = all["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row[2] != "broken.png")
+        .map(|row| {
+            let name = row[2].as_str().unwrap().to_string();
+            let path = root.join(&name);
+            let jpeg = h.engine.thumbs.get(path.to_str().unwrap(), row[6].as_i64().unwrap(), row[7].as_i64().unwrap(), 0).unwrap();
+            let picture = prepare(&image::load_from_memory(&jpeg).unwrap(), vision.image_size).unwrap();
+            (name, store::unpack(&store::pack(&vision.embed(&picture))))
+        })
+        .collect();
+    let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+    // (level, name) for every picture, best first. The level is the lesser
+    // of two measures, each 1 where a match begins: how far the description
+    // stands above the picture's ordinary run of scores, and how close it
+    // comes to the picture's best few everyday descriptions.
+    let fits = |description: &str| {
+        let query = embed(description);
+        let mut out: Vec<(f32, String)> = pictures
             .iter()
-            .filter(|row| row[2] != "broken.png")
-            .map(|row| {
-                let name = row[2].as_str().unwrap().to_string();
-                let path = root.join(&name);
-                let jpeg = h.engine.thumbs.get(path.to_str().unwrap(), row[6].as_i64().unwrap(), row[7].as_i64().unwrap(), 0).unwrap();
-                let picture = prepare(&image::load_from_memory(&jpeg).unwrap(), vision.image_size).unwrap();
-                (store::score(&query, &store::pack(&vision.embed(&picture))), name)
+            .map(|(name, picture)| {
+                let mut scores: Vec<f32> = everyday.iter().map(|line| dot(line, picture)).collect();
+                scores.sort_by(|a, b| b.total_cmp(a));
+                let best = scores[..5].iter().sum::<f32>() / 5.0;
+                let middle = scores[scores.len() / 2];
+                let mut apart: Vec<f32> = scores.iter().map(|score| (score - middle).abs()).collect();
+                apart.sort_by(f32::total_cmp);
+                let spread = apart[apart.len() / 2] * 1.4826;
+                let over = dot(&query, picture) - middle;
+                (((over / spread) / gvcore::clip::CLEAR).min((over / (best - middle)) / gvcore::clip::NEARLY), name.clone())
             })
             .collect();
-        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        scored.into_iter().map(|(_, name)| name).collect::<Vec<_>>()
+        out.sort_by(|a, b| b.0.total_cmp(&a.0));
+        out
     };
-    let found = |description: &str| {
-        let r = h.call("content_query_json", json!({ "dir": dir, "recursive": true, "text": description }));
+    let found = |description: &str, bar: Option<f64>, sort: Option<&str>| {
+        let mut args = json!({ "dir": dir, "recursive": true, "text": description });
+        if let Some(bar) = bar {
+            args["bar"] = json!(bar);
+        }
+        if let Some(sort) = sort {
+            args["sort"] = json!(sort);
+        }
+        let r = h.call("content_query_json", args);
         r["rows"].as_array().unwrap().iter().map(|row| row[2].as_str().unwrap().to_string()).collect::<Vec<_>>()
     };
+    let names_of = |fits: &[(f32, String)]| fits.iter().map(|(_, name)| name.clone()).collect::<Vec<_>>();
     for description in ["a red fox asleep in fresh snow", "lighthouse", "A  Red FOX asleep in fresh snow"] {
-        let got = found(description);
-        assert_eq!(got.len(), 11, "{description}");
-        assert_eq!(got, rank(description), "{description}");
+        let expected = fits(description);
+        // The sums are added up in a different order here than in the app,
+        // so the two can differ in the last digits: stay clear of ties, and
+        // of pictures that sit right on the bar.
+        let gap = expected.windows(2).map(|pair| pair[0].0 - pair[1].0).fold(f32::MAX, f32::min);
+        let edge = expected.iter().map(|(level, _)| (level - 1.0).abs()).fold(f32::MAX, f32::min);
+        println!("{description}: closest two {gap:.1e} apart, closest to the bar {edge:.1e} from it");
+        assert!(gap > 2e-4 && edge > 2e-4, "{description}: {expected:?}");
+        // With the bar on the floor: every picture, best match first.
+        assert_eq!(found(description, Some(-1e6), None), names_of(&expected), "{description}");
+        // With the bar where the app has it: only what clears it.
+        let clear: Vec<(f32, String)> = expected.iter().filter(|(level, _)| *level >= 1.0).cloned().collect();
+        assert_eq!(found(description, None, None), names_of(&clear), "{description}");
+        // With the bar between two pictures: the better ones and no others.
+        let between = (expected[3].0 + expected[4].0) as f64 / 2.0;
+        assert_eq!(found(description, Some(between), None), names_of(&expected[..4]), "{description}");
+        // In another order: the same pictures, in that order.
+        let mut by_name = names_of(&expected[..4]);
+        by_name.sort();
+        assert_eq!(found(description, Some(between), Some("name")), by_name, "{description}");
+        by_name.reverse();
+        assert_eq!(found(description, Some(between), Some("name_desc")), by_name, "{description}");
+        // And with the bar out of reach: nothing, rather than the least bad.
+        assert_eq!(found(description, Some(1e6), None), Vec::<String>::new(), "{description}");
     }
-    assert_ne!(found("a red fox asleep in fresh snow"), found("lighthouse"));
+    assert_ne!(found("a red fox asleep in fresh snow", Some(-1e6), None), found("lighthouse", Some(-1e6), None));
 
-    // The packed form the UI reads carries the same rows in the same order.
-    let packed = match h.engine.request("content_query", &json!({ "dir": dir, "recursive": true, "text": "lighthouse" })).unwrap() {
+    // The packed form the UI reads carries the same rows.
+    let packed = match h.engine.request("content_query", &json!({ "dir": dir, "recursive": true, "text": "lighthouse", "bar": -1e6 })).unwrap() {
         gvcore::engine::Reply::Bytes(bytes) => bytes,
         gvcore::engine::Reply::Json(_) => panic!("content_query should answer in the packed layout"),
     };
@@ -399,5 +452,5 @@ fn content_search_embeds_and_ranks() {
     h.call("content_index", scope.clone());
     content_done(&h);
     assert_eq!(h.call("content_status", scope)["embedded"], 12);
-    assert_eq!(found("lighthouse").len(), 12);
+    assert_eq!(found("lighthouse", Some(-1e6), None).len(), 12);
 }

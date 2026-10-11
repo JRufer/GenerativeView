@@ -97,6 +97,7 @@ class AppState extends ChangeNotifier {
     this.videoPlayback = false,
     this.modelSource,
     this.modelFiles,
+    this.contentBar,
   }) {
     _events = core.events.listen(_onEvent);
   }
@@ -114,6 +115,11 @@ class AppState extends ChangeNotifier {
   final String? modelSource;
   final List<ModelFile>? modelFiles;
 
+  /// How well a picture has to fit a description to count as a match, in
+  /// place of the core's own bar. For tests, whose stand-in model sees
+  /// nothing in particular in any picture.
+  double? contentBar;
+
   late final StreamSubscription<Map<String, dynamic>> _events;
 
   // ---------------------------------------------------------------- view
@@ -121,7 +127,17 @@ class AppState extends ChangeNotifier {
   String? folder;
   bool recursive = true;
   String sort = 'newest';
+
+  /// The order of search results: 'relevance' (best match first), or any
+  /// of the orders [sort] takes.
+  String searchSort = 'relevance';
   String query = '';
+
+  /// Whether something is being searched for.
+  bool get searching => query.trim().isNotEmpty;
+
+  /// The order the grid is in right now.
+  String get activeSort => searching ? searchSort : sort;
 
   /// Whether the search box describes what the pictures show (content
   /// search) rather than text to find in their metadata.
@@ -259,6 +275,7 @@ class AppState extends ChangeNotifier {
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
     sort = (saved['sort'] as String?) ?? sort;
+    searchSort = (saved['search_sort'] as String?) ?? searchSort;
     pinsOpen = flag('pins_open', pinsOpen);
     contentSearch = flag('content_search', contentSearch);
     pinnedSearches = [
@@ -430,10 +447,19 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Choose the order of the grid: of search results while something is
+  /// being searched for, of the folder otherwise. The two are remembered
+  /// apart, so searches can stay best match first.
   void setSort(String value) {
-    if (sort == value) return;
-    sort = value;
-    _save('sort', value);
+    if (searching) {
+      if (searchSort == value) return;
+      searchSort = value;
+      _save('search_sort', value);
+    } else {
+      if (sort == value || value == 'relevance') return;
+      sort = value;
+      _save('sort', value);
+    }
     notifyListeners();
     _reload();
   }
@@ -715,7 +741,7 @@ class AppState extends ChangeNotifier {
     final dir = folder;
     if (dir == null || _disposed) return;
     final ticket = ++_queryTicket;
-    final describing = contentSearch && query.trim().isNotEmpty;
+    final describing = contentSearch && searching;
     ItemList list;
     try {
       list = ItemList.parse(
@@ -724,12 +750,15 @@ class AppState extends ChangeNotifier {
                 dir: dir,
                 recursive: recursive,
                 text: query,
+                sort: searchSort,
+                bar: contentBar,
               )
             : await core.query(
                 dir: dir,
                 recursive: recursive,
                 text: query,
-                sort: sort,
+                sort: activeSort,
+                then: sort,
               ),
       );
     } catch (e) {
