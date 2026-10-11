@@ -1947,6 +1947,50 @@ void main() {
     tester.view.physicalSize = const Size(700, 500);
     await settle(tester);
     expect(gridWidth(), 700);
+
+    // ---- and the search box, short of room, grows over the tools as well ----
+    // The bar: 6 of padding, the folder button and a gap, then everything
+    // else; four tools of 36 at the far end and a gap of 4 before them.
+    const barLeft = 6.0 + 36 + 6;
+    const barRight = 700.0 - 6;
+    const toolsLeft = barRight - 4 * 36;
+    Rect box() => tester.getRect(search);
+    expect(tester.getRect(find.byTooltip('Sort and refresh')).left, toolsLeft);
+    expect(box().width, 170);
+    expect(box().right, closeTo(toolsLeft - 4, 0.01));
+    await tester.tap(search);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(part);
+    await tester.pump(part);
+    expect(box().width, allOf(greaterThan(170), lessThan(barRight - barLeft)));
+    expect(box().right, allOf(greaterThan(toolsLeft), lessThan(barRight)));
+    await tester.pump(rest);
+    expect(box().left, closeTo(barLeft, 0.01));
+    expect(box().right, closeTo(barRight, 0.01));
+    expect(inBar('library'), findsNothing);
+    // The tools are under it: a tap where one was goes to the box.
+    final info = tester.getCenter(find.byTooltip('Generation data (I)'));
+    await tester.tapAt(info);
+    await tester.pump();
+    expect(state.rightOpen, isFalse);
+    expect(state.searchFocus.hasFocus, isTrue);
+
+    // Put down, it is out of their way at once, before it has shrunk back.
+    state.searchFocus.unfocus();
+    await tester.pump();
+    await tester.pump();
+    expect(box().width, greaterThan(170));
+    await tester.tapAt(info);
+    await tester.pump();
+    expect(state.rightOpen, isTrue);
+    await tester.pump(rest);
+    expect(box().width, 170);
+    expect(box().right, closeTo(toolsLeft - 4, 0.01));
+    expect(inBar('library'), findsOneWidget);
+    state.toggleRight();
+    await settle(tester);
+    expect(find.byType(MetaPanel), findsNothing);
     await tester.tap(find.byTooltip('Folders ([)'));
     await tester.pump();
     await tester.pump(part);
