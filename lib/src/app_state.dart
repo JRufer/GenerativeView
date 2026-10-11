@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
+import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/thumb_cache.dart';
@@ -40,23 +41,37 @@ class Place {
 /// A search kept for later, a tap away under the search box.
 @immutable
 class PinnedSearch {
-  const PinnedSearch(this.query);
+  const PinnedSearch(this.query, {this.content = false});
   final String query;
 
-  Map<String, Object?> toJson() => {'q': query};
+  /// A description of what the pictures show, rather than metadata to match.
+  final bool content;
+
+  Map<String, Object?> toJson() => {'q': query, if (content) 'content': true};
 
   static PinnedSearch? fromJson(Object? json) {
     final query = json is Map ? json['q'] : json;
     if (query is! String || query.trim().isEmpty) return null;
-    return PinnedSearch(query.trim());
+    return PinnedSearch(
+      query.trim(),
+      content: json is Map && json['content'] == true,
+    );
   }
 
   @override
   bool operator ==(Object other) =>
-      other is PinnedSearch && other.query == query;
+      other is PinnedSearch && other.query == query && other.content == content;
 
   @override
-  int get hashCode => query.hashCode;
+  int get hashCode => Object.hash(query, content);
+}
+
+/// How far a download of the content-search model has come.
+@immutable
+class DownloadProgress {
+  const DownloadProgress(this.received, this.total);
+  final int received;
+  final int total;
 }
 
 class DirNode {
@@ -80,6 +95,8 @@ class AppState extends ChangeNotifier {
     required this.thumbs,
     this.pollMs = 0,
     this.videoPlayback = false,
+    this.modelSource,
+    this.modelFiles,
   }) {
     _events = core.events.listen(_onEvent);
   }
@@ -91,6 +108,12 @@ class AppState extends ChangeNotifier {
   /// Whether a video player is available on this install.
   final bool videoPlayback;
 
+  /// Where to fetch the content-search model from, and what its files are,
+  /// in place of what the core says. For tests, which serve a small model
+  /// from this machine.
+  final String? modelSource;
+  final List<ModelFile>? modelFiles;
+
   late final StreamSubscription<Map<String, dynamic>> _events;
 
   // ---------------------------------------------------------------- view
@@ -99,6 +122,19 @@ class AppState extends ChangeNotifier {
   bool recursive = true;
   String sort = 'newest';
   String query = '';
+
+  /// Whether the search box describes what the pictures show (content
+  /// search) rather than text to find in their metadata.
+  bool contentSearch = false;
+
+  /// Whether content search has its model, and how far it has got with the
+  /// current folder's pictures.
+  final ValueNotifier<ContentStatus> content = ValueNotifier(
+    const ContentStatus(),
+  );
+
+  /// Set while the model is being downloaded.
+  final ValueNotifier<DownloadProgress?> download = ValueNotifier(null);
 
   ItemList items = ItemList.empty;
 
@@ -176,6 +212,8 @@ class AppState extends ChangeNotifier {
   bool _revealAfterReload = false;
   Timer? _reloadTimer;
   Timer? _queryTimer;
+  Timer? _contentTimer;
+  ModelDownload? _download;
   bool _disposed = false;
   final Map<String, Timer> _saveTimers = {};
   final Map<String, GenInfo> _metaCache = {};
@@ -222,6 +260,7 @@ class AppState extends ChangeNotifier {
     cropTiles = flag('crop_tiles', cropTiles);
     sort = (saved['sort'] as String?) ?? sort;
     pinsOpen = flag('pins_open', pinsOpen);
+    contentSearch = flag('content_search', contentSearch);
     pinnedSearches = [
       for (final entry in _savedList(saved['pinned_searches']))
         ?PinnedSearch.fromJson(entry),
@@ -376,6 +415,7 @@ class AppState extends ChangeNotifier {
     }
     unawaited(revealInTree(dir));
     await _reload();
+    if (contentSearch) unawaited(refreshContent());
   }
 
   void setRecursive(bool value) {
@@ -407,16 +447,22 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Search for [text] at once, as if it had just been typed.
-  void applySearch(String text) {
+  /// Search for [text] at once, as if it had just been typed. [content]
+  /// says which kind of search it is; left out, the kind stays as it is.
+  void applySearch(String text, {bool? content}) {
     searchText.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: text.length),
     );
     _queryTimer?.cancel();
-    if (query != text) {
+    final kind = content ?? contentSearch;
+    if (query != text || kind != contentSearch) {
       query = text;
-      _reload();
+      if (kind != contentSearch) {
+        _setContentSearch(kind);
+      } else {
+        _reload();
+      }
     }
     notifyListeners();
   }
@@ -430,10 +476,148 @@ class AppState extends ChangeNotifier {
       rightOpen = false;
       _save('right_open', 'false');
     }
-    _revealAfterReload = query != text;
+    _revealAfterReload = query != text || contentSearch;
     revealTick++;
-    applySearch(text);
+    // Filters are written in the metadata search's own language.
+    applySearch(text, content: false);
   }
+
+  // ================================================================ content
+
+  /// Switch the search box between finding text in the metadata and
+  /// describing what the pictures show.
+  void toggleContentSearch() {
+    _setContentSearch(!contentSearch);
+    notifyListeners();
+  }
+
+  void _setContentSearch(bool value) {
+    contentSearch = value;
+    _save('content_search', '$value');
+    _reload();
+    if (value) unawaited(refreshContent());
+  }
+
+  /// Ask the core where content search stands for this folder, and have it
+  /// look at whatever pictures it has not seen yet.
+  Future<void> refreshContent() async {
+    final dir = folder;
+    if (dir == null || _disposed) return;
+    final ContentStatus status;
+    try {
+      final json = await core.call('content_status', {
+        'dir': dir,
+        'recursive': recursive,
+      });
+      status = ContentStatus.fromJson(json as Map<String, dynamic>);
+    } catch (e) {
+      if (!_disposed) content.value = ContentStatus(known: true, error: '$e');
+      return;
+    }
+    if (_disposed || dir != folder) return;
+    content.value = status;
+    if (status.installed && contentSearch) {
+      _fire(core.call('content_index', {'dir': dir, 'recursive': recursive}));
+    }
+  }
+
+  /// Something about the folder's pictures changed: look again, but not on
+  /// every single event of a burst.
+  void _contentSoon() {
+    if (!contentSearch || !content.value.installed) return;
+    _contentTimer?.cancel();
+    _contentTimer = Timer(const Duration(milliseconds: 1200), refreshContent);
+  }
+
+  void _onContentEvent(Map<String, dynamic> e) {
+    final state = e['state'] as String? ?? '';
+    final done = (e['done'] as num?)?.toInt() ?? 0;
+    final todo = (e['total'] as num?)?.toInt() ?? 0;
+    final before = content.value;
+    switch (state) {
+      case 'indexing':
+        content.value = before.copyWith(
+          indexing: true,
+          done: done,
+          todo: todo,
+          error: () => null,
+        );
+      case 'done':
+        content.value = before.copyWith(indexing: false, done: 0, todo: 0);
+        // The counts moved on: fetch them, without starting another pass.
+        if (done > 0) unawaited(_recount());
+      case 'no_model':
+        content.value = before.copyWith(installed: false, indexing: false);
+      case 'error':
+        content.value = before.copyWith(
+          indexing: false,
+          error: () => e['error'] as String? ?? 'Content search failed',
+        );
+    }
+    // More pictures looked at can mean better answers to what is typed.
+    if (contentSearch && query.trim().isNotEmpty && done > 0) {
+      _reloadTimer ??= Timer(const Duration(milliseconds: 900), () {
+        _reloadTimer = null;
+        _reload();
+      });
+    }
+  }
+
+  Future<void> _recount() async {
+    final dir = folder;
+    if (dir == null || _disposed) return;
+    try {
+      final json = await core.call('content_status', {
+        'dir': dir,
+        'recursive': recursive,
+      });
+      final status = ContentStatus.fromJson(json as Map<String, dynamic>);
+      if (_disposed || dir != folder) return;
+      content.value = content.value.copyWith(embedded: status.embedded);
+    } catch (_) {}
+  }
+
+  /// Fetch the content-search model. Progress shows in [download]; when it
+  /// is done the folder's pictures start being looked at.
+  Future<void> downloadModel() async {
+    if (_download != null) return;
+    final status = content.value;
+    if (status.modelDir.isEmpty) return;
+    final files =
+        modelFiles ??
+        [for (final (name, bytes) in status.files) ModelFile(name, bytes)];
+    var shown = -1;
+    final job = ModelDownload(
+      source: modelSource ?? status.source,
+      directory: status.modelDir,
+      files: files,
+      onProgress: (received, total) {
+        // A step of the bar at a time, not every packet.
+        final step = total <= 0 ? 0 : received * 200 ~/ total;
+        if (step == shown || _disposed) return;
+        shown = step;
+        download.value = DownloadProgress(received, total);
+      },
+    );
+    _download = job;
+    download.value = DownloadProgress(0, job.total);
+    content.value = status.copyWith(error: () => null);
+    try {
+      await job.run();
+    } on DownloadCancelled {
+      // Nothing to say: it was asked for.
+    } catch (e) {
+      if (!_disposed) content.value = content.value.copyWith(error: () => '$e');
+    } finally {
+      _download = null;
+      if (!_disposed) download.value = null;
+    }
+    if (_disposed) return;
+    await refreshContent();
+    if (contentSearch) unawaited(_reload());
+  }
+
+  void cancelDownload() => _download?.cancel();
 
   void rescan() {
     thumbs.retryFailed();
@@ -442,24 +626,23 @@ class AppState extends ChangeNotifier {
 
   // ================================================================ pins
 
-  bool isSearchPinned(String text) {
-    final wanted = text.trim();
-    return pinnedSearches.any((p) => p.query == wanted);
-  }
+  /// The search in the box right now, as a pin.
+  PinnedSearch get currentSearch =>
+      PinnedSearch(query.trim(), content: contentSearch);
 
-  void pinSearch(String text) {
-    final wanted = text.trim();
-    if (wanted.isEmpty || isSearchPinned(wanted)) return;
-    pinnedSearches = [...pinnedSearches, PinnedSearch(wanted)];
+  bool isSearchPinned(PinnedSearch search) => pinnedSearches.contains(search);
+
+  void pinSearch(PinnedSearch search) {
+    if (search.query.isEmpty || isSearchPinned(search)) return;
+    pinnedSearches = [...pinnedSearches, search];
     _savePinnedSearches();
   }
 
-  void unpinSearch(String text) {
-    final wanted = text.trim();
-    if (!isSearchPinned(wanted)) return;
+  void unpinSearch(PinnedSearch search) {
+    if (!isSearchPinned(search)) return;
     pinnedSearches = [
       for (final p in pinnedSearches)
-        if (p.query != wanted) p,
+        if (p != search) p,
     ];
     _savePinnedSearches();
   }
@@ -493,7 +676,10 @@ class AppState extends ChangeNotifier {
   void _onEvent(Map<String, dynamic> e) {
     if (e['root'] != folder) return;
     switch (e['t']) {
+      case 'content':
+        _onContentEvent(e);
       case 'changed':
+        _contentSoon();
         // Coalesce bursts (a scan reports every few hundred files).
         _reloadTimer ??= Timer(const Duration(milliseconds: 120), () {
           _reloadTimer = null;
@@ -510,6 +696,7 @@ class AppState extends ChangeNotifier {
         } else if (state == 'done') {
           scan.value = ScanStatus.idle;
           if (prewarm) _warm();
+          _contentSoon();
         } else {
           scan.value = ScanStatus(running: true, done: done, total: total);
         }
@@ -528,21 +715,31 @@ class AppState extends ChangeNotifier {
     final dir = folder;
     if (dir == null || _disposed) return;
     final ticket = ++_queryTicket;
-    final ItemList list;
+    final describing = contentSearch && query.trim().isNotEmpty;
+    ItemList list;
     try {
       list = ItemList.parse(
-        await core.query(
-          dir: dir,
-          recursive: recursive,
-          text: query,
-          sort: sort,
-        ),
+        describing
+            ? await core.contentQuery(
+                dir: dir,
+                recursive: recursive,
+                text: query,
+              )
+            : await core.query(
+                dir: dir,
+                recursive: recursive,
+                text: query,
+                sort: sort,
+              ),
       );
     } catch (e) {
-      if (ticket == _queryTicket && !_disposed) {
+      if (ticket != _queryTicket || _disposed) return;
+      if (!describing) {
         scan.value = ScanStatus(error: '$e');
+        return;
       }
-      return;
+      // No model yet, most likely; the banner over the grid says what to do.
+      list = ItemList.empty;
     }
     if (ticket != _queryTicket || _disposed) return;
     final previousIndex = selectedIndex;
@@ -710,6 +907,10 @@ class AppState extends ChangeNotifier {
     _events.cancel();
     _reloadTimer?.cancel();
     _queryTimer?.cancel();
+    _contentTimer?.cancel();
+    _download?.cancel();
+    content.dispose();
+    download.dispose();
     for (final t in _saveTimers.values) {
       t.cancel();
     }

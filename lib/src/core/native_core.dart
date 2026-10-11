@@ -220,6 +220,21 @@ class NativeCore {
     return reply as Uint8List;
   }
 
+  /// The pictures of a folder view that best match a description of what
+  /// they show, best first, in the same packed layout as [query].
+  Future<Uint8List> contentQuery({
+    required String dir,
+    required bool recursive,
+    required String text,
+  }) async {
+    final reply = await _request('content_query', {
+      'dir': dir,
+      'recursive': recursive,
+      'text': text,
+    });
+    return reply as Uint8List;
+  }
+
   /// Ask for a thumbnail. Returns a request id for [cancel]. [done] gets the
   /// JPEG bytes, or null on failure; `needHost` means the core wants the
   /// caller to supply a decoded frame through [thumbPut].

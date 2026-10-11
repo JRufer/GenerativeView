@@ -208,6 +208,14 @@ void main() {
       await tester.pump();
     }
 
+    // ---- content search: the switch, and what it asks for first ------------
+    await tester.tap(find.byTooltip('Searching prompts and metadata.\nClick to search by what the pictures show.'));
+    await waitFor(tester, () => find.text('Download').evaluate().isNotEmpty, what: 'content search to ask for its model');
+    expect(find.textContaining('one-time download of'), findsOneWidget);
+    await shot(tester, 'it-02d-content-search');
+    await tester.tap(find.byTooltip('Searching by what the pictures show.\nClick to search prompts and metadata.'));
+    await waitFor(tester, () => find.text('Download').evaluate().isEmpty, what: 'the metadata search to come back');
+
     // ---- focus view -------------------------------------------------------
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await waitFor(tester, () => find.byType(FocusView).evaluate().isNotEmpty, what: 'the focus view to open');

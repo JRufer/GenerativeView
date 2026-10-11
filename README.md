@@ -14,6 +14,7 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 - **Metadata panel** on the right for the selected image: prompt, negative prompt, seed, model, LoRAs with weights, other models (VAE, text encoders, ControlNet, upscalers), sampler settings, the full ComfyUI node graph, and the raw JSON exactly as stored. Tap a value to copy it. "Copy as tags" gives `<lora:name:weight>`; "Copy all" gives every field as text.
 - **Filter by what an image used**: right-click, or press and hold, the seed, a model, a LoRA or a sampler setting in the metadata panel and choose "Show only images…". On the **LoRAs** heading that means every image that uses all of the LoRAs listed, at any strength; on a single LoRA, every image that uses that one. The filter appears in the search box as ordinary search text, so it can be edited, cleared or pinned.
 - **Search** across the folder as you type. It matches anywhere inside prompts, models, LoRAs, settings and file names.
+- **Content search**: click the magnifying glass in the search box to switch from searching the metadata to describing what you are looking for: `a fox in the snow` then finds pictures that *show* that, whatever their prompts say. The closest matches come first. It needs a model (TinyCLIP, 337 MB), which the app offers to download the first time and then runs on your device; see [Content search](#content-search) below. Click the magnifying glass again to go back.
 - **Pinned searches**: type a search and click the pin beside the ✕ to keep it. Clicking in the search box lists your pinned searches underneath; click one to run it, or its ✕ to remove it. Typing narrows the list to the pins that contain what you typed.
 - **Usage** (the bar-chart button; in a narrow window it is in the sort menu): which models, LoRAs, samplers, schedulers, step counts, CFG values, sizes and prompt words the folder's images use most, how each one's use is spread over time, and a timeline of images per day, week, month or year. Click anything to go back to the grid showing only the images behind that number.
 - **Image menu**: right-click, or press and hold, an image in the grid or the focus view. **Copy image** puts the file itself on the clipboard, bytes untouched, so the generation data goes with it wherever you paste. The menu also copies the prompt and the file path.
@@ -49,6 +50,17 @@ Put `=` after the colon to match a whole value instead of part of one. This is w
 | `lora:=detail_xl lora:=inkwash` | images that use both LoRAs, at any strength |
 | `prompt:=fox` | `fox` as a whole word: not `foxglove` |
 | `sampler:=euler`, `size:=1024x1024`, `name:=a.png` | the whole sampler name, size or file name |
+
+### Content search
+
+Content search uses a CLIP model: a network that turns a picture and a description into numbers that agree when one matches the other. GenerativeView uses [TinyCLIP ViT-40M/32](https://huggingface.co/wkcn/TinyCLIP-ViT-40M-32-Text-19M-LAION400M) (MIT licence): about half the size and half the arithmetic of the original CLIP ViT-B/32, for somewhat lower accuracy (59.8 % against 63.3 % on the usual ImageNet zero-shot test).
+
+- **The model is not in the app.** The first time you switch content search on, a banner offers to download it: three files, 337 MB, from huggingface.co into the app's data folder (`models/tinyclip-vit-40m-32-text-19m`). That download is the only time GenerativeView uses the network; the pictures and what you type never leave the device. On Android this is what the app's network permission is for. To do without it, copy `config.json`, `tokenizer.json` and `model.safetensors` from that page into the folder yourself.
+- **Pictures are looked at once.** With content search on, the app works through the open folder in the background, newest pictures first, and remembers what it saw in `vectors.db` beside the index (about 1 KB per picture). Searches answer from whatever has been looked at so far and fill in as the rest is done. It uses half the machine's cores and the small thumbnails the grid already made. On one core of a cloud VM a picture took 65 to 80 ms; a tablet will be slower, so a first pass over thousands of pictures there takes a while.
+- **What you get back** is the pictures that stand out as closest to the description, best first: at least a dozen, at most three hundred. It is a ranking, not a yes/no test, so the tail of a search for something the folder does not contain is simply the least unlike it.
+- A pinned search remembers which kind it is, and "Show only images…" filters always switch back to the metadata search.
+
+The model runs on the CPU in the Rust core (`core/src/clip`): no GPU, no extra libraries. Its arithmetic is checked in the tests against the reference implementation in Hugging Face's `transformers` on a small model with made-up weights (`core/tests/fixtures/clip_mini`).
 
 ### Keyboard
 
@@ -147,7 +159,7 @@ Run `tool/build-android-core.sh` again whenever something under `core/` changes.
 
 ```
 lib/        Flutter UI (Dart)
-core/       Rust library: metadata parsing, index, file watching, thumbnails
+core/       Rust library: metadata parsing, index, file watching, thumbnails, content search
 ```
 
 The UI talks to the core through a small hand-written `dart:ffi` layer (`lib/src/core/native_core.dart` ↔ `core/src/ffi.rs`). Every call is asynchronous, so the UI thread never waits on disk.
@@ -157,9 +169,10 @@ The UI talks to the core through a small hand-written `dart:ffi` layer (`lib/src
 - **Live updates** come from file-system notifications, with a cheap check of folder timestamps every few seconds as a backstop for storage that sends none (Android shared storage, network mounts).
 - **Thumbnails** are generated in two sizes on demand, newest request first, and cached on disk. Requests for tiles that scrolled away are dropped. The rest of the folder is pre-rendered in the background at low priority.
 - **Grid data** crosses to Dart as one packed buffer that is read in place, so listing ten thousand items costs no parsing.
+- **Content search** keeps one vector per picture, filed under the picture's path, date and size like a thumbnail. A search embeds the description (about 20 ms) and takes one dot product per picture.
 - **Exact filters and usage counts** read one more text column beside the search text: a line per model, LoRA and setting. Counting what ten thousand images were made with is one pass over it (about 35 ms on the same test machine), and indexing is no slower for it.
 
-The index lives in `~/.local/share/com.jrufer.generativeview` and thumbnails in `~/.cache/com.jrufer.generativeview` (on Android, in the app's own storage). The thumbnails and the image index are caches of what is on disk and are rebuilt if deleted. The index file also holds your settings, pinned folders and pinned searches, so deleting it resets those.
+The index lives in `~/.local/share/com.jrufer.generativeview` and thumbnails in `~/.cache/com.jrufer.generativeview` (on Android, in the app's own storage). The thumbnails and the image index are caches of what is on disk and are rebuilt if deleted; so is `vectors.db`, though rebuilding it means looking at every picture again. The index file also holds your settings, pinned folders and pinned searches, so deleting it resets those.
 
 ## Development
 

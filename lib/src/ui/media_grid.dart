@@ -221,6 +221,34 @@ class _MediaGridState extends State<MediaGrid> {
               detail: '',
             );
           }
+          if (state.query.trim().isNotEmpty && state.contentSearch) {
+            // Described, not searched for: what is missing depends on how
+            // far content search has got.
+            return ValueListenableBuilder<ContentStatus>(
+              valueListenable: state.content,
+              builder: (context, status, _) {
+                if (!status.installed) {
+                  return const _Hint(
+                    icon: Icons.image_search,
+                    title: 'Content search is not set up yet',
+                    detail: 'It needs its model first. See above.',
+                  );
+                }
+                if (status.indexing || status.embedded == 0) {
+                  return const _Hint(
+                    icon: Icons.hourglass_empty,
+                    title: 'Looking at the pictures…',
+                    detail: 'Matches appear as they are found.',
+                  );
+                }
+                return _Hint(
+                  icon: Icons.search_off,
+                  title: 'No picture here matches “${state.query.trim()}”',
+                  detail: 'Content search goes by what the pictures show.',
+                );
+              },
+            );
+          }
           if (state.query.trim().isNotEmpty) {
             return _Hint(
               icon: Icons.search_off,
