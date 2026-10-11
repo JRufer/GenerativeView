@@ -45,11 +45,13 @@ const BATCH: usize = 8;
 /// The picture encoder is dropped after this long with nothing to do.
 const IDLE: Duration = Duration::from_secs(90);
 
-/// A search keeps the pictures that stand out from the folder's general run
-/// of scores by this many standard deviations...
+/// A search answers with the closest tenth of the folder's pictures...
+const KEEP_ONE_IN: usize = 10;
+/// ...or, if there are more of them, with every picture that stands out from
+/// the folder's general run of scores by this many standard deviations...
 const STAND_OUT: f32 = 2.0;
 /// ...but never fewer than this (when there are that many), nor more than this.
-const KEEP_AT_LEAST: usize = 12;
+const KEEP_AT_LEAST: usize = 24;
 const KEEP_AT_MOST: usize = 300;
 
 enum Job {
@@ -172,8 +174,12 @@ impl ContentSearch {
     }
 }
 
-/// How many of the best-first `scored` pictures count as matches: the ones
-/// that stand out from the folder's general run of scores.
+/// How many of the best-first `scored` pictures a search answers with.
+///
+/// The scores say which pictures are closer to the description, not which
+/// "match" it, and where they fall depends on the folder: so the answer is
+/// a share of the folder, grown to take in everything that clearly stands
+/// out, within fixed bounds.
 fn keep(scored: &[(f32, usize)]) -> usize {
     let count = scored.len();
     if count <= KEEP_AT_LEAST {
@@ -182,7 +188,8 @@ fn keep(scored: &[(f32, usize)]) -> usize {
     let mean = scored.iter().map(|s| s.0).sum::<f32>() / count as f32;
     let spread = (scored.iter().map(|s| (s.0 - mean) * (s.0 - mean)).sum::<f32>() / count as f32).sqrt();
     let bar = mean + STAND_OUT * spread;
-    scored.iter().take_while(|s| s.0 >= bar).count().clamp(KEEP_AT_LEAST, KEEP_AT_MOST.min(count))
+    let standing_out = scored.iter().take_while(|s| s.0 >= bar).count();
+    standing_out.max(count / KEEP_ONE_IN).clamp(KEEP_AT_LEAST, KEEP_AT_MOST.min(count))
 }
 
 impl Inner {
@@ -339,15 +346,21 @@ mod tests {
         // A small folder: everything, in order.
         assert_eq!(keep(&scored(&[0.3, 0.2, 0.1])), 3);
         assert_eq!(keep(&[]), 0);
-        // Five clear matches among five hundred: those, padded to the minimum.
+        // Five clear matches among a hundred: those, padded to the minimum.
         let mut values = vec![0.31, 0.3, 0.3, 0.29, 0.29];
-        values.extend((0..500).map(|i| 0.15 + (i % 7) as f32 * 0.002));
+        values.extend((0..100).map(|i| 0.15 + (i % 7) as f32 * 0.002));
         assert_eq!(keep(&scored(&values)), KEEP_AT_LEAST);
-        // Forty: all forty, and nothing after them.
-        let mut values = vec![0.3; 40];
-        values.extend((0..2000).map(|i| 0.15 + (i % 7) as f32 * 0.002));
-        assert_eq!(keep(&scored(&values)), 40);
-        // A whole folder of matches is capped.
+        // Among five hundred: the closest tenth.
+        values.extend((0..400).map(|i| 0.15 + (i % 7) as f32 * 0.002));
+        assert_eq!(keep(&scored(&values)), 50);
+        // Forty-five that stand out among three hundred: all of them, though
+        // that is more than a tenth.
+        let mut values = vec![0.3; 45];
+        values.extend((0..255).map(|i| 0.15 + (i % 7) as f32 * 0.002));
+        assert_eq!(keep(&scored(&values)), 45);
+        // A folder that is all one subject still answers with its tenth...
+        assert_eq!(keep(&scored(&vec![0.3; 1000])), 100);
+        // ...and a big one is capped.
         let mut values = vec![0.3; 900];
         values.extend(vec![0.1; 9000]);
         assert_eq!(keep(&scored(&values)), KEEP_AT_MOST);
