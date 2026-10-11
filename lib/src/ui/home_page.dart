@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/models.dart';
 import '../platform.dart';
 import '../theme.dart';
 import 'focus_view.dart';
@@ -127,6 +128,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   TopBar(state: state),
                   _ScanBar(state: state),
                   if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
+                  if (state.contentSearch && !focus)
+                    _ContentBanner(state: state),
                   Expanded(child: _body(constraints.maxWidth)),
                 ],
               ),
@@ -327,6 +330,131 @@ class _StorageBanner extends StatelessWidget {
               child: const Text('Allow access'),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What content search needs, or is busy with, when it is switched on:
+/// its model fetched, the model being fetched, pictures being looked at.
+/// Nothing at all once it is simply ready.
+class _ContentBanner extends StatelessWidget {
+  const _ContentBanner({required this.state});
+  final AppState state;
+
+  static String _megabytes(int bytes) => (bytes / 1000000).toStringAsFixed(0);
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ContentStatus>(
+      valueListenable: state.content,
+      builder: (context, status, _) => ValueListenableBuilder<DownloadProgress?>(
+        valueListenable: state.download,
+        builder: (context, progress, _) {
+          const text = TextStyle(fontSize: 13, color: Palette.text, height: 1.35);
+          const note = TextStyle(fontSize: 12.5, color: Palette.muted);
+          if (progress != null) {
+            return _strip(
+              icon: Icons.download,
+              body: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Downloading the content search model: '
+                    '${_megabytes(progress.received)} of ${_megabytes(progress.total)} MB',
+                    style: text,
+                  ),
+                  const SizedBox(height: 6),
+                  LinearProgressIndicator(
+                    value: progress.total > 0
+                        ? progress.received / progress.total
+                        : null,
+                    minHeight: 3,
+                    backgroundColor: Palette.line,
+                    color: Palette.accent,
+                  ),
+                ],
+              ),
+              action: 'Cancel',
+              onAction: state.cancelDownload,
+            );
+          }
+          if (!status.known) return const SizedBox.shrink();
+          if (!status.installed) {
+            return _strip(
+              icon: Icons.image_search,
+              body: Text(
+                [
+                  'Content search finds pictures by what they show. It needs '
+                      'a model: a one-time download of '
+                      '${_megabytes(status.downloadBytes)} MB from '
+                      'huggingface.co. After that it runs on this device and '
+                      'nothing leaves it.',
+                  ?status.error,
+                ].join('\n'),
+                style: text,
+              ),
+              action: status.error == null ? 'Download' : 'Try again',
+              onAction: state.downloadModel,
+            );
+          }
+          if (status.error != null) {
+            return _strip(
+              icon: Icons.error_outline,
+              body: Text(status.error!, style: text),
+            );
+          }
+          if (status.indexing && status.todo > 0) {
+            return _strip(
+              icon: Icons.image_search,
+              slim: true,
+              body: Row(
+                children: [
+                  Text(
+                    'Looking at pictures: ${status.done} of ${status.todo}',
+                    style: note,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: status.done / status.todo,
+                      minHeight: 2,
+                      backgroundColor: Palette.line,
+                      color: Palette.muted,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+          return const SizedBox.shrink();
+        },
+      ),
+    );
+  }
+
+  Widget _strip({
+    required IconData icon,
+    required Widget body,
+    String? action,
+    VoidCallback? onAction,
+    bool slim = false,
+  }) {
+    return Container(
+      key: const ValueKey<String>('content-banner'),
+      width: double.infinity,
+      color: Palette.raised,
+      padding: EdgeInsets.fromLTRB(16, slim ? 6 : 10, 10, slim ? 6 : 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Palette.muted),
+          const SizedBox(width: 12),
+          Expanded(child: body),
+          if (action != null)
+            ExcludeFocus(
+              child: TextButton(onPressed: onAction, child: Text(action)),
+            ),
         ],
       ),
     );

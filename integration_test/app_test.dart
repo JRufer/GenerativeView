@@ -208,6 +208,17 @@ void main() {
       await tester.pump();
     }
 
+    // ---- content search: the switch, and what it asks for first ------------
+    await tester.tap(find.byTooltip('Searching prompts and metadata.\nClick to search by what the pictures show.'));
+    // ("Download" alone would not do: on Android it is also a folder.)
+    final banner = find.byKey(const ValueKey<String>('content-banner'));
+    await waitFor(tester, () => banner.evaluate().isNotEmpty, what: 'content search to ask for its model');
+    expect(find.descendant(of: banner, matching: find.textContaining('one-time download of')), findsOneWidget);
+    expect(find.descendant(of: banner, matching: find.text('Download')), findsOneWidget);
+    await shot(tester, 'it-02d-content-search');
+    await tester.tap(find.byTooltip('Searching by what the pictures show.\nClick to search prompts and metadata.'));
+    await waitFor(tester, () => banner.evaluate().isEmpty, what: 'the metadata search to come back');
+
     // ---- focus view -------------------------------------------------------
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await waitFor(tester, () => find.byType(FocusView).evaluate().isNotEmpty, what: 'the focus view to open');

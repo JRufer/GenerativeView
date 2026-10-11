@@ -291,3 +291,113 @@ fn walk_count(dir: &Path) -> usize {
     let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
     rd.flatten().map(|e| if e.path().is_dir() { walk_count(&e.path()) } else { e.path().extension().map_or(0, |x| (x == "jpg") as usize) }).sum()
 }
+
+/// Put the reference CLIP model where the engine looks for one.
+fn install_mini_model(h: &Harness) {
+    let dir = h._dirs.path().join("data/models").join(gvcore::clip::MODEL);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["config.json", "tokenizer.json", "model.safetensors"] {
+        std::fs::copy(fixture_path("clip_mini").join(name), dir.join(name)).unwrap();
+    }
+}
+
+#[test]
+fn content_search_embeds_and_ranks() {
+    use gvcore::clip::{image::prepare, model, store, tokenizer::Tokenizer};
+
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    let names: Vec<String> = (0..11).map(|i| format!("img{i:02}.png")).collect();
+    for (i, name) in names.iter().enumerate() {
+        std::fs::write(root.join(name), png_with_text(200 + 13 * i as u32, 160, i as u32 * 7 + 1, &[])).unwrap();
+    }
+    std::fs::write(root.join("broken.png"), b"not a picture at all").unwrap();
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let scope = json!({ "dir": dir, "recursive": true });
+    let content_done = |h: &Harness| h.wait("content pass", |e| e["t"] == "content" && e["state"] != "indexing");
+
+    // ---- without the model: says so, and does nothing ----------------------
+    let status = h.call("content_status", scope.clone());
+    assert_eq!((status["installed"].as_bool(), status["embedded"].as_u64(), status["total"].as_u64()), (Some(false), Some(0), Some(12)));
+    assert_eq!(status["model"], gvcore::clip::MODEL);
+    assert_eq!(status["files"].as_array().unwrap().len(), 3);
+    assert!(status["source"].as_str().unwrap().starts_with("https://huggingface.co/"));
+    h.call("content_index", scope.clone());
+    assert_eq!(content_done(&h)["state"], "no_model");
+    let refused = h.engine.call("content_query_json", &json!({ "dir": dir, "recursive": true, "text": "a fox" }));
+    assert!(refused.unwrap_err().contains("not installed"));
+
+    // ---- with it: every readable picture gets a vector ---------------------
+    install_mini_model(&h);
+    assert_eq!(h.call("content_status", scope.clone())["installed"], true);
+    h.call("content_index", scope.clone());
+    let done = content_done(&h);
+    assert_eq!((done["state"].as_str(), done["done"].as_u64(), done["total"].as_u64()), (Some("done"), Some(12), Some(12)), "{done}");
+    let status = h.call("content_status", scope.clone());
+    assert_eq!((status["embedded"].as_u64(), status["total"].as_u64(), status["indexing"].as_bool()), (Some(11), Some(12), Some(false)));
+
+    // A second pass has nothing to do: the broken file is not tried again.
+    h.call("content_index", scope.clone());
+    let again = content_done(&h);
+    assert_eq!((again["state"].as_str(), again["total"].as_u64()), (Some("done"), Some(0)));
+
+    // ---- a search ranks them as the model itself would ---------------------
+    let model_dir = h._dirs.path().join("data/models").join(gvcore::clip::MODEL);
+    let vision = model::Vision::load(&model_dir).unwrap();
+    let text = model::Text::load(&model_dir).unwrap();
+    let tokenizer = Tokenizer::load(&model_dir.join("tokenizer.json")).unwrap();
+    let all = h.call("query", json!({ "dir": dir, "recursive": true, "sort": "name" }));
+    let rank = |description: &str| {
+        let query = text.embed(&tokenizer.encode(description)).unwrap();
+        let mut scored: Vec<(f32, String)> = all["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row[2] != "broken.png")
+            .map(|row| {
+                let name = row[2].as_str().unwrap().to_string();
+                let path = root.join(&name);
+                let jpeg = h.engine.thumbs.get(path.to_str().unwrap(), row[6].as_i64().unwrap(), row[7].as_i64().unwrap(), 0).unwrap();
+                let picture = prepare(&image::load_from_memory(&jpeg).unwrap(), vision.image_size).unwrap();
+                (store::score(&query, &store::pack(&vision.embed(&picture))), name)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored.into_iter().map(|(_, name)| name).collect::<Vec<_>>()
+    };
+    let found = |description: &str| {
+        let r = h.call("content_query_json", json!({ "dir": dir, "recursive": true, "text": description }));
+        r["rows"].as_array().unwrap().iter().map(|row| row[2].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    for description in ["a red fox asleep in fresh snow", "lighthouse", "A  Red FOX asleep in fresh snow"] {
+        let got = found(description);
+        assert_eq!(got.len(), 11, "{description}");
+        assert_eq!(got, rank(description), "{description}");
+    }
+    assert_ne!(found("a red fox asleep in fresh snow"), found("lighthouse"));
+
+    // The packed form the UI reads carries the same rows in the same order.
+    let packed = match h.engine.request("content_query", &json!({ "dir": dir, "recursive": true, "text": "lighthouse" })).unwrap() {
+        gvcore::engine::Reply::Bytes(bytes) => bytes,
+        gvcore::engine::Reply::Json(_) => panic!("content_query should answer in the packed layout"),
+    };
+    assert_eq!(&packed[0..4], b"GVQ1");
+    assert_eq!(u32::from_le_bytes(packed[4..8].try_into().unwrap()), 11);
+
+    // ---- new and changed pictures are picked up by the next pass -----------
+    std::fs::write(root.join("new.png"), png_with_text(300, 300, 99, &[])).unwrap();
+    std::fs::write(root.join("img00.png"), png_with_text(120, 400, 55, &[])).unwrap();
+    h.expect_names(&root, true, "name:=new.png", &["new.png"]);
+    std::thread::sleep(Duration::from_millis(400));
+    h.call("content_index", scope.clone());
+    let done = content_done(&h);
+    assert_eq!(done["state"], "done");
+    assert!(done["total"].as_u64().unwrap() >= 1, "{done}");
+    h.call("content_index", scope.clone());
+    content_done(&h);
+    assert_eq!(h.call("content_status", scope)["embedded"], 12);
+    assert_eq!(found("lighthouse").len(), 12);
+}

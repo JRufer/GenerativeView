@@ -467,3 +467,84 @@ class UsageStats {
     );
   }
 }
+
+/// Where content search stands: whether its model is here, and how far the
+/// current folder's pictures have been looked at.
+class ContentStatus {
+  const ContentStatus({
+    this.known = false,
+    this.installed = false,
+    this.modelDir = '',
+    this.source = '',
+    this.files = const [],
+    this.embedded = 0,
+    this.total = 0,
+    this.indexing = false,
+    this.done = 0,
+    this.todo = 0,
+    this.error,
+  });
+
+  /// False until the core has been asked.
+  final bool known;
+  final bool installed;
+
+  /// Where the model's files go, and where they come from.
+  final String modelDir;
+  final String source;
+
+  /// (name, bytes) of each file of the model.
+  final List<(String, int)> files;
+
+  /// Pictures of the folder that have been looked at, out of how many.
+  final int embedded;
+  final int total;
+
+  /// A pass over the folder is running: [done] of [todo] pictures so far.
+  final bool indexing;
+  final int done;
+  final int todo;
+  final String? error;
+
+  int get downloadBytes => files.fold(0, (sum, file) => sum + file.$2);
+
+  factory ContentStatus.fromJson(Map<String, dynamic> j) {
+    int number(Object? v) => v is num ? v.toInt() : 0;
+    return ContentStatus(
+      known: true,
+      installed: j['installed'] == true,
+      modelDir: j['model_dir'] as String? ?? '',
+      source: j['source'] as String? ?? '',
+      files: [
+        for (final f in (j['files'] as List? ?? const []))
+          if (f is Map) (f['name'] as String? ?? '', number(f['bytes'])),
+      ],
+      embedded: number(j['embedded']),
+      total: number(j['total']),
+      indexing: j['indexing'] == true,
+      done: number(j['done']),
+      todo: number(j['todo']),
+    );
+  }
+
+  ContentStatus copyWith({
+    bool? installed,
+    int? embedded,
+    bool? indexing,
+    int? done,
+    int? todo,
+    String? Function()? error,
+  }) => ContentStatus(
+    known: known,
+    installed: installed ?? this.installed,
+    modelDir: modelDir,
+    source: source,
+    files: files,
+    embedded: embedded ?? this.embedded,
+    total: total,
+    indexing: indexing ?? this.indexing,
+    done: done ?? this.done,
+    todo: todo ?? this.todo,
+    error: error == null ? this.error : error(),
+  );
+}

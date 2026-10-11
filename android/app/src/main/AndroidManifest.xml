@@ -11,6 +11,9 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
+    <!-- For one thing only: fetching the content-search model, once, when
+         the user asks for it. Nothing else in the app uses the network. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="GenerativeView"
         android:name="${applicationName}"

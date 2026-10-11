@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
+import 'package:generativeview/src/core/model_download.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/ui/focus_view.dart';
@@ -142,6 +143,8 @@ void main() {
   Future<AppState> launch(
     WidgetTester tester, {
     Size size = const Size(1440, 900),
+    String? modelSource,
+    List<ModelFile>? modelFiles,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -149,6 +152,8 @@ void main() {
     final state = AppState(
       core: core,
       thumbs: ThumbCache(core, maxBytes: 64 << 20),
+      modelSource: modelSource,
+      modelFiles: modelFiles,
     );
     await tester.pumpWidget(
       RepaintBoundary(
@@ -204,7 +209,7 @@ void main() {
   /// Whichever folder or search pins an earlier test (or run) left behind.
   void clearPins(AppState state) {
     for (final pin in [...state.pinnedSearches]) {
-      state.unpinSearch(pin.query);
+      state.unpinSearch(pin);
     }
     for (final path in [...state.pinnedFolders]) {
       state.toggleFolderPin(path);
@@ -1425,6 +1430,231 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
     large.deleteSync();
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the nine');
+    await close(tester, state);
+  });
+
+  testWidgets('content search finds pictures by what they show', (
+    tester,
+  ) async {
+    // A small CLIP model with made-up weights stands in for the real one
+    // (what it "sees" is arbitrary, but it is the real code that looks), and
+    // a server on this machine stands in for the place it is fetched from.
+    final model = Directory(
+      '${Directory.current.path}/core/tests/fixtures/clip_mini',
+    );
+    const names = ['config.json', 'tokenizer.json', 'model.safetensors'];
+    final saved = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = saved);
+    var refuse = true;
+    final server = (await tester.runAsync(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final file = File('${model.path}/${request.uri.pathSegments.last}');
+        if (refuse || !file.existsSync()) {
+          request.response.statusCode = HttpStatus.notFound;
+        } else {
+          request.response.contentLength = file.lengthSync();
+          await request.response.addStream(file.openRead());
+        }
+        await request.response.close();
+      });
+      return server;
+    }))!;
+    addTearDown(() => server.close(force: true));
+
+    final state = await launch(
+      tester,
+      modelSource: 'http://127.0.0.1:${server.port}/',
+      modelFiles: [
+        for (final name in names)
+          ModelFile(name, File('${model.path}/$name').lengthSync()),
+      ],
+    );
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    clearPins(state);
+    expect(state.contentSearch, isFalse);
+
+    final box = find.byWidgetPredicate(
+      (w) => w is TextField && w.focusNode == state.searchFocus,
+      description: 'the search box',
+    );
+    final banner = find.byKey(const ValueKey<String>('content-banner'));
+    const toContent =
+        'Searching prompts and metadata.\n'
+        'Click to search by what the pictures show.';
+    const toText =
+        'Searching by what the pictures show.\n'
+        'Click to search prompts and metadata.';
+    List<String> shown() => [
+      for (var i = 0; i < state.items.length; i++) state.items[i].name,
+    ];
+    Future<T> wait<T>(Future<T> future) async {
+      T? value;
+      var done = false;
+      future.then((v) {
+        value = v;
+        done = true;
+      });
+      await pumpUntil(tester, () => done, what: 'the core to answer');
+      return value as T;
+    }
+
+    // ---- the magnifying glass switches the kind of search -------------------
+    await tester.tap(find.byTooltip(toContent));
+    await pumpUntil(
+      tester,
+      () => state.content.value.known,
+      what: 'content search to report in',
+    );
+    expect(state.contentSearch, isTrue);
+    expect(find.byTooltip(toText), findsOneWidget);
+    expect(
+      tester.widget<TextField>(box).decoration?.hintText,
+      'Describe what the picture shows',
+    );
+    // With nothing typed the folder is listed as usual.
+    expect(state.items.length, 9);
+
+    // ---- it needs a model first, and says so --------------------------------
+    expect(state.content.value.installed, isFalse);
+    expect(banner, findsOneWidget);
+    expect(find.textContaining('one-time download of'), findsOneWidget);
+    await tester.enterText(box, 'a lighthouse on a cliff');
+    await pumpUntil(
+      tester,
+      () => find.text('Content search is not set up yet').evaluate().isNotEmpty,
+      what: 'being told there is no model',
+    );
+    expect(state.items.length, 0);
+    await screenshot(tester, boundary, '19-content-search-setup');
+
+    // ---- a download that fails says so and can be tried again ---------------
+    await tester.tap(find.text('Download'));
+    await pumpUntil(
+      tester,
+      () => find.text('Try again').evaluate().isNotEmpty,
+      what: 'the failed download to be reported',
+    );
+    expect(find.textContaining('The server answered 404'), findsOneWidget);
+    expect(state.content.value.installed, isFalse);
+
+    // ---- once fetched, the pictures are looked at and the search answers ----
+    refuse = false;
+    await tester.tap(find.text('Try again'));
+    await pumpUntil(
+      tester,
+      () => state.content.value.installed,
+      what: 'the model to be fetched',
+      timeout: const Duration(seconds: 60),
+    );
+    final home = state.content.value.modelDir;
+    expect(home, startsWith('${scratch.path}/data/models/'));
+    for (final name in names) {
+      expect(
+        File('$home/$name').lengthSync(),
+        File('${model.path}/$name').lengthSync(),
+      );
+      expect(File('$home/$name.part').existsSync(), isFalse);
+    }
+    await pumpUntil(
+      tester,
+      () =>
+          state.content.value.embedded == 9 &&
+          !state.content.value.indexing &&
+          state.items.length == 9,
+      what: 'every picture to be looked at',
+      timeout: const Duration(seconds: 60),
+    );
+    expect(banner, findsNothing);
+    expect(inBar('9 matches'), findsOneWidget);
+    // Best match first: the order the core itself ranks them in.
+    Future<List<String>> ranked(String text) async {
+      final answer = await wait(
+        core.call('content_query_json', {
+          'dir': library.path,
+          'recursive': true,
+          'text': text,
+        }),
+      );
+      return [
+        for (final row in (answer as Map)['rows'] as List)
+          (row as List)[2] as String,
+      ];
+    }
+
+    final cliff = await ranked('a lighthouse on a cliff');
+    expect(cliff, hasLength(9));
+    expect(shown(), cliff);
+    await pumpUntil(
+      tester,
+      () => tilesWithImages(tester) == 9,
+      what: 'the matches to be drawn',
+    );
+    await screenshot(tester, boundary, '20-content-search');
+
+    await tester.enterText(box, 'a red fox');
+    final fox = await ranked('a red fox');
+    await pumpUntil(
+      tester,
+      () => shown().join() == fox.join(),
+      what: 'the other description to be ranked',
+    );
+    expect(fox, isNot(cliff));
+
+    // ---- a content search pins as one, and comes back as one ----------------
+    await tester.tap(find.byTooltip('Pin this search'));
+    await tester.pump();
+    expect(state.pinnedSearches, [
+      const PinnedSearch('a red fox', content: true),
+    ]);
+
+    // Back to searching the metadata: the same words now have to be there.
+    await tester.tap(find.byTooltip(toText));
+    await pumpUntil(
+      tester,
+      () => state.items.length == 1,
+      what: 'the metadata search',
+    );
+    expect(state.contentSearch, isFalse);
+    expect(shown(), ['ComfyUI_00002_.png']);
+    expect(find.byTooltip('Pin this search'), findsOneWidget);
+
+    await tester.enterText(box, '');
+    await pumpUntil(tester, () => state.items.length == 9, what: 'everything');
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('pinned-searches')),
+        matching: find.text('a red fox'),
+      ),
+    );
+    await pumpUntil(
+      tester,
+      () => state.contentSearch && shown().join() == fox.join(),
+      what: 'the pinned content search to run',
+    );
+    expect(find.byTooltip(toText), findsOneWidget);
+
+    // ---- a picture that arrives is looked at too -----------------------------
+    final added = File('${library.path}/ComfyUI_00077_.png')
+      ..writeAsBytesSync(pngWithText(384, 384, 77, const {}));
+    await pumpUntil(
+      tester,
+      () => state.content.value.embedded == 10 && state.items.length == 10,
+      what: 'the new picture to be looked at',
+      timeout: const Duration(seconds: 60),
+    );
+
+    // ---- a filter from the metadata panel is a metadata search ---------------
+    state.applyFilter('seed:=22');
+    await pumpUntil(tester, () => state.items.length == 1, what: 'the filter');
+    expect(state.contentSearch, isFalse);
+    expect(state.searchText.text, 'seed:=22');
+
+    added.deleteSync();
+    clearPins(state);
+    state.applySearch('');
     await pumpUntil(tester, () => state.items.length == 9, what: 'the nine');
     await close(tester, state);
   });

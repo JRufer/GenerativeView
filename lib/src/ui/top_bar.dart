@@ -260,6 +260,8 @@ class _FocusTitle extends StatelessWidget {
 
 /// The search box. While it has focus the pinned searches hang under it;
 /// the pin beside the clear button keeps (or lets go of) the current one.
+/// The magnifying glass switches between finding text in the metadata and
+/// describing what the pictures show.
 class _SearchField extends StatefulWidget {
   const _SearchField({required this.state, required this.width});
   final AppState state;
@@ -318,7 +320,7 @@ class _SearchFieldState extends State<_SearchField> {
   }
 
   void _pick(PinnedSearch pin) {
-    state.applySearch(pin.query);
+    state.applySearch(pin.query, content: pin.content);
     state.searchFocus.unfocus();
   }
 
@@ -339,7 +341,7 @@ class _SearchFieldState extends State<_SearchField> {
             width: math.max(widget.width, 280.0),
             pins: pins,
             onPick: _pick,
-            onRemove: (pin) => state.unpinSearch(pin.query),
+            onRemove: state.unpinSearch,
           ),
         ),
       ),
@@ -349,7 +351,9 @@ class _SearchFieldState extends State<_SearchField> {
   @override
   Widget build(BuildContext context) {
     final query = state.query;
-    final pinned = state.isSearchPinned(query);
+    final current = state.currentSearch;
+    final pinned = state.isSearchPinned(current);
+    final describing = state.contentSearch;
     return CompositedTransformTarget(
       link: _link,
       child: OverlayPortal(
@@ -369,12 +373,22 @@ class _SearchFieldState extends State<_SearchField> {
             cursorColor: Palette.accent,
             decoration: InputDecoration(
               isDense: true,
-              hintText: 'Search prompts, models, names',
+              hintText: describing
+                  ? 'Describe what the picture shows'
+                  : 'Search prompts, models, names',
               hintStyle: const TextStyle(color: Palette.faint, fontSize: 13.5),
-              prefixIcon: const Icon(
-                Icons.search,
-                size: 17,
-                color: Palette.faint,
+              prefixIcon: Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: _FieldButton(
+                  icon: describing ? Icons.image_search : Icons.search,
+                  color: describing ? Palette.accent : Palette.faint,
+                  tooltip: describing
+                      ? 'Searching by what the pictures show.\n'
+                            'Click to search prompts and metadata.'
+                      : 'Searching prompts and metadata.\n'
+                            'Click to search by what the pictures show.',
+                  onTap: state.toggleContentSearch,
+                ),
               ),
               prefixIconConstraints: const BoxConstraints(minWidth: 34),
               suffixIcon: query.trim().isEmpty
@@ -393,8 +407,8 @@ class _SearchFieldState extends State<_SearchField> {
                                 ? 'Unpin this search'
                                 : 'Pin this search',
                             onTap: () => pinned
-                                ? state.unpinSearch(query)
-                                : state.pinSearch(query),
+                                ? state.unpinSearch(current)
+                                : state.pinSearch(current),
                           ),
                           _FieldButton(
                             icon: Icons.close,
@@ -528,7 +542,12 @@ class _PinnedSearchRow extends StatelessWidget {
         child: Row(
           children: [
             const SizedBox(width: 10),
-            const Icon(Icons.push_pin, size: 14, color: Palette.faint),
+            // A magnifying glass over a picture marks a content search.
+            Icon(
+              pin.content ? Icons.image_search : Icons.push_pin,
+              size: 14,
+              color: Palette.faint,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(

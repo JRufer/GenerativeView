@@ -1,6 +1,7 @@
 //! The engine: everything the UI can ask for, independent of how it asks.
 //! `ffi` wraps this for Dart; tests and the CLI tools call it directly.
 
+use crate::clip::ContentSearch;
 use crate::db::{Db, Query};
 use crate::fsnav;
 use crate::index::{normalize, EventSink, Indexer};
@@ -20,6 +21,7 @@ pub struct Engine {
     pub db: Arc<Db>,
     pub thumbs: Arc<Thumbs>,
     pub indexer: Indexer,
+    pub content: ContentSearch,
 }
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -34,11 +36,13 @@ impl Engine {
     pub fn open(data_dir: &Path, cache_dir: &Path, sink: EventSink) -> Result<Engine, String> {
         let db = Arc::new(Db::open(data_dir).map_err(|e| format!("cannot open index database: {e}"))?);
         let thumbs = Thumbs::start(cache_dir);
+        let content = ContentSearch::start(data_dir, db.clone(), thumbs.clone(), sink.clone())?;
         let indexer = Indexer::start(db.clone(), sink);
-        Ok(Engine { db, thumbs, indexer })
+        Ok(Engine { db, thumbs, indexer, content })
     }
 
     pub fn close(&self) {
+        self.content.close();
         self.indexer.close();
         self.thumbs.close();
     }
@@ -57,6 +61,12 @@ impl Engine {
     pub fn request(&self, method: &str, args: &Value) -> Result<Reply, String> {
         if method == "query" {
             let result = self.db.query(&Self::query_args(args)?).map_err(|e| e.to_string())?;
+            return Ok(Reply::Bytes(result.pack()));
+        }
+        if method == "content_query" {
+            // The same packed rows as `query`, best match first.
+            let dir = normalize(str_arg(args, "dir")?);
+            let result = self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?)?;
             return Ok(Reply::Bytes(result.pack()));
         }
         self.call(method, args).map(Reply::Json)
@@ -88,6 +98,16 @@ impl Engine {
             }
             "query" | "query_json" => {
                 let result = self.db.query(&Self::query_args(args)?).map_err(db_err)?;
+                Ok(serde_json::to_string(&result).unwrap_or_default())
+            }
+            "content_status" => Ok(self.content.status(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive")).to_string()),
+            "content_index" => {
+                self.content.index(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive"));
+                Ok("null".into())
+            }
+            "content_query_json" => {
+                let dir = normalize(str_arg(args, "dir")?);
+                let result = self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?)?;
                 Ok(serde_json::to_string(&result).unwrap_or_default())
             }
             "usage" => {
