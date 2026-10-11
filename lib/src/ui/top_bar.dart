@@ -606,7 +606,11 @@ class _SortMenu extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
-        for (final entry in _labels.entries)
+        for (final entry in {
+          // Only a search has matches to put in order.
+          if (state.searching) 'relevance': 'Best match first',
+          ..._labels,
+        }.entries)
           PopupMenuItem<String>(
             value: entry.key,
             height: 36,
@@ -614,7 +618,7 @@ class _SortMenu extends StatelessWidget {
               children: [
                 SizedBox(
                   width: 24,
-                  child: state.sort == entry.key
+                  child: state.activeSort == entry.key
                       ? const Icon(Icons.check, size: 16, color: Palette.accent)
                       : null,
                 ),

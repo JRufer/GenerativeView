@@ -40,6 +40,25 @@ pub fn score(query: &[f32], packed: &[i16]) -> f32 {
     query.iter().zip(packed).map(|(q, p)| q * *p as f32).sum::<f32>() / SCALE
 }
 
+/// The dot product of two float vectors, summed in eight strands so that
+/// the compiler can do eight multiplications at a time.
+pub fn dot(a: &[f32], b: &[f32]) -> f32 {
+    let mut strands = [0.0f32; 8];
+    let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
+    let rest: f32 = a8.remainder().iter().zip(b8.remainder()).map(|(x, y)| x * y).sum();
+    for (x, y) in a8.zip(b8) {
+        for i in 0..8 {
+            strands[i] += x[i] * y[i];
+        }
+    }
+    strands.iter().sum::<f32>() + rest
+}
+
+/// A packed vector as floats again.
+pub fn unpack(packed: &[i16]) -> Vec<f32> {
+    packed.iter().map(|p| *p as f32 / SCALE).collect()
+}
+
 pub struct Vectors {
     conn: Mutex<Connection>,
     /// None = looked for and not there.
@@ -56,7 +75,10 @@ impl Vectors {
              CREATE TABLE IF NOT EXISTS vectors (key BLOB PRIMARY KEY, vec BLOB NOT NULL) WITHOUT ROWID;
              -- Files that could not be embedded (unreadable, or a video with
              -- no frame to look at), so they are not tried again every time.
-             CREATE TABLE IF NOT EXISTS skipped (key BLOB PRIMARY KEY) WITHOUT ROWID;",
+             CREATE TABLE IF NOT EXISTS skipped (key BLOB PRIMARY KEY) WITHOUT ROWID;
+             -- Sets of text vectors that take a while to make (see
+             -- `clip::Reference`), each under a name that says what it holds.
+             CREATE TABLE IF NOT EXISTS texts (name TEXT PRIMARY KEY, vectors BLOB NOT NULL) WITHOUT ROWID;",
         )
         .map_err(|e| format!("cannot open the embedding store: {e}"))?;
         Ok(Vectors { conn: Mutex::new(conn), cache: Mutex::new(HashMap::new()) })
@@ -75,6 +97,21 @@ impl Vectors {
             .map(|blob| blob.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect());
         self.cache.lock().insert(*key, found.clone());
         found
+    }
+
+    /// The set of text vectors saved as `name`, end to end.
+    pub fn texts(&self, name: &str) -> Option<Vec<f32>> {
+        let blob: Vec<u8> = self.conn.lock().query_row("SELECT vectors FROM texts WHERE name = ?1", [name], |r| r.get(0)).ok()?;
+        Some(blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect())
+    }
+
+    pub fn put_texts(&self, name: &str, vectors: &[f32]) -> Result<(), String> {
+        let blob: Vec<u8> = vectors.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.conn
+            .lock()
+            .execute("INSERT OR REPLACE INTO texts (name, vectors) VALUES (?1, ?2)", params![name, blob])
+            .map(|_| ())
+            .map_err(|e| format!("cannot save embeddings: {e}"))
     }
 
     /// Whether `key` has been dealt with: embedded, or given up on.
@@ -132,5 +169,14 @@ mod tests {
         assert!((score(&vector, &back) - 1.0).abs() < 1e-4);
         assert!((score(&[0.0, 0.0, 1.0, 0.0], &back)).abs() < 1e-4);
         assert!(store.done(&c));
+        assert!((unpack(&back)[0] - 0.6).abs() < 1e-4);
+        let (a, b): (Vec<f32>, Vec<f32>) = (0..19).map(|i| (i as f32 * 0.5, 2.0 - i as f32)).unzip();
+        assert_eq!(dot(&a, &b), a.iter().zip(&b).map(|(x, y)| x * y).sum::<f32>());
+        assert_eq!(dot(&a[..8], &b), dot(&a[..8], &b[..8]));
+
+        assert!(store.texts("words").is_none());
+        store.put_texts("words", &[0.25, -1.0, 3.5]).unwrap();
+        store.put_texts("words", &[0.5, -1.0, 3.5]).unwrap();
+        assert_eq!(store.texts("words"), Some(vec![0.5, -1.0, 3.5]));
     }
 }

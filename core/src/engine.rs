@@ -53,7 +53,18 @@ impl Engine {
             recursive: bool_arg(args, "recursive"),
             text: args.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
             sort: args.get("sort").and_then(Value::as_str).unwrap_or("newest").to_string(),
+            then: args.get("then").and_then(Value::as_str).unwrap_or("").to_string(),
         })
+    }
+
+    /// The pictures that match a description. `sort` is as for `query`, and
+    /// "relevance" (best match first) if left out; `bar` overrides how well
+    /// a picture has to fit (see `clip::BAR`).
+    fn content_query(&self, args: &Value) -> Result<crate::db::QueryResult, String> {
+        let dir = normalize(str_arg(args, "dir")?);
+        let sort = args.get("sort").and_then(Value::as_str).unwrap_or("relevance");
+        let bar = args.get("bar").and_then(Value::as_f64).map(|bar| bar as f32);
+        self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?, sort, bar)
     }
 
     /// Handle one request. `query` answers in the packed binary layout
@@ -64,10 +75,8 @@ impl Engine {
             return Ok(Reply::Bytes(result.pack()));
         }
         if method == "content_query" {
-            // The same packed rows as `query`, best match first.
-            let dir = normalize(str_arg(args, "dir")?);
-            let result = self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?)?;
-            return Ok(Reply::Bytes(result.pack()));
+            // The same packed rows as `query`.
+            return Ok(Reply::Bytes(self.content_query(args)?.pack()));
         }
         self.call(method, args).map(Reply::Json)
     }
@@ -105,11 +114,7 @@ impl Engine {
                 self.content.index(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive"));
                 Ok("null".into())
             }
-            "content_query_json" => {
-                let dir = normalize(str_arg(args, "dir")?);
-                let result = self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?)?;
-                Ok(serde_json::to_string(&result).unwrap_or_default())
-            }
+            "content_query_json" => Ok(serde_json::to_string(&self.content_query(args)?).unwrap_or_default()),
             "usage" => {
                 let usage = self.db.usage(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive")).map_err(db_err)?;
                 Ok(serde_json::to_string(&usage).unwrap_or_default())

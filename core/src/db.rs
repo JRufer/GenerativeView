@@ -79,8 +79,13 @@ pub struct Query {
     pub dir: String,
     pub recursive: bool,
     pub text: String,
-    /// newest | oldest | name | name_desc | size
+    /// newest | oldest | name | name_desc | size | relevance (best match
+    /// for `text` first)
     pub sort: String,
+    /// The order among equally good matches when `sort` is relevance, which
+    /// is the whole order when nothing in `text` can match better or worse:
+    /// any of the others. Empty = newest.
+    pub then: String,
 }
 
 /// (id, dir index, name, kind, width, height, mtime, size, duration ms)
@@ -299,15 +304,23 @@ impl Db {
     pub fn query(&self, q: &Query) -> DbResult<QueryResult> {
         let (mut cond, mut args) = dir_condition(&q.dir, q.recursive, "f.");
         let mut needs_text = false;
-        for term in parse_terms(&q.text) {
+        let terms = parse_terms(&q.text);
+        for term in &terms {
             needs_text |= term.to_sql(&mut cond, &mut args);
         }
-        let order = match q.sort.as_str() {
+        let ranked = if q.sort == "relevance" { rank_sql(&terms, &mut args) } else { None };
+        needs_text |= ranked.is_some();
+        let plain = |sort: &str| match sort {
             "oldest" => "f.mtime ASC, f.name ASC",
             "name" => "f.dir ASC, f.name COLLATE NOCASE ASC",
             "name_desc" => "f.dir DESC, f.name COLLATE NOCASE DESC",
             "size" => "f.size DESC, f.name ASC",
             _ => "f.mtime DESC, f.name DESC",
+        };
+        let order = match (q.sort.as_str(), &ranked) {
+            ("relevance", Some(rank)) => format!("{rank} DESC, {}", plain(&q.then)),
+            ("relevance", None) => plain(&q.then).to_string(),
+            (sort, _) => plain(sort).to_string(),
         };
         // Only pull in the text table when a term actually needs it.
         let join = if needs_text { "JOIN ftext t ON t.id = f.id" } else { "" };
@@ -369,6 +382,25 @@ struct Term {
     text: String,
 }
 
+/// How a word search treats the two ends of what was typed.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct Ends {
+    /// `*fox`: may start in the middle of a word.
+    open_start: bool,
+    /// `fox*`: may stop in the middle of a word.
+    open_end: bool,
+}
+
+impl Ends {
+    fn flags(self) -> u8 {
+        self.open_start as u8 | (self.open_end as u8) << 1
+    }
+
+    fn from_flags(flags: i64) -> Ends {
+        Ends { open_start: flags & 1 != 0, open_end: flags & 2 != 0 }
+    }
+}
+
 fn field_alias(s: &str) -> Option<&'static str> {
     Some(match s.to_ascii_lowercase().as_str() {
         "name" | "file" | "filename" => "lname",
@@ -390,7 +422,9 @@ fn field_alias(s: &str) -> Option<&'static str> {
 
 /// Split a search box string into terms: whitespace separated, "quoted
 /// phrases" kept whole, `-term` to exclude, `field:term` to target a column,
-/// `field:=term` to match the whole of a value rather than part of it.
+/// `field:=term` to match the whole of a value rather than part of it. A `*`
+/// at either end of a word (`fox*`, `*lond*`) lets it match part of a longer
+/// one; see [`Term::words`].
 fn parse_terms(text: &str) -> Vec<Term> {
     let mut terms = Vec::new();
     let mut chars = text.chars().peekable();
@@ -445,7 +479,24 @@ fn parse_terms(text: &str) -> Vec<Term> {
     terms
 }
 
+/// The columns [`find_score`] reads, as the arguments of `gv_find`.
+const FIND_ALL: &str = "t.lname, t.prompt, t.negative, t.model, t.loras, t.extra";
+
 impl Term {
+    /// What a search of prompt text looks for: the words, lower-cased, and
+    /// which of their ends may fall inside a longer word. A `*` typed at
+    /// either end opens that end and is not part of the words.
+    fn words(&self) -> (String, Ends) {
+        let text = self.text.to_lowercase();
+        let inner = text.trim_matches('*');
+        if inner.is_empty() {
+            // Nothing but stars: they are what is being looked for.
+            return (text, Ends::default());
+        }
+        let ends = Ends { open_start: text.starts_with('*'), open_end: text.ends_with('*') };
+        (inner.to_string(), ends)
+    }
+
     /// Append this term's predicate. Returns true if it reads the `ftext` table.
     fn to_sql(&self, cond: &mut String, args: &mut Vec<String>) -> bool {
         let not = if self.negate { "NOT " } else { "" };
@@ -488,10 +539,11 @@ impl Term {
                 cond.push_str(&format!(" AND {not}(t.lname = ?{n})"));
                 true
             }
-            (Some(col @ ("prompt" | "negative")), true) => {
-                // As whole words: prompt:=fox leaves foxglove out.
-                let n = bind(self.text.to_lowercase());
-                cond.push_str(&format!(" AND {not}gv_word(t.{col}, ?{n})"));
+            (Some(col @ ("prompt" | "negative")), _) => {
+                // As whole words: prompt:fox leaves foxglove out.
+                let (words, ends) = self.words();
+                let n = bind(words);
+                cond.push_str(&format!(" AND {not}gv_word(t.{col}, ?{n}, {})", ends.flags()));
                 true
             }
             (Some("model"), true) => {
@@ -511,14 +563,55 @@ impl Term {
                 cond.push_str(&facet(kind, true));
                 true
             }
-            (field, _) => {
+            (None, _) => {
+                // Anywhere, as words. `blob` is everything in one string, so
+                // the images that cannot match cost one scan of it.
+                let (words, ends) = self.words();
+                let n = bind(words);
+                cond.push_str(&format!(" AND {not}(instr(t.blob, ?{n}) > 0 AND gv_find({FIND_ALL}, ?{n}, {}) > 0)", ends.flags()));
+                true
+            }
+            // A named field holding names (file, model, LoRA): any part.
+            (Some(col), _) => {
                 let n = bind(self.text.to_lowercase());
-                let col = field.unwrap_or("blob");
                 cond.push_str(&format!(" AND {not}(instr(t.{col}, ?{n}) > 0)"));
                 true
             }
         }
     }
+
+    /// An SQL expression for how well an image matches this term, for the
+    /// terms that can match better or worse: words looked for anywhere or in
+    /// the prompt. Everything else is a yes or a no.
+    fn rank(&self, args: &mut Vec<String>) -> Option<String> {
+        if self.negate {
+            return None;
+        }
+        let columns = match self.field {
+            None => FIND_ALL,
+            Some("prompt") => "'', t.prompt, '', '', '', ''",
+            _ => return None,
+        };
+        let (words, ends) = self.words();
+        args.push(words);
+        Some(format!("gv_find({columns}, ?{}, {})", args.len(), ends.flags()))
+    }
+}
+
+/// An SQL expression that is larger the better an image matches `terms`, or
+/// None if nothing in them can be matched better or worse.
+fn rank_sql(terms: &[Term], args: &mut Vec<String>) -> Option<String> {
+    let mut parts: Vec<String> = terms.iter().filter_map(|term| term.rank(args)).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    // Words typed side by side that stand side by side in the prompt too.
+    let plain: Vec<&Term> = terms.iter().filter(|t| !t.negate && t.field.is_none() && !t.text.contains('*')).collect();
+    if plain.len() > 1 {
+        args.push(plain.iter().map(|t| t.text.to_lowercase()).collect::<Vec<_>>().join(" "));
+        parts.push(format!("{SCORE_TOGETHER} * gv_word(t.prompt, ?{}, 0)", args.len()));
+    }
+    Some(format!("({})", parts.join(" + ")))
 }
 
 /// Whether an image's facets (see `GenInfo::facets_text`) hold `needle`,
@@ -532,27 +625,91 @@ fn facet_matches(facets: &str, kind: &str, needle: &str, exact: bool) -> bool {
     })
 }
 
+/// Whether `c` is part of a word. Scripts written without spaces between
+/// words (Chinese, Japanese, Korean) have no word edges to speak of, so
+/// their characters each count as a word of their own.
 fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+    c.is_alphanumeric() && (c as u32) < 0x2E80
 }
 
-/// Whether `needle` occurs in `text` as whole words, not inside longer ones.
-fn has_word(text: &str, needle: &str) -> bool {
+/// Where `needle` occurs in `text` as whole words rather than inside longer
+/// ones: the byte offset of the first such place, and how many there are.
+/// An open end (see [`Ends`]) may fall inside a word.
+fn find_words(text: &str, needle: &str, ends: Ends) -> Option<(usize, usize)> {
+    // An end that is punctuation is its own edge: "(fox" needs no space
+    // before the bracket.
     if needle.is_empty() {
-        return false;
+        return None;
     }
+    let guard_start = !ends.open_start && needle.chars().next().map_or(false, is_word_char);
+    let guard_end = !ends.open_end && needle.chars().next_back().map_or(false, is_word_char);
+    let mut found: Option<(usize, usize)> = None;
     let mut from = 0;
-    while let Some(at) = text[from..].find(needle) {
+    while from < text.len() {
+        let Some(at) = text[from..].find(needle) else { break };
         let start = from + at;
         let end = start + needle.len();
-        let before = text[..start].chars().next_back().map_or(false, is_word_char);
-        let after = text[end..].chars().next().map_or(false, is_word_char);
-        if !before && !after {
-            return true;
+        let before = guard_start && text[..start].chars().next_back().map_or(false, is_word_char);
+        let after = guard_end && text[end..].chars().next().map_or(false, is_word_char);
+        if before || after {
+            from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+            continue;
         }
-        from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+        found = Some(found.map_or((start, 1), |(first, count)| (first, count + 1)));
+        from = end.max(start + 1);
     }
-    false
+    found
+}
+
+// How well an image matches a word, by where the word was found. A prompt
+// is about what it mentions first and mentions often; a word that is only
+// in a name says less; one only in the negative prompt is what the picture
+// was told *not* to be.
+const SCORE_PROMPT: f64 = 100.0;
+/// On top of that: this much for a word at the very start of the prompt,
+/// falling to nothing at its end...
+const SCORE_EARLY: f64 = 40.0;
+/// ...and this much for each further mention, up to three.
+const SCORE_AGAIN: f64 = 10.0;
+/// And this much when the words searched for stand together in the prompt.
+const SCORE_TOGETHER: f64 = 60.0;
+const SCORE_NAME: f64 = 40.0;
+const SCORE_SETTING: f64 = 20.0;
+const SCORE_NEGATIVE: f64 = 10.0;
+
+/// The parts of an image's search text that [`find_score`] looks through.
+struct Searched<'a> {
+    name: &'a str,
+    prompt: &'a str,
+    negative: &'a str,
+    model: &'a str,
+    loras: &'a str,
+    extra: &'a str,
+}
+
+/// How well an image matches `needle` (already lower-cased): 0 if it does
+/// not, otherwise one of the scores above.
+///
+/// Prompts are searched for whole words. Names (the file, models, LoRAs) and
+/// settings are not made of words in the same way, so there the search only
+/// has to begin at the start of one: `flux` finds `flux1-dev`, though not
+/// `reflux`.
+fn find_score(s: &Searched, needle: &str, ends: Ends) -> f64 {
+    if let Some((first, count)) = find_words(s.prompt, needle, ends) {
+        let early = 1.0 - first as f64 / s.prompt.len().max(1) as f64;
+        return SCORE_PROMPT + SCORE_EARLY * early + SCORE_AGAIN * (count - 1).min(3) as f64;
+    }
+    let from_start = Ends { open_end: true, ..ends };
+    if [s.name, s.model, s.loras].iter().any(|text| find_words(text, needle, from_start).is_some()) {
+        return SCORE_NAME;
+    }
+    if find_words(s.extra, needle, from_start).is_some() {
+        return SCORE_SETTING;
+    }
+    if find_words(s.negative, needle, ends).is_some() {
+        return SCORE_NEGATIVE;
+    }
+    0.0
 }
 
 /// The SQL functions the predicates above call.
@@ -565,10 +722,16 @@ fn register_functions(conn: &Connection) -> DbResult<()> {
         let exact = ctx.get_raw(3).as_i64().unwrap_or(0) != 0;
         Ok(facet_matches(facets, kind, needle, exact))
     })?;
-    conn.create_scalar_function("gv_word", 2, flags, |ctx| {
+    conn.create_scalar_function("gv_word", 3, flags, |ctx| {
         let text = ctx.get_raw(0).as_str().unwrap_or("");
         let needle = ctx.get_raw(1).as_str().unwrap_or("");
-        Ok(has_word(text, needle))
+        let ends = Ends::from_flags(ctx.get_raw(2).as_i64().unwrap_or(0));
+        Ok(find_words(text, needle, ends).is_some())
+    })?;
+    conn.create_scalar_function("gv_find", 8, flags, |ctx| {
+        let text = |i: usize| ctx.get_raw(i).as_str().unwrap_or("");
+        let searched = Searched { name: text(0), prompt: text(1), negative: text(2), model: text(3), loras: text(4), extra: text(5) };
+        Ok(find_score(&searched, text(6), Ends::from_flags(ctx.get_raw(7).as_i64().unwrap_or(0))))
     })
 }
 
@@ -810,7 +973,7 @@ mod tests {
     }
 
     fn names(db: &Db, dir: &str, recursive: bool, text: &str) -> Vec<String> {
-        let q = Query { dir: dir.into(), recursive, text: text.into(), sort: "name".into() };
+        let q = Query { dir: dir.into(), recursive, text: text.into(), sort: "name".into(), ..Default::default() };
         db.query(&q).unwrap().rows.into_iter().map(|r| r.2).collect()
     }
 
@@ -855,8 +1018,21 @@ mod tests {
         assert_eq!(names(&db, "/out", false, ""), ["a.png", "b.png"]);
         assert_eq!(names(&db, "/out", true, ""), ["a.png", "b.png", "c.png"]);
         assert_eq!(names(&db, "/out/", true, "fox"), ["a.png", "c.png"]);
-        // substring, case-insensitive
-        assert_eq!(names(&db, "/out", true, "LOND"), ["a.png"]);
+        // whole words, case-insensitive; a star opens an end
+        assert_eq!(names(&db, "/out", true, "BLONDE"), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "lond"), Vec::<String>::new());
+        assert_eq!(names(&db, "/out", true, "blon"), Vec::<String>::new());
+        assert_eq!(names(&db, "/out", true, "blon*"), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "*onde"), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "*LOND*"), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "fox -*lond*"), ["c.png"]);
+        // names match from the start of a word
+        assert_eq!(names(&db, "/out", true, "flux"), ["a.png", "c.png"]);
+        assert_eq!(names(&db, "/out", true, "dev"), ["a.png", "c.png"]);
+        assert_eq!(names(&db, "/out", true, "lux1"), Vec::<String>::new());
+        assert_eq!(names(&db, "/out", true, "*lux1"), ["a.png", "c.png"]);
+        assert_eq!(names(&db, "/out", true, "grain"), ["b.png"]);
+        assert_eq!(names(&db, "/out", true, "b.p"), ["b.png"]);
         // AND of terms, phrase, exclusion
         assert_eq!(names(&db, "/out", true, "fox snow"), ["a.png"]);
         assert_eq!(names(&db, "/out", true, "\"red fox\""), ["c.png"]);
@@ -888,6 +1064,94 @@ mod tests {
         assert_eq!(names(&db, "/out", true, "wolf"), Vec::<String>::new());
         db.delete_tree("/out").unwrap();
         assert_eq!(names(&db, "/", true, "").len(), 2);
+    }
+
+    #[test]
+    fn whole_words() {
+        let words = |text: &str, needle: &str| find_words(text, needle, Ends::default());
+        assert_eq!(words("a red fox, and a fox", "fox"), Some((6, 2)));
+        assert_eq!(words("foxglove, firefox, outfoxed", "fox"), None);
+        // Punctuation, underscores and line ends are all edges.
+        for text in ["fox", "(fox:1.2)", "red_fox_girl", "a\nfox\n", "fox's den", "blue-fox", "<lora:fox:0.8>"] {
+            assert!(words(text, "fox").is_some(), "{text}");
+        }
+        // Digits are part of a word: 4k is not k, 1girl is not girl.
+        assert_eq!(words("4k, 1girl", "k"), None);
+        assert_eq!(words("4k, 1girl", "girl"), None);
+        assert_eq!(words("4k, 1girl", "4k"), Some((0, 1)));
+        // Phrases keep their inside as typed and need edges outside.
+        assert_eq!(words("a dark red fox", "red fox"), Some((7, 1)));
+        assert_eq!(words("a dark red foxglove", "red fox"), None);
+        // What is typed with punctuation at an end needs no edge there.
+        assert_eq!(words("a(fox)b", "(fox)"), Some((1, 1)));
+        assert_eq!(words("50% grey", "50%"), Some((0, 1)));
+        assert_eq!(words("c++ and c", "c++"), Some((0, 1)));
+        // Accents and other alphabets have edges too; Japanese does not.
+        assert_eq!(words("un café noir", "caf"), None);
+        assert_eq!(words("un café noir", "café"), Some((3, 1)));
+        assert_eq!(words("лиса в снегу", "снег"), None);
+        assert_eq!(words("東京タワーの夜", "タワー"), Some((6, 1)));
+        assert_eq!(words("anything", ""), None);
+        assert_eq!(words("aaaa", "aa"), None);
+        assert_eq!(words("aa aa", "aa"), Some((0, 2)));
+
+        let open = |start, end| Ends { open_start: start, open_end: end };
+        assert_eq!(find_words("foxglove, firefox, outfoxed", "fox", open(false, true)), Some((0, 1)));
+        assert_eq!(find_words("foxglove, firefox, outfoxed", "fox", open(true, false)), Some((14, 1)));
+        assert_eq!(find_words("foxglove, firefox, outfoxed", "fox", open(true, true)), Some((0, 3)));
+        assert_eq!(Ends::from_flags(open(true, false).flags() as i64), open(true, false));
+        assert_eq!(Ends::from_flags(open(false, true).flags() as i64), open(false, true));
+
+        let term = |text: &str| Term { negate: false, field: None, exact: false, text: text.into() }.words();
+        assert_eq!(term("Fox"), ("fox".into(), open(false, false)));
+        assert_eq!(term("fox*"), ("fox".into(), open(false, true)));
+        assert_eq!(term("*Lond*"), ("lond".into(), open(true, true)));
+        assert_eq!(term("**"), ("**".into(), open(false, false)));
+    }
+
+    #[test]
+    fn best_match_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path()).unwrap();
+        let mut negative = rec("/out", "negative.png", 9, "a plain portrait", "sdxl", "");
+        negative.info.negative = "fox, watermark".into();
+        db.upsert(&[
+            rec("/out", "late.png", 1, "a long walk through an autumn forest at dusk, mist, and far away a fox", "sdxl", ""),
+            rec("/out", "first.png", 2, "fox in the snow", "sdxl", ""),
+            rec("/out", "twice.png", 3, "fox in the snow, a red fox", "sdxl", ""),
+            rec("/out", "apart.png", 4, "red barn, a fox", "sdxl", ""),
+            rec("/out", "lora.png", 5, "a heron", "sdxl", "fox_style_v2"),
+            rec("/out", "fox_0007.png", 6, "a heron", "sdxl", ""),
+            rec("/out", "none.png", 7, "a foxglove meadow", "sdxl", ""),
+            negative,
+        ])
+        .unwrap();
+        let best = |text: &str| {
+            let q = Query { dir: "/out".into(), recursive: true, text: text.into(), sort: "relevance".into(), ..Default::default() };
+            db.query(&q).unwrap().rows.into_iter().map(|r| r.2).collect::<Vec<_>>()
+        };
+        let best_then = |text: &str, then: &str| {
+            let q = Query { dir: "/out".into(), recursive: true, text: text.into(), sort: "relevance".into(), then: then.into() };
+            db.query(&q).unwrap().rows.into_iter().map(|r| r.2).collect::<Vec<_>>()
+        };
+        // In the prompt, earliest and most often; then in a name, newest
+        // first; last, only in the negative prompt.
+        assert_eq!(best("fox"), ["twice.png", "first.png", "apart.png", "late.png", "fox_0007.png", "lora.png", "negative.png"]);
+        // Words typed together count for more where they stand together.
+        assert_eq!(best("red fox"), ["twice.png", "apart.png"]);
+        assert_eq!(best("fox red"), ["twice.png", "apart.png"]);
+        assert_eq!(best("prompt:fox -snow"), ["apart.png", "late.png"]);
+        // Equally good matches fall back on the order asked for...
+        assert_eq!(best_then("fox", "oldest")[4..6], ["lora.png", "fox_0007.png"]);
+        assert_eq!(best_then("fox", "oldest")[..4], best("fox")[..4]);
+        // ...which is the whole order when there is nothing to rank.
+        assert_eq!(best("model:sdxl -fox"), ["none.png"]);
+        assert_eq!(best("")[0], "negative.png");
+        assert_eq!(best_then("", "oldest")[0], "late.png");
+        assert_eq!(best_then("model:sdxl", "name")[..2], ["apart.png", "first.png"]);
+        assert_eq!(best("nothing"), Vec::<String>::new());
+        // Any other order ignores how well things match.
+        assert_eq!(names(&db, "/out", true, "fox")[0], "apart.png");
     }
 
     /// A record with everything spelled out, dated at noon on a local day.
@@ -985,8 +1249,11 @@ mod tests {
         assert_eq!(find("size:x12"), ["b.png"]);
 
         // Whole words in a prompt; a whole file name.
-        assert_eq!(find("prompt:fox"), ["a.png", "b.png", "c.png"]);
+        assert_eq!(find("prompt:fox"), ["a.png", "c.png"]);
         assert_eq!(find("prompt:=fox"), ["a.png", "c.png"]);
+        assert_eq!(find("prompt:fox*"), ["a.png", "b.png", "c.png"]);
+        assert_eq!(find("prompt:*glove"), ["b.png"]);
+        assert_eq!(find("fox"), ["a.png", "c.png"]);
         assert_eq!(find(r#"prompt:="red fox""#), ["a.png"]);
         assert_eq!(find("name:=a.png"), ["a.png"]);
         assert_eq!(find("name:=a"), none);
@@ -1104,16 +1371,8 @@ mod tests {
             ["fox", "masterpiece", "red", "uhd"]
         );
         assert_eq!(prompt_words("<lora:a:1>"), Vec::<&str>::new());
-        assert_eq!(prompt_words("größe ünïcode_word"), ["größe", "ünïcode_word"]);
-
-        assert!(has_word("a red fox.", "fox"));
-        assert!(has_word("fox", "fox"));
-        assert!(has_word("a red fox", "red fox"));
-        assert!(has_word("foxglove, fox2, fox", "fox"));
-        assert!(!has_word("foxglove", "fox"));
-        assert!(!has_word("fox_like", "fox"));
-        assert!(!has_word("éfox", "fox"));
-        assert!(!has_word("anything", ""));
+        // The same edges as a search, so a count and its filter agree.
+        assert_eq!(prompt_words("größe ünïcode_word long_hair"), ["größe", "hair", "long", "word", "ünïcode"]);
 
         assert!(facet_matches("\nmodel\tflux\tFlux\t\naux\tae\tae\tvae\n", "model", "ae", true));
         assert!(facet_matches("\nlora\tdetail_xl\tdetail_xl\t\n", "lora", "detail", false));
