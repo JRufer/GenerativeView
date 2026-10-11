@@ -443,8 +443,15 @@ void main() {
     // ---- double tap opens the image; keys and swipes move through ----------
     expect(tiles(), findsNWidgets(9));
     final last = tiles().last;
+    // The grid times double taps by the real clock, and this tile was last
+    // tapped (to select it) a moment ago by that clock, however much test
+    // time has gone by since: let that tap grow old first.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
     await tester.tap(last);
     await tester.pump(const Duration(milliseconds: 40));
+    expect(state.mode, ViewMode.grid, reason: 'one tap only selects');
     await tester.tap(last);
     await tester.pump();
     expect(state.mode, ViewMode.focus);
