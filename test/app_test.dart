@@ -145,10 +145,20 @@ void main() {
     Size size = const Size(1440, 900),
     String? modelSource,
     List<ModelFile>? modelFiles,
+    bool motion = false,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    // Panels and the search box move into place over a fraction of a second,
+    // unless the system asks for less motion. Most tests ask for that, and
+    // so see each change the moment it is made; the test of the movement
+    // itself does not.
+    if (!motion) {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    }
     final state = AppState(
       core: core,
       thumbs: ThumbCache(core, maxBytes: 64 << 20),
@@ -1785,6 +1795,218 @@ void main() {
     clearPins(state);
     state.applySearch('');
     await pumpUntil(tester, () => state.items.length == 9, what: 'the nine');
+    await close(tester, state);
+  });
+
+  testWidgets('panels, the search box and its switch move into place', (
+    tester,
+  ) async {
+    final state = await launch(tester, motion: true);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    clearPins(state);
+    // Whatever was saved, start with both panels shut.
+    if (state.leftOpen) state.toggleLeft();
+    if (state.rightOpen) state.toggleRight();
+    await settle(tester);
+    expect(find.byType(FolderPanel), findsNothing);
+    expect(find.byType(MetaPanel), findsNothing);
+
+    const part = Duration(milliseconds: 60);
+    const rest = Duration(milliseconds: 500);
+    double gridWidth() => tester.getSize(find.byType(MediaGrid)).width;
+    final full = gridWidth();
+    expect(full, 1440);
+
+    // ---- the folder panel slides out and pushes the grid over ---------------
+    const handle = 7.0;
+    await tester.tap(find.byTooltip('Folders ([)'));
+    await tester.pump();
+    await tester.pump(part);
+    var taken = state.leftWidth + handle;
+    expect(find.byType(FolderPanel), findsOneWidget);
+    expect(gridWidth(), allOf(lessThan(full), greaterThan(full - taken)));
+    // The panel is uncovered at its full width, not squeezed into the gap.
+    expect(tester.getSize(find.byType(FolderPanel)).width, state.leftWidth);
+    await tester.pump(rest);
+    expect(gridWidth(), closeTo(full - taken, 0.01));
+    expect(tester.getRect(find.byType(FolderPanel)).left, 0);
+
+    // ...and slides back, there until it is all the way in.
+    await tester.tap(find.byTooltip('Folders ([)'));
+    await tester.pump();
+    await tester.pump(part);
+    expect(state.leftOpen, isFalse);
+    expect(find.byType(FolderPanel), findsOneWidget);
+    expect(gridWidth(), allOf(lessThan(full), greaterThan(full - taken)));
+    expect(tester.getRect(find.byType(FolderPanel)).left, lessThan(0));
+    await tester.pump(rest);
+    expect(find.byType(FolderPanel), findsNothing);
+    expect(gridWidth(), full);
+
+    // ---- so does the metadata panel, from the other side ---------------------
+    await tester.tap(find.byTooltip('Generation data (I)'));
+    await tester.pump();
+    await tester.pump(part);
+    taken = state.rightWidth + handle;
+    expect(find.byType(MetaPanel), findsOneWidget);
+    expect(gridWidth(), allOf(lessThan(full), greaterThan(full - taken)));
+    expect(tester.getSize(find.byType(MetaPanel)).width, state.rightWidth);
+    expect(tester.getRect(find.byType(MetaPanel)).right, greaterThan(1440));
+    await tester.pump(rest);
+    expect(gridWidth(), closeTo(full - taken, 0.01));
+    expect(tester.getRect(find.byType(MetaPanel)).right, closeTo(1440, 0.01));
+
+    await tester.tap(find.byTooltip('Generation data (I)'));
+    await tester.pump();
+    await tester.pump(part);
+    expect(find.byType(MetaPanel), findsOneWidget);
+    expect(gridWidth(), allOf(lessThan(full), greaterThan(full - taken)));
+    await tester.pump(rest);
+    expect(find.byType(MetaPanel), findsNothing);
+    expect(gridWidth(), full);
+
+    // ---- the search box grows over the folder's name while it is typed in ---
+    double boxWidth() => tester.getSize(search).width;
+    double boxRight() => tester.getRect(search).right;
+    final resting = boxWidth();
+    final edge = boxRight();
+    expect(resting, 320);
+    expect(inBar('library'), findsOneWidget);
+    expect(inBar('9 items'), findsOneWidget);
+    await tester.tap(search);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(part);
+    await tester.pump(part);
+    expect(state.searchFocus.hasFocus, isTrue);
+    expect(boxWidth(), allOf(greaterThan(resting), lessThan(760)));
+    // It grows to the left: its right end stays where it was.
+    expect(boxRight(), closeTo(edge, 0.01));
+    await tester.pump(rest);
+    expect(boxWidth(), 760);
+    expect(boxRight(), closeTo(edge, 0.01));
+    // The name has made way; the count is still there to see.
+    expect(inBar('library'), findsNothing);
+    expect(inBar('9 items'), findsOneWidget);
+    await tester.enterText(search, 'lighthouse');
+    await pumpUntil(
+      tester,
+      () => inBar('2 matches').evaluate().isNotEmpty,
+      what: 'the count beside the grown box',
+    );
+    expect(boxWidth(), 760);
+
+    // Put down, it shrinks back and the name returns.
+    state.searchFocus.unfocus();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(part);
+    await tester.pump(part);
+    expect(boxWidth(), allOf(greaterThan(resting), lessThan(760)));
+    await tester.pump(rest);
+    expect(boxWidth(), resting);
+    expect(inBar('library'), findsOneWidget);
+    expect(inBar('2 matches'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear search'));
+    await pumpUntil(tester, () => state.items.length == 9, what: 'everything');
+
+    // ---- the switch between the two kinds of search slides across -----------
+    const toContent =
+        'Searching prompts and metadata.\n'
+        'Click to search by what the pictures show.';
+    const toText =
+        'Searching by what the pictures show.\n'
+        'Click to search prompts and metadata.';
+    final thumb = find.byKey(const ValueKey<String>('search-kind-thumb'));
+    double thumbLeft() => tester.getTopLeft(thumb).dx;
+    final home = thumbLeft();
+    expect(state.contentSearch, isFalse);
+    await tester.tap(find.byTooltip(toContent));
+    await tester.pump();
+    await tester.pump(part);
+    expect(state.contentSearch, isTrue);
+    expect(thumbLeft(), allOf(greaterThan(home), lessThan(home + 25)));
+    await tester.pump(rest);
+    expect(thumbLeft(), closeTo(home + 25, 0.01));
+    expect(find.byTooltip(toText), findsOneWidget);
+    await pumpUntil(
+      tester,
+      () => state.content.value.known,
+      what: 'content search to report in',
+    );
+
+    await tester.tap(find.byTooltip(toText));
+    await tester.pump();
+    await tester.pump(part);
+    expect(state.contentSearch, isFalse);
+    expect(thumbLeft(), allOf(greaterThan(home), lessThan(home + 25)));
+    await tester.pump(rest);
+    expect(thumbLeft(), closeTo(home, 0.01));
+
+    // ---- in a narrow window a panel slides in over the grid instead ---------
+    tester.view.physicalSize = const Size(700, 500);
+    await settle(tester);
+    expect(gridWidth(), 700);
+
+    // ---- and the search box, short of room, grows over the tools as well ----
+    // The bar: 6 of padding, the folder button and a gap, then everything
+    // else; four tools of 36 at the far end and a gap of 4 before them.
+    const barLeft = 6.0 + 36 + 6;
+    const barRight = 700.0 - 6;
+    const toolsLeft = barRight - 4 * 36;
+    Rect box() => tester.getRect(search);
+    expect(tester.getRect(find.byTooltip('Sort and refresh')).left, toolsLeft);
+    expect(box().width, 170);
+    expect(box().right, closeTo(toolsLeft - 4, 0.01));
+    await tester.tap(search);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(part);
+    await tester.pump(part);
+    expect(box().width, allOf(greaterThan(170), lessThan(barRight - barLeft)));
+    expect(box().right, allOf(greaterThan(toolsLeft), lessThan(barRight)));
+    await tester.pump(rest);
+    expect(box().left, closeTo(barLeft, 0.01));
+    expect(box().right, closeTo(barRight, 0.01));
+    expect(inBar('library'), findsNothing);
+    // The tools are under it: a tap where one was goes to the box.
+    final info = tester.getCenter(find.byTooltip('Generation data (I)'));
+    await tester.tapAt(info);
+    await tester.pump();
+    expect(state.rightOpen, isFalse);
+    expect(state.searchFocus.hasFocus, isTrue);
+
+    // Put down, it is out of their way at once, before it has shrunk back.
+    state.searchFocus.unfocus();
+    await tester.pump();
+    await tester.pump();
+    expect(box().width, greaterThan(170));
+    await tester.tapAt(info);
+    await tester.pump();
+    expect(state.rightOpen, isTrue);
+    await tester.pump(rest);
+    expect(box().width, 170);
+    expect(box().right, closeTo(toolsLeft - 4, 0.01));
+    expect(inBar('library'), findsOneWidget);
+    state.toggleRight();
+    await settle(tester);
+    expect(find.byType(MetaPanel), findsNothing);
+    await tester.tap(find.byTooltip('Folders ([)'));
+    await tester.pump();
+    await tester.pump(part);
+    var panel = tester.getRect(find.byType(FolderPanel));
+    expect(panel.left, allOf(lessThan(0), greaterThan(-panel.width)));
+    expect(gridWidth(), 700);
+    await tester.pump(rest);
+    expect(tester.getRect(find.byType(FolderPanel)).left, 0);
+    state.toggleLeft();
+    await tester.pump();
+    await tester.pump(part);
+    panel = tester.getRect(find.byType(FolderPanel));
+    expect(panel.left, allOf(lessThan(0), greaterThan(-panel.width)));
+    await tester.pump(rest);
+    expect(find.byType(FolderPanel), findsNothing);
+
     await close(tester, state);
   });
 }

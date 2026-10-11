@@ -8,6 +8,14 @@ import 'stats_page.dart';
 
 const double topBarHeight = 48;
 
+/// How long the things in the bar take to move.
+const Duration _barMotion = Duration(milliseconds: 220);
+const Curve _barCurve = Curves.easeOutCubic;
+
+/// [time], or no time at all where the system asks for less motion.
+Duration motion(BuildContext context, Duration time) =>
+    MediaQuery.disableAnimationsOf(context) ? Duration.zero : time;
+
 String _groupThousands(int n) {
   final s = n.toString();
   final b = StringBuffer();
@@ -39,95 +47,86 @@ class TopBar extends StatelessWidget {
           final wide = constraints.maxWidth >= 760;
           // Buttons, menus and the slider never hold keyboard focus (see
           // ShortcutLayer); only the search field does.
+          final info = _BarButton(
+            icon: Icons.info_outline,
+            tooltip: 'Generation data (I)',
+            active: state.rightOpen,
+            onTap: state.toggleRight,
+          );
+          if (focus) {
+            return ExcludeFocus(
+              child: Row(
+                children: [
+                  _BarButton(
+                    icon: Icons.arrow_back,
+                    tooltip: 'Back to grid (Esc)',
+                    onTap: state.closeFocus,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(child: _FocusTitle(state: state)),
+                  const SizedBox(width: 4),
+                  info,
+                ],
+              ),
+            );
+          }
           return Row(
             children: [
-              Expanded(
-                child: ExcludeFocus(
-                  child: Row(
-                    children: [
-                      if (focus)
-                        _BarButton(
-                          icon: Icons.arrow_back,
-                          tooltip: 'Back to grid (Esc)',
-                          onTap: state.closeFocus,
-                        )
-                      else
-                        _BarButton(
-                          icon: Icons.folder_outlined,
-                          tooltip: 'Folders ([)',
-                          active: state.leftOpen,
-                          onTap: state.toggleLeft,
-                        ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: focus
-                            ? _FocusTitle(state: state)
-                            : _FolderTitle(state: state),
-                      ),
-                    ],
-                  ),
+              ExcludeFocus(
+                child: _BarButton(
+                  icon: Icons.folder_outlined,
+                  tooltip: 'Folders ([)',
+                  active: state.leftOpen,
+                  onTap: state.toggleLeft,
                 ),
               ),
-              if (!focus) ...[
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: wide ? 320 : 170,
-                  child: _SearchField(state: state, width: wide ? 320 : 170),
-                ),
-                const SizedBox(width: 4),
-              ],
-              ExcludeFocus(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (!focus) ...[
-                      _SortMenu(state: state, withStats: !wide),
-                      _BarButton(
-                        icon: Icons.account_tree_outlined,
-                        tooltip: state.recursive
-                            ? 'Sub-folders are included'
-                            : 'Sub-folders are not included',
-                        active: state.recursive,
-                        onTap: () => state.setRecursive(!state.recursive),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _TitleSearchAndTools(
+                  state: state,
+                  wide: wide,
+                  tools: [
+                    _SortMenu(state: state, withStats: !wide),
+                    _BarButton(
+                      icon: Icons.account_tree_outlined,
+                      tooltip: state.recursive
+                          ? 'Sub-folders are included'
+                          : 'Sub-folders are not included',
+                      active: state.recursive,
+                      onTap: () => state.setRecursive(!state.recursive),
+                    ),
+                    _BarButton(
+                      icon: Icons.crop,
+                      tooltip: state.cropTiles
+                          ? 'Thumbnails are cropped to fill (C)'
+                          : 'Thumbnails show the whole image (C)',
+                      active: state.cropTiles,
+                      onTap: state.toggleCrop,
+                    ),
+                    if (wide) ...[
+                      const SizedBox(width: _sliderGap),
+                      const Icon(
+                        Icons.photo_size_select_small,
+                        size: _sliderIcon,
+                        color: Palette.faint,
                       ),
-                      _BarButton(
-                        icon: Icons.crop,
-                        tooltip: state.cropTiles
-                            ? 'Thumbnails are cropped to fill (C)'
-                            : 'Thumbnails show the whole image (C)',
-                        active: state.cropTiles,
-                        onTap: state.toggleCrop,
+                      SizedBox(
+                        width: _sliderWidth,
+                        child: Slider(
+                          value: state.tileSize,
+                          min: minTileSize,
+                          max: maxTileSize,
+                          onChanged: state.setTileSize,
+                        ),
                       ),
-                      if (wide) ...[
-                        const SizedBox(width: 6),
-                        const Icon(
-                          Icons.photo_size_select_small,
-                          size: 15,
-                          color: Palette.faint,
-                        ),
-                        SizedBox(
-                          width: 120,
-                          child: Slider(
-                            value: state.tileSize,
-                            min: minTileSize,
-                            max: maxTileSize,
-                            onChanged: state.setTileSize,
-                          ),
-                        ),
-                      ],
                     ],
-                    if (!focus && wide && state.folder != null)
+                    if (wide && state.folder != null)
                       _BarButton(
                         icon: Icons.bar_chart,
                         tooltip: 'Usage stats',
                         onTap: () => openStats(context, state),
                       ),
-                    _BarButton(
-                      icon: Icons.info_outline,
-                      tooltip: 'Generation data (I)',
-                      active: state.rightOpen,
-                      onTap: state.toggleRight,
-                    ),
+                    info,
                   ],
                 ),
               ),
@@ -138,6 +137,11 @@ class TopBar extends StatelessWidget {
     );
   }
 }
+
+const double _barButton = 36;
+const double _sliderGap = 6;
+const double _sliderIcon = 15;
+const double _sliderWidth = 120;
 
 class _BarButton extends StatelessWidget {
   const _BarButton({
@@ -163,8 +167,8 @@ class _BarButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           hoverColor: Palette.hover,
           child: SizedBox(
-            width: 36,
-            height: 36,
+            width: _barButton,
+            height: _barButton,
             child: Icon(
               icon,
               size: 19,
@@ -177,14 +181,170 @@ class _BarButton extends StatelessWidget {
   }
 }
 
-class _FolderTitle extends StatelessWidget {
-  const _FolderTitle({required this.state});
+/// Everything in the bar to the right of the folder button: the folder's
+/// name and how much is in it, the search box, and the tools.
+///
+/// While the search box has the keyboard it grows, so that what is being
+/// typed can be read. In a roomy bar it grows leftwards over the folder's
+/// name and leaves the count and the tools where they are. In a tight one
+/// that would gain it next to nothing, so there it takes the whole width,
+/// tools included, until it is put down again.
+class _TitleSearchAndTools extends StatelessWidget {
+  const _TitleSearchAndTools({
+    required this.state,
+    required this.wide,
+    required this.tools,
+  });
   final AppState state;
+
+  /// Whether the bar has room for the long set of tools.
+  final bool wide;
+  final List<Widget> tools;
+
+  /// Room kept for the count beside the grown box, and the gaps around it.
+  static const double _countRoom = 104;
+  static const double _gap = 8;
+  static const double _toolsGap = 4;
+
+  /// Past this a wider box is no easier to read...
+  static const double _widest = 760;
+
+  /// ...and if it cannot get this wide beside the tools, it grows over them.
+  static const double _wideEnough = 420;
+
+  /// How wide [tools] are, which has to be known before they are laid out.
+  double get _toolsWidth =>
+      _barButton * 4 +
+      (wide ? _sliderGap + _sliderIcon + _sliderWidth : 0) +
+      (wide && state.folder != null ? _barButton : 0);
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final room = constraints.maxWidth;
+        final toolsWidth = math.min(_toolsWidth, room);
+        // What is left of the tools, for the name, the count and the box.
+        final beside = math.max(0.0, room - toolsWidth - _toolsGap);
+        final resting = math.min(wide ? 320.0 : 170.0, beside);
+        final besideCount = beside - _countRoom - _gap;
+        final overTools = besideCount < _wideEnough;
+        final grown = overTools
+            ? room
+            : math.max(resting, math.min(besideCount, _widest));
+        final restingRight = toolsWidth + _toolsGap;
+        return ListenableBuilder(
+          listenable: state.searchFocus,
+          builder: (context, _) {
+            final typing = state.searchFocus.hasFocus;
+            return TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: typing ? 1 : 0),
+              duration: motion(context, _barMotion),
+              curve: _barCurve,
+              builder: (context, t, _) {
+                return Stack(
+                  children: [
+                    Positioned(
+                      key: const ValueKey<String>('bar-tools'),
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: toolsWidth,
+                      // Under the grown box they are out of sight and out
+                      // of reach, and back in reach the moment it lets go.
+                      child: IgnorePointer(
+                        ignoring: overTools && typing,
+                        child: Opacity(
+                          opacity: overTools ? 1 - t : 1.0,
+                          child: ExcludeFocus(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: tools,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // The name and count give way to the count alone, or
+                    // to nothing where the box takes the whole bar.
+                    if (t < 1)
+                      Positioned(
+                        key: const ValueKey<String>('bar-title'),
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: math.max(0.0, beside - resting - _gap),
+                        child: ExcludeFocus(
+                          child: Opacity(
+                            opacity: 1 - t,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: _FolderTitle(state: state),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (t > 0 && !overTools)
+                      Positioned(
+                        key: const ValueKey<String>('bar-count'),
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: math.max(0.0, beside - grown - _gap),
+                        child: IgnorePointer(
+                          child: Opacity(
+                            opacity: t,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: _FolderTitle(
+                                state: state,
+                                countOnly: true,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      key: const ValueKey<String>('bar-search'),
+                      right: overTools ? restingRight * (1 - t) : restingRight,
+                      top: 0,
+                      bottom: 0,
+                      width: resting + (grown - resting) * t,
+                      // On its way back to rest it is no longer in the way
+                      // of what it was covering.
+                      child: IgnorePointer(
+                        ignoring: !typing && t > 0,
+                        child: Center(
+                          child: _SearchField(
+                            state: state,
+                            pinsWidth: math.max(grown, 280.0),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _FolderTitle extends StatelessWidget {
+  const _FolderTitle({required this.state, this.countOnly = false});
+  final AppState state;
+
+  /// Leave the folder's name out.
+  final bool countOnly;
 
   @override
   Widget build(BuildContext context) {
     final folder = state.folder;
     if (folder == null) {
+      if (countOnly) return const SizedBox.shrink();
       return const Text(
         'GenerativeView',
         style: TextStyle(fontSize: 14, color: Palette.muted),
@@ -193,6 +353,17 @@ class _FolderTitle extends StatelessWidget {
     final name = folder == '/' ? '/' : folder.split('/').last;
     final count = state.items.length;
     final noun = count == 1 ? 'item' : 'items';
+    if (countOnly) {
+      if (!state.loaded) return const SizedBox.shrink();
+      return Text(
+        state.query.trim().isEmpty
+            ? '${_groupThousands(count)} $noun'
+            : '${_groupThousands(count)} ${count == 1 ? 'match' : 'matches'}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12.5, color: Palette.muted),
+      );
+    }
     return Tooltip(
       message: folder,
       child: Row(
@@ -260,14 +431,14 @@ class _FocusTitle extends StatelessWidget {
 
 /// The search box. While it has focus the pinned searches hang under it;
 /// the pin beside the clear button keeps (or lets go of) the current one.
-/// The magnifying glass switches between finding text in the metadata and
-/// describing what the pictures show.
+/// The switch at its left end chooses between finding text in the metadata
+/// and describing what the pictures show.
 class _SearchField extends StatefulWidget {
-  const _SearchField({required this.state, required this.width});
+  const _SearchField({required this.state, required this.pinsWidth});
   final AppState state;
 
-  /// How wide the box is; the list of pins is at least this wide.
-  final double width;
+  /// How wide the list of pins under the box is.
+  final double pinsWidth;
 
   @override
   State<_SearchField> createState() => _SearchFieldState();
@@ -338,7 +509,7 @@ class _SearchFieldState extends State<_SearchField> {
         // choosing a pin does not first take the focus away.
         child: TextFieldTapRegion(
           child: _PinnedSearches(
-            width: math.max(widget.width, 280.0),
+            width: widget.pinsWidth,
             pins: pins,
             onPick: _pick,
             onRemove: state.unpinSearch,
@@ -378,19 +549,13 @@ class _SearchFieldState extends State<_SearchField> {
                   : 'Search prompts, models, names',
               hintStyle: const TextStyle(color: Palette.faint, fontSize: 13.5),
               prefixIcon: Padding(
-                padding: const EdgeInsets.only(left: 4),
-                child: _FieldButton(
-                  icon: describing ? Icons.image_search : Icons.search,
-                  color: describing ? Palette.accent : Palette.faint,
-                  tooltip: describing
-                      ? 'Searching by what the pictures show.\n'
-                            'Click to search prompts and metadata.'
-                      : 'Searching prompts and metadata.\n'
-                            'Click to search by what the pictures show.',
+                padding: const EdgeInsets.only(left: 5, right: 4),
+                child: _SearchKindSwitch(
+                  content: describing,
                   onTap: state.toggleContentSearch,
                 ),
               ),
-              prefixIconConstraints: const BoxConstraints(minWidth: 34),
+              prefixIconConstraints: const BoxConstraints(),
               suffixIcon: query.trim().isEmpty
                   ? null
                   : Padding(
@@ -439,6 +604,106 @@ class _SearchFieldState extends State<_SearchField> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The switch between the two kinds of search: a pill with a magnifying
+/// glass (the metadata's text) and a magnifying glass over a picture (what
+/// the pictures show), and a thumb that slides to whichever is on.
+class _SearchKindSwitch extends StatelessWidget {
+  const _SearchKindSwitch({required this.content, required this.onTap});
+
+  /// Whether content search is the one that is on.
+  final bool content;
+  final VoidCallback onTap;
+
+  static const double _slot = 25;
+  static const double _height = 24;
+  static const double _inset = 2;
+  static const Color _thumb = Color(0xFF3B3B45);
+  static const Color _onAccent = Color(0xFF0B1020);
+
+  @override
+  Widget build(BuildContext context) {
+    final time = motion(context, _barMotion);
+    return Tooltip(
+      message: content
+          ? 'Searching by what the pictures show.\n'
+                'Click to search prompts and metadata.'
+          : 'Searching prompts and metadata.\n'
+                'Click to search by what the pictures show.',
+      child: Semantics(
+        button: true,
+        toggled: content,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            // As tall as the box, so there is more to hit than the pill.
+            child: SizedBox(
+              width: _slot * 2 + _inset * 2,
+              height: 34,
+              child: Center(child: _pill(time)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pill(Duration time) {
+    Widget slot(IconData glyph, bool on) => SizedBox(
+      width: _slot,
+      height: _height,
+      child: TweenAnimationBuilder<Color?>(
+        tween: ColorTween(
+          end: !on
+              ? Palette.faint
+              : content
+              ? _onAccent
+              : Palette.text,
+        ),
+        duration: time,
+        curve: _barCurve,
+        builder: (context, color, _) => Icon(glyph, size: 15, color: color),
+      ),
+    );
+    return Container(
+      width: _slot * 2 + _inset * 2,
+      height: _height,
+      decoration: BoxDecoration(
+        color: Palette.canvas,
+        borderRadius: BorderRadius.circular(_height / 2),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: _inset),
+      child: Stack(
+        children: [
+          AnimatedAlign(
+            alignment: content ? Alignment.centerRight : Alignment.centerLeft,
+            duration: time,
+            curve: _barCurve,
+            child: AnimatedContainer(
+              key: const ValueKey<String>('search-kind-thumb'),
+              duration: time,
+              curve: _barCurve,
+              width: _slot,
+              height: _height - _inset * 2,
+              decoration: BoxDecoration(
+                color: content ? Palette.accent : _thumb,
+                borderRadius: BorderRadius.circular(_height / 2),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              slot(Icons.search, !content),
+              slot(Icons.image_search, content),
+            ],
+          ),
+        ],
       ),
     );
   }

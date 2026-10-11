@@ -24,6 +24,10 @@ const double _minContentHeight = 160;
 const double _minFooterHeight = 96;
 const double _footerHandleHeight = 18;
 
+/// How long a panel takes to open or close.
+const Duration _panelMotion = Duration(milliseconds: 220);
+const Curve _panelCurve = Curves.easeOutCubic;
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.state});
   final AppState state;
@@ -178,75 +182,135 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// window is narrow. The metadata panel does the same in a landscape
   /// window; in a portrait one it is a footer across the full width instead,
   /// which leaves the grid or the focused image all the width there is.
+  ///
+  /// Either panel opens and closes over a moment rather than at once.
   Widget _body(double width) {
     final focus = state.mode == ViewMode.focus;
+    final showLeft = state.leftOpen && !focus;
+    // Lying over the content, the panels take turns: folders first.
+    final floating = state.narrowLayout && !state.portraitLayout;
+    final showRight = state.rightOpen && !(floating && showLeft);
+    final time = motion(context, _panelMotion);
+    // Built once, not once per frame of the panels' movement.
+    final content = _content();
+    final folders = ColoredBox(
+      color: Palette.panel,
+      child: FolderPanel(
+        state: state,
+        onPicked: state.narrowLayout ? state.toggleLeft : null,
+      ),
+    );
+    final meta = _metaPanel();
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: showLeft ? 1 : 0),
+      duration: time,
+      curve: _panelCurve,
+      builder: (context, left, _) => TweenAnimationBuilder<double>(
+        tween: Tween<double>(end: showRight ? 1 : 0),
+        duration: time,
+        curve: _panelCurve,
+        builder: (context, right, _) => _layout(
+          width: width,
+          content: content,
+          folders: folders,
+          meta: meta,
+          left: left,
+          right: right,
+        ),
+      ),
+    );
+  }
+
+  /// The body with the folder panel [left] of the way open and the metadata
+  /// panel [right] of the way open (0 = shut and not there, 1 = open).
+  Widget _layout({
+    required double width,
+    required Widget content,
+    required Widget folders,
+    required Widget meta,
+    required double left,
+    required double right,
+  }) {
     final narrow = state.narrowLayout;
     final portrait = state.portraitLayout;
-    final showLeft = state.leftOpen && !focus;
 
-    Widget body = _content();
+    Widget body = content;
     if (!narrow) {
       body = Row(
         children: [
-          if (showLeft) ...[
-            SizedBox(
-              width: state.leftWidth,
-              child: ColoredBox(
-                color: Palette.panel,
-                child: FolderPanel(state: state),
+          if (left > 0)
+            // Slides out from the window's edge, pushing the content over.
+            _Reveal(
+              amount: left,
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(width: state.leftWidth, child: folders),
+                  _DragHandle(
+                    onDrag: (dx) => state.setLeftWidth(state.leftWidth + dx),
+                  ),
+                ],
               ),
             ),
-            _DragHandle(
-              onDrag: (dx) => state.setLeftWidth(state.leftWidth + dx),
-            ),
-          ],
           Expanded(child: body),
-          if (state.rightOpen && !portrait) ...[
-            _DragHandle(
-              onDrag: (dx) => state.setRightWidth(state.rightWidth - dx),
+          if (right > 0 && !portrait)
+            _Reveal(
+              amount: right,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _DragHandle(
+                    onDrag: (dx) => state.setRightWidth(state.rightWidth - dx),
+                  ),
+                  SizedBox(width: state.rightWidth, child: meta),
+                ],
+              ),
             ),
-            SizedBox(width: state.rightWidth, child: _metaPanel()),
-          ],
         ],
       );
     }
-    if (portrait) body = _withFooter(body);
+    if (portrait) body = _withFooter(body, meta, right);
     if (!narrow) return body;
 
     final panelWidth = (width * 0.86).clamp(240.0, 380.0).toDouble();
-    final showRight = state.rightFloats && !showLeft;
+    final overRight = portrait ? 0.0 : right;
+    final shade = math.max(left, overRight);
     return Stack(
       fit: StackFit.expand,
       children: [
         body,
-        if (showLeft || showRight)
+        if (shade > 0)
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _closeOverlays,
-            child: const ColoredBox(color: Color(0x99000000)),
-          ),
-        if (showLeft)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SizedBox(
-              width: panelWidth,
-              child: ColoredBox(
-                color: Palette.panel,
-                child: FolderPanel(state: state, onPicked: state.toggleLeft),
-              ),
+            child: ColoredBox(
+              color: Color.fromRGBO(0, 0, 0, 0.6 * shade),
             ),
           ),
-        if (showRight)
+        if (left > 0)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FractionalTranslation(
+              translation: Offset(left - 1, 0),
+              child: SizedBox(width: panelWidth, child: folders),
+            ),
+          ),
+        if (overRight > 0)
           Align(
             alignment: Alignment.centerRight,
-            child: SizedBox(width: panelWidth, child: _metaPanel()),
+            child: FractionalTranslation(
+              translation: Offset(1 - overRight, 0),
+              child: SizedBox(width: panelWidth, child: meta),
+            ),
           ),
       ],
     );
   }
 
-  /// [above], with the metadata panel under it when that is open.
-  Widget _withFooter(Widget above) {
+  /// [above], with the metadata panel [open] of the way up from under it.
+  Widget _withFooter(Widget above, Widget meta, double open) {
     return LayoutBuilder(
       builder: (context, box) {
         final room = box.maxHeight - _footerHandleHeight;
@@ -254,25 +318,66 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           room * state.bottomShare,
           room - _minContentHeight,
         );
-        final show = state.rightOpen && height >= _minFooterHeight;
+        final show = open > 0 && height >= _minFooterHeight;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(child: above),
-            if (show) ...[
-              _DragHandle(
+            if (show)
+              _Reveal(
+                amount: open,
                 axis: Axis.vertical,
-                // From the height on screen, which may be less than the
-                // saved share asks for.
-                onDrag: (dy) => state.setBottomShare(
-                  math.min(state.bottomShare, height / room) - dy / room,
+                alignment: Alignment.topCenter,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _DragHandle(
+                      axis: Axis.vertical,
+                      // From the height on screen, which may be less than
+                      // the saved share asks for.
+                      onDrag: (dy) => state.setBottomShare(
+                        math.min(state.bottomShare, height / room) - dy / room,
+                      ),
+                    ),
+                    SizedBox(height: height, child: meta),
+                  ],
                 ),
               ),
-              SizedBox(height: height, child: _metaPanel()),
-            ],
           ],
         );
       },
+    );
+  }
+}
+
+/// Shows [amount] of [child] (0 = none of it, 1 = all), taking only that
+/// much room along [axis]. The child keeps its full size throughout and is
+/// pinned at [alignment], so a panel pinned by the edge it shares with the
+/// content appears to slide out from under the window's edge.
+class _Reveal extends StatelessWidget {
+  const _Reveal({
+    required this.amount,
+    required this.alignment,
+    required this.child,
+    this.axis = Axis.horizontal,
+  });
+  final double amount;
+  final Alignment alignment;
+  final Axis axis;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    // The same wrapping whether moving or at rest, so that what is inside
+    // keeps its state when the movement ends.
+    return ClipRect(
+      child: Align(
+        alignment: alignment,
+        widthFactor: axis == Axis.horizontal ? amount : null,
+        heightFactor: axis == Axis.vertical ? amount : null,
+        child: child,
+      ),
     );
   }
 }
