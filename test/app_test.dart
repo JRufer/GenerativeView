@@ -1259,8 +1259,12 @@ void main() {
     await tester.tap(find.byType(FocusView), buttons: kSecondaryButton);
     await settle(tester);
     await tester.tap(find.text('Copy image'));
-    await settle(tester);
-    expect(find.text('Could not copy this image'), findsOneWidget);
+    // The toast before it has to leave first.
+    await pumpUntil(
+      tester,
+      () => find.text('Could not copy this image').evaluate().isNotEmpty,
+      what: 'being told the copy failed',
+    );
 
     await tester.pump(const Duration(seconds: 2)); // let the toast go
     await close(tester, state);
