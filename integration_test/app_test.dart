@@ -200,7 +200,8 @@ void main() {
       await tester.tap(onPage('sd_xl_base_1.0'));
       await waitFor(tester, () => find.byType(StatsPage).evaluate().isEmpty && thumbnails() == 1, what: 'the grid filtered to one model');
       expect(find.text('1 match'), findsOneWidget);
-      await tester.enterText(search, '');
+      // The filter is ordinary search text: the box's own X clears it.
+      await tester.tap(find.byTooltip('Clear search'));
       await waitFor(tester, () => thumbnails() == expected, what: 'the full grid again');
       // The filter kept the selection; make sure it is the image we expect.
       await tester.tap(images.at(4));
