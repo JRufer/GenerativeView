@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/models.dart';
@@ -33,6 +35,28 @@ class Place {
 
   /// home | folder | drive | root
   final String kind;
+}
+
+/// A search kept for later, a tap away under the search box.
+@immutable
+class PinnedSearch {
+  const PinnedSearch(this.query);
+  final String query;
+
+  Map<String, Object?> toJson() => {'q': query};
+
+  static PinnedSearch? fromJson(Object? json) {
+    final query = json is Map ? json['q'] : json;
+    if (query is! String || query.trim().isEmpty) return null;
+    return PinnedSearch(query.trim());
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is PinnedSearch && other.query == query;
+
+  @override
+  int get hashCode => query.hashCode;
 }
 
 class DirNode {
@@ -135,9 +159,21 @@ class AppState extends ChangeNotifier {
   /// Bumped when the tree has been opened down to the current folder.
   int treeRevealTick = 0;
 
+  // ---------------------------------------------------------------- pins
+
+  /// Searches and folders the user has pinned, in the order they pinned them.
+  List<PinnedSearch> pinnedSearches = const [];
+  List<String> pinnedFolders = const [];
+
+  /// Whether the folder panel's "Pinned" section is showing its contents.
+  bool pinsOpen = true;
+
   // ---------------------------------------------------------------- internals
 
   int _queryTicket = 0;
+
+  /// Scroll the grid to the selection once the next query has answered.
+  bool _revealAfterReload = false;
   Timer? _reloadTimer;
   Timer? _queryTimer;
   bool _disposed = false;
@@ -185,6 +221,15 @@ class AppState extends ChangeNotifier {
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
     sort = (saved['sort'] as String?) ?? sort;
+    pinsOpen = flag('pins_open', pinsOpen);
+    pinnedSearches = [
+      for (final entry in _savedList(saved['pinned_searches']))
+        ?PinnedSearch.fromJson(entry),
+    ];
+    pinnedFolders = [
+      for (final entry in _savedList(saved['pinned_folders']))
+        if (entry is String && entry.isNotEmpty) entry,
+    ];
 
     await loadPlaces();
     final start = initialFolder ?? saved['folder'] as String?;
@@ -192,6 +237,17 @@ class AppState extends ChangeNotifier {
       await openFolder(start, remember: initialFolder == null);
     } else {
       notifyListeners();
+    }
+  }
+
+  /// A list saved as JSON text; empty if it is missing or unreadable.
+  static List<Object?> _savedList(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is List ? decoded : const [];
+    } on FormatException {
+      return const [];
     }
   }
 
@@ -351,9 +407,85 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Search for [text] at once, as if it had just been typed.
+  void applySearch(String text) {
+    searchText.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _queryTimer?.cancel();
+    if (query != text) {
+      query = text;
+      _reload();
+    }
+    notifyListeners();
+  }
+
+  /// Show only the images that match [text], which replaces whatever was
+  /// being searched for. Leaves the focus view, and puts away a metadata
+  /// panel that is lying over the grid, so the result is in sight.
+  void applyFilter(String text) {
+    if (mode == ViewMode.focus) mode = ViewMode.grid;
+    if (rightFloats) {
+      rightOpen = false;
+      _save('right_open', 'false');
+    }
+    _revealAfterReload = query != text;
+    revealTick++;
+    applySearch(text);
+  }
+
   void rescan() {
     thumbs.retryFailed();
     _fire(core.call('rescan'));
+  }
+
+  // ================================================================ pins
+
+  bool isSearchPinned(String text) {
+    final wanted = text.trim();
+    return pinnedSearches.any((p) => p.query == wanted);
+  }
+
+  void pinSearch(String text) {
+    final wanted = text.trim();
+    if (wanted.isEmpty || isSearchPinned(wanted)) return;
+    pinnedSearches = [...pinnedSearches, PinnedSearch(wanted)];
+    _savePinnedSearches();
+  }
+
+  void unpinSearch(String text) {
+    final wanted = text.trim();
+    if (!isSearchPinned(wanted)) return;
+    pinnedSearches = [
+      for (final p in pinnedSearches)
+        if (p.query != wanted) p,
+    ];
+    _savePinnedSearches();
+  }
+
+  void _savePinnedSearches() {
+    _save('pinned_searches', jsonEncode(pinnedSearches));
+    notifyListeners();
+  }
+
+  bool isFolderPinned(String path) => pinnedFolders.contains(path);
+
+  void toggleFolderPin(String path) {
+    pinnedFolders = isFolderPinned(path)
+        ? [
+            for (final p in pinnedFolders)
+              if (p != path) p,
+          ]
+        : [...pinnedFolders, path];
+    _save('pinned_folders', jsonEncode(pinnedFolders));
+    notifyListeners();
+  }
+
+  void togglePins() {
+    pinsOpen = !pinsOpen;
+    _save('pins_open', '$pinsOpen');
+    notifyListeners();
   }
 
   // ================================================================ items
@@ -430,6 +562,10 @@ class AppState extends ChangeNotifier {
       selectedIndex = -1;
     }
     if (mode == ViewMode.focus && list.isEmpty) mode = ViewMode.grid;
+    if (_revealAfterReload) {
+      _revealAfterReload = false;
+      if (selectedIndex >= 0) revealTick++;
+    }
     notifyListeners();
   }
 
@@ -555,6 +691,17 @@ class AppState extends ChangeNotifier {
     _metaCache[key] = info;
     if (_metaCache.length > 64) _metaCache.remove(_metaCache.keys.first);
     return info;
+  }
+
+  /// What the current folder's images were made with, and how often.
+  Future<UsageStats> usage() async {
+    final dir = folder;
+    if (dir == null) return UsageStats.empty;
+    final json = await core.call('usage', {
+      'dir': dir,
+      'recursive': recursive,
+    });
+    return UsageStats.fromJson(json as Map<String, dynamic>);
   }
 
   @override

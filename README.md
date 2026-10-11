@@ -2,7 +2,7 @@
 
 A fast image browser for folders of AI-generated images, for Linux and Android.
 
-Point it at an output folder and it shows a resizable grid of everything in it, reads the generation metadata out of each file (ComfyUI, InvokeAI, A1111/Forge), and lets you search the folder by prompt, model, LoRA, seed or file name. Tap any value to copy it.
+Point it at an output folder and it shows a resizable grid of everything in it, reads the generation metadata out of each file (ComfyUI, InvokeAI, A1111/Forge), and lets you search the folder by prompt, model, LoRA, seed or file name. Tap any value to copy it; press and hold one to see every image that shares it.
 
 ![The grid with search results and the metadata panel](docs/screenshot-metadata.png)
 
@@ -10,10 +10,16 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 
 - **Grid** of images and videos from a folder and, optionally, its sub-folders. Resize tiles with the slider, pinch, `Ctrl` + scroll or `Ctrl` `+`/`-`. The crop button (or `C`) switches tiles between cropped-to-fill and showing the whole image.
 - **Focus view**: double tap (or `Enter` / `Space`) opens one image; swipe or use the arrow keys to move through the folder; pinch or turn the scroll wheel to zoom; double tap (or `Enter` / `Space` / `Esc`) to go back.
+- **Zoom** is measured against the image's real size and moves in steps of 10 %: each notch of the wheel goes to the next multiple of ten, and a pinch settles on the nearest one when you let go. A chip shows the percentage while you zoom; it turns blue, and stays, at exactly 100 % (one image pixel per screen pixel). The size at which the image just fits the window is a stop too. You can zoom out as far as that, or as far as 100 % when fitting the window means enlarging the image.
 - **Metadata panel** on the right for the selected image: prompt, negative prompt, seed, model, LoRAs with weights, other models (VAE, text encoders, ControlNet, upscalers), sampler settings, the full ComfyUI node graph, and the raw JSON exactly as stored. Tap a value to copy it. "Copy as tags" gives `<lora:name:weight>`; "Copy all" gives every field as text.
+- **Filter by what an image used**: right-click, or press and hold, the seed, a model, a LoRA or a sampler setting in the metadata panel and choose "Show only images…". On the **LoRAs** heading that means every image that uses all of the LoRAs listed, at any strength; on a single LoRA, every image that uses that one. The filter appears in the search box as ordinary search text, so it can be edited, cleared or pinned.
 - **Search** across the folder as you type. It matches anywhere inside prompts, models, LoRAs, settings and file names.
+- **Pinned searches**: type a search and click the pin beside the ✕ to keep it. Clicking in the search box lists your pinned searches underneath; click one to run it, or its ✕ to remove it. Typing narrows the list to the pins that contain what you typed.
+- **Usage** (the bar-chart button; in a narrow window it is in the sort menu): which models, LoRAs, samplers, schedulers, step counts, CFG values, sizes and prompt words the folder's images use most, how each one's use is spread over time, and a timeline of images per day, week, month or year. Click anything to go back to the grid showing only the images behind that number.
+- **Image menu**: right-click, or press and hold, an image in the grid or the focus view. **Copy image** puts the file itself on the clipboard, bytes untouched, so the generation data goes with it wherever you paste. The menu also copies the prompt and the file path.
 - **Live**: images that appear, change or disappear while the folder is open show up in the grid and in search on their own.
 - **Folder panel** on the left: a lazily loaded tree, plus a box to paste a path into.
+- **Pinned folders**: right-click, or press and hold, any folder and choose "Pin this folder". Pinned folders are listed in a section at the top of the panel, under the path box, and wear a filled blue folder icon there and in the tree. Click one to jump to it; the same menu unpins it. Click the section's heading to fold it away.
 
 Both panels collapse; on narrow screens they slide over the grid instead of sitting beside it. When the window is taller than it is wide — a tablet held upright, a window tiled to half the screen — the metadata panel moves under the grid or the focused image as a footer, with a top edge you can drag to resize it.
 
@@ -27,8 +33,22 @@ Both panels collapse; on narrow screens they slide over the grid instead of sitt
 | `model:flux` | model name contains `flux` (also `lora:`, `prompt:`, `neg:`, `name:`) |
 | `seed:1234` | seed starts with `1234` |
 | `source:comfyui` | made with that tool (`invokeai`, `a1111`, `forge`, …) |
+| `sampler:euler` | sampler name contains `euler` (also `scheduler:`) |
+| `steps:30` | exactly 30 steps (also `cfg:7`, where `7` and `7.0` are the same) |
+| `size:1024x1024` | image dimensions contain `1024x1024` |
+| `date:2026-10` | file dated that month (also `date:2026-10-09`, `date:2026`, and `date:2026-10-01..2026-10-07` for a range) |
 
 Matching is case-insensitive and by substring, so `lond` finds `blonde`.
+
+Put `=` after the colon to match a whole value instead of part of one. This is what the "Show only images…" menus and the usage page write for you:
+
+| Type | Finds |
+| --- | --- |
+| `seed:=1234` | that seed and no other |
+| `model:="flux1-dev.safetensors"` | images made with exactly that model, whatever it was used as |
+| `lora:=detail_xl lora:=inkwash` | images that use both LoRAs, at any strength |
+| `prompt:=fox` | `fox` as a whole word: not `foxglove` |
+| `sampler:=euler`, `size:=1024x1024`, `name:=a.png` | the whole sampler name, size or file name |
 
 ### Keyboard
 
@@ -40,6 +60,7 @@ Matching is case-insensitive and by substring, so `lond` finds `blonde`.
 | `Home` / `End`, `PgUp` / `PgDn` | jump | jump |
 | `Ctrl` `F` or `/` | search | |
 | `Ctrl` `C` | copy the selected image's prompt | same |
+| `Ctrl` `Shift` `C` | copy the selected image itself | same |
 | `Ctrl` `+` / `-` | tile size | |
 | `I` or `]` | toggle metadata panel | same |
 | `[` | toggle folder panel | |
@@ -136,8 +157,9 @@ The UI talks to the core through a small hand-written `dart:ffi` layer (`lib/src
 - **Live updates** come from file-system notifications, with a cheap check of folder timestamps every few seconds as a backstop for storage that sends none (Android shared storage, network mounts).
 - **Thumbnails** are generated in two sizes on demand, newest request first, and cached on disk. Requests for tiles that scrolled away are dropped. The rest of the folder is pre-rendered in the background at low priority.
 - **Grid data** crosses to Dart as one packed buffer that is read in place, so listing ten thousand items costs no parsing.
+- **Exact filters and usage counts** read one more text column beside the search text: a line per model, LoRA and setting. Counting what ten thousand images were made with is one pass over it (about 35 ms on the same test machine), and indexing is no slower for it.
 
-The index lives in `~/.local/share/com.jrufer.generativeview` and thumbnails in `~/.cache/com.jrufer.generativeview` (on Android, in the app's own storage). Both are caches of what is on disk and can be deleted at any time.
+The index lives in `~/.local/share/com.jrufer.generativeview` and thumbnails in `~/.cache/com.jrufer.generativeview` (on Android, in the app's own storage). The thumbnails and the image index are caches of what is on disk and are rebuilt if deleted. The index file also holds your settings, pinned folders and pinned searches, so deleting it resets those.
 
 ## Development
 
@@ -150,7 +172,7 @@ cargo run --release --example bench -- /path/to/folder   # time indexing, search
 xvfb-run -a flutter test integration_test -d linux       # the built app in a virtual display
 ```
 
-`flutter test` drives the actual app against the actual Rust library on a folder of generated images: it searches, opens the metadata panel, copies values, steps through the focus view and checks that added and deleted files appear and disappear. CI runs the same flow against the built Linux app in a virtual display and against the APK on an emulated Android tablet (`tool/ci-android-emulator.sh`).
+`flutter test` drives the actual app against the actual Rust library on a folder of generated images: it searches, opens the metadata panel, copies values, steps through the focus view and checks that added and deleted files appear and disappear. CI runs the same flow against the built Linux app in a virtual display and against the APK on an emulated Android tablet (`tool/ci-android-emulator.sh`). There it also copies an image and reads the clipboard back (as the picture on Linux, through the clipboard's content address on Android) to check that the file arrives byte for byte; where `xclip` is installed, the Linux run asks from outside the app as well.
 
 Set `GV_SCREENSHOT_DIR` to have the tests save a PNG of each stage, and `GV_SAMPLE_DIR` to point `test/gallery_test.dart` at a folder of your own images.
 
@@ -160,3 +182,5 @@ Set `GV_SCREENSHOT_DIR` to have the tests save a PNG of each stage, and `GV_SAMP
 - Video thumbnails on Linux need `ffmpeg` on the `PATH`; without it videos show a placeholder tile.
 - Video metadata is read from MP4, MOV and WebM. Animated WebP and GIF play in the focus view.
 - Nothing in the app deletes, moves or edits your files.
+- Whether a pasted image keeps its generation data is up to the program you paste into. File managers, and anything that takes the copied *file*, get it untouched; a program that takes the *picture* and re-encodes it (browsers do, for images pasted into a web page) drops the data.
+- LoRA and model names are compared as written in each file, so the same LoRA saved as `style/inkwash.safetensors` by ComfyUI and as `inkwash` by A1111 counts as two.

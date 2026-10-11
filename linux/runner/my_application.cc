@@ -1,6 +1,7 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+#include <string.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -10,9 +11,185 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  FlMethodChannel* media_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+// --- Copying a file to the clipboard ---------------------------------------
+//
+// "Copy image" puts the file itself on the clipboard, in the three shapes
+// other programs ask for: a list of URIs (file managers, upload boxes, chat
+// apps), GNOME's copied-files format, and the file's own bytes under its
+// image type (image editors, browsers). The bytes are read from disk when
+// someone pastes and handed over untouched, so the generation data stored in
+// the file goes with it.
+
+enum {
+  kTargetUriList,
+  kTargetGnomeCopiedFiles,
+  kTargetImage,
+};
+
+// The image type to offer a file's bytes as, or nullptr for anything that is
+// not a picture (videos are offered as files only).
+static const gchar* image_type_for(const gchar* path) {
+  const gchar* dot = strrchr(path, '.');
+  if (dot == nullptr) {
+    return nullptr;
+  }
+  g_autofree gchar* extension = g_ascii_strdown(dot + 1, -1);
+  if (g_str_equal(extension, "png")) {
+    return "image/png";
+  }
+  if (g_str_equal(extension, "jpg") || g_str_equal(extension, "jpeg")) {
+    return "image/jpeg";
+  }
+  if (g_str_equal(extension, "webp")) {
+    return "image/webp";
+  }
+  if (g_str_equal(extension, "gif")) {
+    return "image/gif";
+  }
+  if (g_str_equal(extension, "bmp")) {
+    return "image/bmp";
+  }
+  return nullptr;
+}
+
+// Called when another program pastes: |user_data| is the copied file's path.
+static void clipboard_get_cb(GtkClipboard* clipboard,
+                             GtkSelectionData* selection_data,
+                             guint info,
+                             gpointer user_data) {
+  const gchar* path = static_cast<const gchar*>(user_data);
+  g_autoptr(GFile) file = g_file_new_for_path(path);
+  g_autofree gchar* uri = g_file_get_uri(file);
+  switch (info) {
+    case kTargetUriList: {
+      gchar* uris[] = {uri, nullptr};
+      gtk_selection_data_set_uris(selection_data, uris);
+      break;
+    }
+    case kTargetGnomeCopiedFiles: {
+      g_autofree gchar* text = g_strconcat("copy\n", uri, nullptr);
+      gtk_selection_data_set(selection_data,
+                             gtk_selection_data_get_target(selection_data), 8,
+                             reinterpret_cast<const guchar*>(text),
+                             static_cast<gint>(strlen(text)));
+      break;
+    }
+    case kTargetImage: {
+      g_autofree gchar* bytes = nullptr;
+      gsize length = 0;
+      if (g_file_get_contents(path, &bytes, &length, nullptr)) {
+        gtk_selection_data_set(selection_data,
+                               gtk_selection_data_get_target(selection_data), 8,
+                               reinterpret_cast<const guchar*>(bytes),
+                               static_cast<gint>(length));
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// Called when something else is copied, or the app closes.
+static void clipboard_clear_cb(GtkClipboard* clipboard, gpointer user_data) {
+  g_free(user_data);
+}
+
+static gboolean copy_file_to_clipboard(const gchar* path) {
+  if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
+    return FALSE;
+  }
+  GtkTargetList* list = gtk_target_list_new(nullptr, 0);
+  gtk_target_list_add(list, gdk_atom_intern_static_string("text/uri-list"), 0,
+                      kTargetUriList);
+  gtk_target_list_add(
+      list, gdk_atom_intern_static_string("x-special/gnome-copied-files"), 0,
+      kTargetGnomeCopiedFiles);
+  const gchar* image_type = image_type_for(path);
+  if (image_type != nullptr) {
+    gtk_target_list_add(list, gdk_atom_intern(image_type, FALSE), 0,
+                        kTargetImage);
+  }
+  gint count = 0;
+  GtkTargetEntry* targets = gtk_target_table_new_from_list(list, &count);
+  GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  gchar* owned_path = g_strdup(path);
+  gboolean ok =
+      gtk_clipboard_set_with_data(clipboard, targets, count, clipboard_get_cb,
+                                  clipboard_clear_cb, owned_path);
+  if (ok) {
+    // Let a clipboard manager keep it after this window closes.
+    gtk_clipboard_set_can_store(clipboard, nullptr, 0);
+  } else {
+    // On failure the clear callback is never called, so the path is ours.
+    g_free(owned_path);
+  }
+  gtk_target_table_free(targets, count);
+  gtk_target_list_unref(list);
+  return ok;
+}
+
+// The bytes a program pasting the clipboard as a picture would get, or a null
+// value when no picture is on offer. The integration test uses this to check
+// that a copied image comes back unchanged.
+static FlValue* read_copied_image() {
+  GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  GdkAtom* targets = nullptr;
+  gint count = 0;
+  FlValue* result = nullptr;
+  if (gtk_clipboard_wait_for_targets(clipboard, &targets, &count)) {
+    for (gint i = 0; i < count && result == nullptr; i++) {
+      g_autofree gchar* name = gdk_atom_name(targets[i]);
+      if (!g_str_has_prefix(name, "image/")) {
+        continue;
+      }
+      GtkSelectionData* data =
+          gtk_clipboard_wait_for_contents(clipboard, targets[i]);
+      if (data != nullptr) {
+        gint length = gtk_selection_data_get_length(data);
+        if (length >= 0) {
+          result = fl_value_new_uint8_list(gtk_selection_data_get_data(data),
+                                           static_cast<size_t>(length));
+        }
+        gtk_selection_data_free(data);
+      }
+    }
+    g_free(targets);
+  }
+  return result != nullptr ? result : fl_value_new_null();
+}
+
+// Handles calls on the "generativeview/media" channel.
+static void media_method_call_cb(FlMethodChannel* channel,
+                                 FlMethodCall* method_call,
+                                 gpointer user_data) {
+  g_autoptr(FlMethodResponse) response = nullptr;
+  const gchar* method = fl_method_call_get_name(method_call);
+  if (g_str_equal(method, "readCopiedFile")) {
+    g_autoptr(FlValue) result = read_copied_image();
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (g_str_equal(method, "copyFile")) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    FlValue* path = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      path = fl_value_lookup_string(args, "path");
+    }
+    gboolean copied = FALSE;
+    if (path != nullptr && fl_value_get_type(path) == FL_VALUE_TYPE_STRING) {
+      copied = copy_file_to_clipboard(fl_value_get_string(path));
+    }
+    g_autoptr(FlValue) result = fl_value_new_bool(copied);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else {
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+  }
+  fl_method_call_respond(method_call, response, nullptr);
+}
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
@@ -75,6 +252,13 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  self->media_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)),
+      "generativeview/media", FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(
+      self->media_channel, media_method_call_cb, self, nullptr);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -121,6 +305,7 @@ static void my_application_shutdown(GApplication* application) {
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_object(&self->media_channel);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 

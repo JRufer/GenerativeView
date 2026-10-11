@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import 'stats_page.dart';
 
 const double topBarHeight = 48;
 
@@ -69,11 +72,7 @@ class TopBar extends StatelessWidget {
                 const SizedBox(width: 8),
                 SizedBox(
                   width: wide ? 320 : 170,
-                  child: _SearchField(
-                    state: state,
-                    controller: state.searchText,
-                    focusNode: state.searchFocus,
-                  ),
+                  child: _SearchField(state: state, width: wide ? 320 : 170),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -82,7 +81,7 @@ class TopBar extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (!focus) ...[
-                      _SortMenu(state: state),
+                      _SortMenu(state: state, withStats: !wide),
                       _BarButton(
                         icon: Icons.account_tree_outlined,
                         tooltip: state.recursive
@@ -117,6 +116,12 @@ class TopBar extends StatelessWidget {
                         ),
                       ],
                     ],
+                    if (!focus && wide && state.folder != null)
+                      _BarButton(
+                        icon: Icons.bar_chart,
+                        tooltip: 'Usage stats',
+                        onTap: () => openStats(context, state),
+                      ),
                     _BarButton(
                       icon: Icons.info_outline,
                       tooltip: 'Generation data (I)',
@@ -253,61 +258,171 @@ class _FocusTitle extends StatelessWidget {
   }
 }
 
-class _SearchField extends StatelessWidget {
-  const _SearchField({
-    required this.state,
-    required this.controller,
-    required this.focusNode,
-  });
+/// The search box. While it has focus the pinned searches hang under it;
+/// the pin beside the clear button keeps (or lets go of) the current one.
+class _SearchField extends StatefulWidget {
+  const _SearchField({required this.state, required this.width});
   final AppState state;
-  final TextEditingController controller;
-  final FocusNode focusNode;
+
+  /// How wide the box is; the list of pins is at least this wide.
+  final double width;
+
+  @override
+  State<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<_SearchField> {
+  final LayerLink _link = LayerLink();
+  final OverlayPortalController _pins = OverlayPortalController();
+
+  /// Whether the text has been edited since the box took focus. Until then
+  /// every pinned search is offered; after that, the ones that contain it.
+  bool _edited = false;
+
+  AppState get state => widget.state;
+
+  @override
+  void initState() {
+    super.initState();
+    state.searchFocus.addListener(_onFocus);
+    // The box can come back (from the focus view, say) already focused.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onFocus());
+  }
+
+  @override
+  void dispose() {
+    state.searchFocus.removeListener(_onFocus);
+    super.dispose();
+  }
+
+  void _onFocus() {
+    if (!mounted) return;
+    final focused = state.searchFocus.hasFocus;
+    if (focused == _pins.isShowing) return;
+    if (focused) {
+      _edited = false;
+      _pins.show();
+    } else {
+      _pins.hide();
+    }
+  }
+
+  List<PinnedSearch> _offered() {
+    final pins = state.pinnedSearches;
+    final typed = state.searchText.text.trim().toLowerCase();
+    if (!_edited || typed.isEmpty) return pins;
+    return [
+      for (final pin in pins)
+        if (pin.query.toLowerCase().contains(typed)) pin,
+    ];
+  }
+
+  void _pick(PinnedSearch pin) {
+    state.applySearch(pin.query);
+    state.searchFocus.unfocus();
+  }
+
+  Widget _buildPins(BuildContext context) {
+    final pins = _offered();
+    if (pins.isEmpty) return const SizedBox.shrink();
+    return CompositedTransformFollower(
+      link: _link,
+      showWhenUnlinked: false,
+      targetAnchor: Alignment.bottomLeft,
+      offset: const Offset(0, 4),
+      child: Align(
+        alignment: Alignment.topLeft,
+        // Part of the text field as far as "tapped outside" goes, so
+        // choosing a pin does not first take the focus away.
+        child: TextFieldTapRegion(
+          child: _PinnedSearches(
+            width: math.max(widget.width, 280.0),
+            pins: pins,
+            onPick: _pick,
+            onRemove: (pin) => state.unpinSearch(pin.query),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 34,
-      child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        onChanged: state.setQuery,
-        textInputAction: TextInputAction.search,
-        style: const TextStyle(fontSize: 13.5),
-        cursorColor: Palette.accent,
-        decoration: InputDecoration(
-          isDense: true,
-          hintText: 'Search prompts, models, names',
-          hintStyle: const TextStyle(color: Palette.faint, fontSize: 13.5),
-          prefixIcon: const Icon(Icons.search, size: 17, color: Palette.faint),
-          prefixIconConstraints: const BoxConstraints(minWidth: 34),
-          suffixIcon: state.query.isEmpty
-              ? null
-              : InkResponse(
-                  radius: 14,
-                  onTap: () {
-                    controller.clear();
-                    state.setQuery('');
-                  },
-                  child: const Icon(
-                    Icons.close,
-                    size: 16,
-                    color: Palette.muted,
-                  ),
-                ),
-          suffixIconConstraints: const BoxConstraints(minWidth: 30),
-          filled: true,
-          fillColor: Palette.raised,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 9,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: Palette.accent, width: 1),
+    final query = state.query;
+    final pinned = state.isSearchPinned(query);
+    return CompositedTransformTarget(
+      link: _link,
+      child: OverlayPortal(
+        controller: _pins,
+        overlayChildBuilder: _buildPins,
+        child: SizedBox(
+          height: 34,
+          child: TextField(
+            controller: state.searchText,
+            focusNode: state.searchFocus,
+            onChanged: (text) {
+              _edited = true;
+              state.setQuery(text);
+            },
+            textInputAction: TextInputAction.search,
+            style: const TextStyle(fontSize: 13.5),
+            cursorColor: Palette.accent,
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Search prompts, models, names',
+              hintStyle: const TextStyle(color: Palette.faint, fontSize: 13.5),
+              prefixIcon: const Icon(
+                Icons.search,
+                size: 17,
+                color: Palette.faint,
+              ),
+              prefixIconConstraints: const BoxConstraints(minWidth: 34),
+              suffixIcon: query.trim().isEmpty
+                  ? null
+                  : Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _FieldButton(
+                            icon: pinned
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                            color: pinned ? Palette.accent : Palette.faint,
+                            tooltip: pinned
+                                ? 'Unpin this search'
+                                : 'Pin this search',
+                            onTap: () => pinned
+                                ? state.unpinSearch(query)
+                                : state.pinSearch(query),
+                          ),
+                          _FieldButton(
+                            icon: Icons.close,
+                            tooltip: 'Clear search',
+                            onTap: () {
+                              state.searchText.clear();
+                              state.setQuery('');
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+              suffixIconConstraints: const BoxConstraints(minWidth: 30),
+              filled: true,
+              fillColor: Palette.raised,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 9,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: Palette.accent, width: 1),
+              ),
+            ),
           ),
         ),
       ),
@@ -315,9 +430,139 @@ class _SearchField extends StatelessWidget {
   }
 }
 
+/// A small icon button inside the search box.
+class _FieldButton extends StatelessWidget {
+  const _FieldButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.color = Palette.muted,
+  });
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkResponse(
+        radius: 14,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+          child: Icon(icon, size: 16, color: color),
+        ),
+      ),
+    );
+  }
+}
+
+/// The list of pinned searches that hangs under the search box.
+class _PinnedSearches extends StatelessWidget {
+  const _PinnedSearches({
+    required this.width,
+    required this.pins,
+    required this.onPick,
+    required this.onRemove,
+  });
+  final double width;
+  final List<PinnedSearch> pins;
+  final ValueChanged<PinnedSearch> onPick;
+  final ValueChanged<PinnedSearch> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    // Never takes the keyboard focus: that stays in the search box.
+    return ExcludeFocus(
+      child: Material(
+        key: const ValueKey<String>('pinned-searches'),
+        color: Palette.raised,
+        elevation: 6,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Palette.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: width, maxHeight: 332),
+          child: SizedBox(
+            width: width,
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              children: [
+                for (final pin in pins)
+                  _PinnedSearchRow(
+                    pin: pin,
+                    onPick: () => onPick(pin),
+                    onRemove: () => onRemove(pin),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PinnedSearchRow extends StatelessWidget {
+  const _PinnedSearchRow({
+    required this.pin,
+    required this.onPick,
+    required this.onRemove,
+  });
+  final PinnedSearch pin;
+  final VoidCallback onPick;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onPick,
+      hoverColor: Palette.hover,
+      child: SizedBox(
+        height: 36,
+        child: Row(
+          children: [
+            const SizedBox(width: 10),
+            const Icon(Icons.push_pin, size: 14, color: Palette.faint),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                pin.query,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: Palette.text),
+              ),
+            ),
+            Tooltip(
+              message: 'Remove from pinned searches',
+              child: InkResponse(
+                radius: 16,
+                onTap: onRemove,
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(Icons.close, size: 15, color: Palette.muted),
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SortMenu extends StatelessWidget {
-  const _SortMenu({required this.state});
+  const _SortMenu({required this.state, required this.withStats});
   final AppState state;
+
+  /// Where the bar has no room for a usage button, the menu offers it.
+  final bool withStats;
 
   static const Map<String, String> _labels = {
     'newest': 'Newest first',
@@ -335,6 +580,8 @@ class _SortMenu extends StatelessWidget {
       onSelected: (value) {
         if (value == '_rescan') {
           state.rescan();
+        } else if (value == '_stats') {
+          openStats(context, state);
         } else {
           state.setSort(value);
         }
@@ -370,6 +617,20 @@ class _SortMenu extends StatelessWidget {
             ],
           ),
         ),
+        if (withStats && state.folder != null)
+          const PopupMenuItem<String>(
+            value: '_stats',
+            height: 36,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: Icon(Icons.bar_chart, size: 16, color: Palette.muted),
+                ),
+                Text('Usage stats'),
+              ],
+            ),
+          ),
       ],
       child: const SizedBox(
         width: 36,

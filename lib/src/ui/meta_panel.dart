@@ -4,29 +4,46 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../theme.dart';
+import 'context_menu.dart';
 
-/// Copy [text] and say so briefly.
-void copyText(BuildContext context, String text, String what) {
-  Clipboard.setData(ClipboardData(text: text));
+/// Say something briefly at the foot of the window.
+void toast(BuildContext context, String message) {
   final messenger = ScaffoldMessenger.maybeOf(context);
   if (messenger == null) return;
   messenger
     ..hideCurrentSnackBar()
     ..showSnackBar(
       SnackBar(
-        content: Text('Copied $what'),
+        content: Text(message),
         duration: const Duration(milliseconds: 1100),
         width: 260,
       ),
     );
 }
 
+/// Copy [text] and say so briefly.
+void copyText(BuildContext context, String text, String what) {
+  Clipboard.setData(ClipboardData(text: text));
+  toast(context, 'Copied $what');
+}
+
+/// The search field a setting can be filtered by exactly, if it has one.
+String? _settingField(String name) => switch (name.toLowerCase()) {
+  'steps' => 'steps',
+  'cfg' || 'cfg scale' => 'cfg',
+  'sampler' => 'sampler',
+  'scheduler' => 'scheduler',
+  _ => null,
+};
+
 /// From this width a panel that is wider than it is tall lays its sections
 /// out in two columns.
 const double _twoColumnWidth = 640;
 
 /// How the selected image was made. Every value is a tap target that copies
-/// itself. Sits beside the content, or under it in a portrait window.
+/// itself; a right click or a press-and-hold on the seed, a model, a LoRA or
+/// a sampler setting offers to show only the images that share it. Sits
+/// beside the content, or under it in a portrait window.
 class MetaPanel extends StatefulWidget {
   const MetaPanel({super.key, required this.state});
   final AppState state;
@@ -95,6 +112,14 @@ class _MetaPanelState extends State<MetaPanel> {
         );
   }
 
+  /// Offer to narrow the grid to the images that match [query].
+  Future<void> _offerFilter(Offset position, String label, String query) async {
+    final choice = await showContextMenu<bool>(context, position, [
+      MenuEntry(true, label, Icons.filter_alt_outlined),
+    ]);
+    if (choice == true) widget.state.applyFilter(query);
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.state.selected;
@@ -143,15 +168,40 @@ class _MetaPanelState extends State<MetaPanel> {
           child: Column(
             children: [
               if (info.seed.isNotEmpty)
-                _Field(name: 'Seed', value: info.seed, mono: true),
+                _Field(
+                  name: 'Seed',
+                  value: info.seed,
+                  mono: true,
+                  onMenu: (at) => _offerFilter(
+                    at,
+                    'Show only images with this seed',
+                    exactTerm('seed', info.seed),
+                  ),
+                ),
               if (info.model.isNotEmpty)
-                _Field(name: 'Model', value: info.model),
+                _Field(
+                  name: 'Model',
+                  value: info.model,
+                  onMenu: (at) => _offerFilter(
+                    at,
+                    'Show only images made with this model',
+                    exactTerm('model', info.model),
+                  ),
+                ),
             ],
           ),
         ),
       if (info.loras.isNotEmpty)
         _Section(
           label: 'LoRAs',
+          // Every LoRA listed here, at whatever strength.
+          onMenu: (at) => _offerFilter(
+            at,
+            info.loras.length == 1
+                ? 'Show only images using this LoRA'
+                : 'Show only images using all ${info.loras.length} of these LoRAs',
+            info.loras.map((l) => exactTerm('lora', l.name)).join(' '),
+          ),
           action: _SectionAction(
             label: 'Copy as tags',
             onTap: () => copyText(
@@ -173,6 +223,11 @@ class _MetaPanelState extends State<MetaPanel> {
                   copyValue: l.name,
                   what: 'LoRA name',
                   nameIsValue: true,
+                  onMenu: (at) => _offerFilter(
+                    at,
+                    'Show only images using this LoRA',
+                    exactTerm('lora', l.name),
+                  ),
                 ),
             ],
           ),
@@ -184,7 +239,15 @@ class _MetaPanelState extends State<MetaPanel> {
             children: [
               for (final m in info.models)
                 if (m.name != info.model)
-                  _Field(name: GenInfo.kindLabel(m.kind), value: m.name),
+                  _Field(
+                    name: GenInfo.kindLabel(m.kind),
+                    value: m.name,
+                    onMenu: (at) => _offerFilter(
+                      at,
+                      'Show only images made with this model',
+                      exactTerm('model', m.name),
+                    ),
+                  ),
             ],
           ),
         ),
@@ -193,7 +256,19 @@ class _MetaPanelState extends State<MetaPanel> {
           label: 'Settings',
           child: Column(
             children: [
-              for (final p in info.params) _Field(name: p.key, value: p.value),
+              for (final p in info.params)
+                _Field(
+                  name: p.key,
+                  value: p.value,
+                  onMenu: switch (_settingField(p.key)) {
+                    final field? => (at) => _offerFilter(
+                      at,
+                      'Show only images with this setting',
+                      exactTerm(field, p.value),
+                    ),
+                    null => null,
+                  },
+                ),
             ],
           ),
         ),
@@ -375,28 +450,50 @@ class _SectionAction {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.label, required this.child, this.action});
+  const _Section({
+    required this.label,
+    required this.child,
+    this.action,
+    this.onMenu,
+  });
   final String label;
   final Widget child;
   final _SectionAction? action;
 
+  /// Called with where the pointer was when the heading is right-clicked or
+  /// pressed and held.
+  final ValueChanged<Offset>? onMenu;
+
   @override
   Widget build(BuildContext context) {
+    final menu = onMenu;
+    final heading = Text(
+      label.toUpperCase(),
+      style: const TextStyle(
+        fontSize: 10.5,
+        letterSpacing: 0.9,
+        fontWeight: FontWeight.w600,
+        color: Palette.faint,
+      ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
             Expanded(
-              child: Text(
-                label.toUpperCase(),
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  letterSpacing: 0.9,
-                  fontWeight: FontWeight.w600,
-                  color: Palette.faint,
-                ),
-              ),
+              child: menu == null
+                  ? heading
+                  : GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onSecondaryTapUp: (d) => menu(d.globalPosition),
+                      onLongPressStart: (d) => menu(d.globalPosition),
+                      // Tall enough to press with a finger.
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: heading,
+                      ),
+                    ),
             ),
             if (action != null)
               _Tappable(
@@ -408,7 +505,7 @@ class _Section extends StatelessWidget {
               ),
           ],
         ),
-        const SizedBox(height: 6),
+        SizedBox(height: menu == null ? 6 : 2),
         child,
       ],
     );
@@ -421,21 +518,33 @@ class _Tappable extends StatelessWidget {
     required this.onTap,
     required this.child,
     this.padding = EdgeInsets.zero,
+    this.onMenu,
   });
   final VoidCallback onTap;
   final Widget child;
   final EdgeInsets padding;
 
+  /// Called with where the pointer was on a right click or a long press.
+  final ValueChanged<Offset>? onMenu;
+
   @override
   Widget build(BuildContext context) {
+    final menu = onMenu;
+    final ink = InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(5),
+      hoverColor: Palette.hover,
+      child: Padding(padding: padding, child: child),
+    );
     return Material(
       type: MaterialType.transparency,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(5),
-        hoverColor: Palette.hover,
-        child: Padding(padding: padding, child: child),
-      ),
+      child: menu == null
+          ? ink
+          : GestureDetector(
+              onSecondaryTapUp: (d) => menu(d.globalPosition),
+              onLongPressStart: (d) => menu(d.globalPosition),
+              child: ink,
+            ),
     );
   }
 }
@@ -489,12 +598,16 @@ class _Field extends StatelessWidget {
     this.what,
     this.mono = false,
     this.nameIsValue = false,
+    this.onMenu,
   });
 
   final String name;
   final String value;
   final String? copyValue;
   final String? what;
+
+  /// Called with where the pointer was on a right click or a long press.
+  final ValueChanged<Offset>? onMenu;
 
   /// Fixed-width digits, for long numbers.
   final bool mono;
@@ -518,6 +631,7 @@ class _Field extends StatelessWidget {
     return _Tappable(
       onTap: () =>
           copyText(context, copyValue ?? value, what ?? name.toLowerCase()),
+      onMenu: onMenu,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
