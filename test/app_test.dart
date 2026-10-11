@@ -6,9 +6,10 @@
 // Set GV_SCREENSHOT_DIR to save a PNG of each stage.
 
 import 'dart:io';
+import 'dart:math' as math;
 
 // ignore: unnecessary_import
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +21,7 @@ import 'package:generativeview/src/ui/focus_view.dart';
 import 'package:generativeview/src/ui/folder_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/meta_panel.dart';
+import 'package:generativeview/src/ui/stats_page.dart';
 import 'package:generativeview/src/ui/thumb_image.dart';
 import 'package:generativeview/src/ui/top_bar.dart';
 
@@ -192,6 +194,22 @@ void main() {
 
   Finder inBar(String text) =>
       find.descendant(of: find.byType(TopBar), matching: find.text(text));
+
+  /// What the zoom chips of the pages in the focus view read.
+  List<String> zoomLabels(WidgetTester tester) => [
+    for (final chip in tester.widgetList<ZoomChip>(find.byType(ZoomChip)))
+      chip.label,
+  ];
+
+  /// Whichever folder or search pins an earlier test (or run) left behind.
+  void clearPins(AppState state) {
+    for (final pin in [...state.pinnedSearches]) {
+      state.unpinSearch(pin.query);
+    }
+    for (final path in [...state.pinnedFolders]) {
+      state.toggleFolderPin(path);
+    }
+  }
 
   bool fullImageShown(WidgetTester tester) => tester
       .widgetList<RawImage>(
@@ -367,24 +385,17 @@ void main() {
     await screenshot(tester, boundary, '04-focus');
 
     // ---- the wheel zooms, and only zooms -----------------------------------
-    double zoom() => tester
-        .widgetList<InteractiveViewer>(find.byType(InteractiveViewer))
-        .map((v) => v.transformationController!.value.getMaxScaleOnAxis())
-        .reduce((a, b) => a > b ? a : b);
     final mouse = TestPointer(1, PointerDeviceKind.mouse);
     final middle = tester.getCenter(find.byType(FocusView));
     await tester.sendEventToBinding(mouse.hover(middle));
-    expect(zoom(), closeTo(1, 0.001));
+    final fitted = zoomLabels(tester);
     await tester.sendEventToBinding(mouse.scroll(const Offset(0, -120)));
     await tester.pump();
-    expect(zoom(), greaterThan(1.3), reason: 'wheel up zooms in');
+    expect(zoomLabels(tester), isNot(fitted), reason: 'wheel up zooms in');
     expect(state.selectedIndex, 8, reason: 'wheel up does not change image');
-    // Wheel down zooms back out; once fully out it does nothing more.
-    for (var i = 0; i < 4; i++) {
-      await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
-      await tester.pump();
-    }
-    expect(zoom(), closeTo(1, 0.001));
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
+    await tester.pump();
+    expect(zoomLabels(tester), fitted, reason: 'wheel down zooms back out');
     expect(state.selectedIndex, 8, reason: 'wheel down does not change image');
     expect(state.mode, ViewMode.focus);
 
@@ -724,6 +735,697 @@ void main() {
     expect(gridScroll().pixels, greaterThan(0));
     expect(gridScroll().pixels, closeTo(gridScroll().maxScrollExtent, 0.5));
 
+    await close(tester, state);
+  });
+
+  testWidgets('searches can be pinned and picked from under the search box', (
+    tester,
+  ) async {
+    var state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    clearPins(state);
+    final pins = find.byKey(const ValueKey<String>('pinned-searches'));
+    Finder pinned(String query) =>
+        find.descendant(of: pins, matching: find.text(query));
+
+    // ---- nothing pinned: no list, and nothing to pin in an empty box --------
+    await tester.tap(search);
+    await tester.pump();
+    expect(pins, findsNothing);
+    expect(find.byTooltip('Pin this search'), findsNothing);
+
+    // ---- type a search, and the pin beside the X keeps it -------------------
+    await tester.enterText(search, 'lighthouse');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the search');
+    expect(find.byTooltip('Clear search'), findsOneWidget);
+    await tester.tap(find.byTooltip('Pin this search'));
+    await tester.pump();
+    expect(state.pinnedSearches.map((p) => p.query), ['lighthouse']);
+    expect(find.byTooltip('Pin this search'), findsNothing);
+    expect(find.byTooltip('Unpin this search'), findsOneWidget);
+    expect(pinned('lighthouse'), findsOneWidget);
+
+    await tester.enterText(search, 'model:juggernaut');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the search');
+    // Typing narrows the list to the pins that contain what was typed.
+    expect(pins, findsNothing);
+    await tester.tap(find.byTooltip('Pin this search'));
+    await tester.pump();
+    expect(state.pinnedSearches.map((p) => p.query), [
+      'lighthouse',
+      'model:juggernaut',
+    ]);
+
+    // ---- an empty box offers them all; picking one runs it ------------------
+    await tester.tap(find.byTooltip('Clear search'));
+    await pumpUntil(tester, () => state.items.length == 9, what: 'everything');
+    expect(pinned('lighthouse'), findsOneWidget);
+    expect(pinned('model:juggernaut'), findsOneWidget);
+    // Under the box, and no narrower than it.
+    expect(
+      tester.getRect(pins).top,
+      greaterThanOrEqualTo(tester.getRect(search).bottom),
+    );
+    expect(tester.getRect(pins).left, closeTo(tester.getRect(search).left, 1));
+    await screenshot(tester, boundary, '12-pinned-searches');
+
+    await tester.tap(pinned('lighthouse'));
+    await pumpUntil(
+      tester,
+      () => state.items.length == 2 && state.query == 'lighthouse',
+      what: 'the pinned search to run',
+    );
+    expect(state.searchText.text, 'lighthouse');
+    expect(state.searchFocus.hasFocus, isFalse);
+    expect(pins, findsNothing);
+
+    // ---- clicking in the box brings the list back, whatever is in it --------
+    await tester.tap(search);
+    await tester.pump();
+    expect(pinned('lighthouse'), findsOneWidget);
+    expect(pinned('model:juggernaut'), findsOneWidget);
+    await tester.tap(pinned('model:juggernaut'));
+    await pumpUntil(
+      tester,
+      () => state.items.length == 2 && state.items[0].dir.endsWith('portraits'),
+      what: 'the other pinned search to run',
+    );
+
+    // ---- pins outlive the app ------------------------------------------------
+    await close(tester, state);
+    state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    expect(state.pinnedSearches.map((p) => p.query), [
+      'lighthouse',
+      'model:juggernaut',
+    ]);
+
+    // ---- the X on a pin removes it; the pin in the box does too -------------
+    await tester.tap(search);
+    await tester.pump();
+    await tester.tap(
+      find.descendant(
+        of: pins,
+        matching: find.byTooltip('Remove from pinned searches'),
+      ).first,
+    );
+    await tester.pump();
+    expect(state.pinnedSearches.map((p) => p.query), ['model:juggernaut']);
+    expect(pinned('lighthouse'), findsNothing);
+    expect(pinned('model:juggernaut'), findsOneWidget);
+
+    await tester.tap(pinned('model:juggernaut'));
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the search');
+    await tester.tap(find.byTooltip('Unpin this search'));
+    await tester.pump();
+    expect(state.pinnedSearches, isEmpty);
+    expect(find.byTooltip('Pin this search'), findsOneWidget);
+
+    state.applySearch('');
+    await close(tester, state);
+  });
+
+  testWidgets('folders can be pinned to the top of the folder panel', (
+    tester,
+  ) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    if (!state.leftOpen) state.toggleLeft();
+    if (!state.pinsOpen) state.togglePins();
+    clearPins(state);
+    await pumpUntil(
+      tester,
+      () => find.text('portraits').evaluate().isNotEmpty,
+      what: 'the sub-folder row',
+    );
+    final portraits = '${library.path}/portraits';
+    final section = find.byKey(const ValueKey<String>('pinned-folders'));
+    Finder inSection(String text) =>
+        find.descendant(of: section, matching: find.text(text));
+    final tree = find.descendant(
+      of: find.byType(FolderPanel),
+      matching: find.byType(Scrollable),
+    );
+    final goTo = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'Go to folder path…',
+    );
+
+    // ---- always there, under the path box and above the tree ----------------
+    expect(inSection('PINNED'), findsOneWidget);
+    expect(find.textContaining('to pin it here'), findsOneWidget);
+    expect(
+      tester.getRect(section).top,
+      greaterThanOrEqualTo(tester.getRect(goTo).bottom),
+    );
+    expect(
+      tester.getRect(section).bottom,
+      lessThanOrEqualTo(tester.getRect(tree.last).top),
+    );
+    expect(find.byIcon(pinnedFolderIcon), findsNothing);
+
+    // ---- right-click a folder to pin it -------------------------------------
+    await tester.tap(find.text('portraits'), buttons: kSecondaryButton);
+    await settle(tester);
+    expect(find.text('Unpin this folder'), findsNothing);
+    await tester.tap(find.text('Pin this folder'));
+    await settle(tester);
+    expect(state.pinnedFolders, [portraits]);
+    expect(inSection('portraits'), findsOneWidget);
+    expect(find.textContaining('to pin it here'), findsNothing);
+    // The blue folder marks it in the section and in the tree alike.
+    final marks = tester.widgetList<Icon>(find.byIcon(pinnedFolderIcon));
+    expect(marks, hasLength(2));
+    expect(marks.every((icon) => icon.color == const Color(0xFF7AA2F7)), isTrue);
+    await screenshot(tester, boundary, '13-pinned-folders');
+
+    // ---- one tap goes there --------------------------------------------------
+    await tester.tap(inSection('portraits'));
+    await pumpUntil(
+      tester,
+      () => state.folder == portraits && state.items.length == 2,
+      what: 'the pinned folder to open',
+    );
+
+    // ---- the section folds away, heading and all else staying put -----------
+    await tester.tap(inSection('PINNED'));
+    await tester.pump();
+    expect(state.pinsOpen, isFalse);
+    expect(inSection('PINNED'), findsOneWidget);
+    expect(inSection('portraits'), findsNothing);
+    await tester.tap(inSection('PINNED'));
+    await tester.pump();
+    expect(inSection('portraits'), findsOneWidget);
+
+    // ---- press and hold to unpin --------------------------------------------
+    await tester.longPress(inSection('portraits'));
+    await settle(tester);
+    expect(find.text('Pin this folder'), findsNothing);
+    await tester.tap(find.text('Unpin this folder'));
+    await settle(tester);
+    expect(state.pinnedFolders, isEmpty);
+    expect(find.byIcon(pinnedFolderIcon), findsNothing);
+    expect(state.folder, portraits, reason: 'unpinning opens nothing');
+
+    await close(tester, state);
+  });
+
+  testWidgets('the metadata panel filters the grid by what an image used', (
+    tester,
+  ) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    if (!state.rightOpen) state.toggleRight();
+    const inkwash = 'style/inkwash_v2.safetensors';
+    const detail = 'detail_xl.safetensors';
+    // Two more images that share two LoRAs, at different strengths.
+    final extras = [
+      File('${library.path}/both_strong.png')..writeAsBytesSync(
+        pngWithText(384, 384, 71, {
+          'prompt': comfyGraph(
+            prompt: 'a tin robot watering ferns',
+            seed: 71,
+            loras: [inkwash, detail],
+          ),
+        }),
+      ),
+      File('${library.path}/both_faint.png')..writeAsBytesSync(
+        pngWithText(384, 384, 72, {
+          'prompt': comfyGraph(
+            prompt: 'a tin robot asleep',
+            seed: 72,
+            checkpoint: 'sd_xl_base_1.0.safetensors',
+            loras: [detail, inkwash],
+            strength: 0.35,
+          ),
+        }),
+      ),
+    ];
+    await pumpUntil(tester, () => state.items.length == 11, what: 'the extras');
+
+    final panel = find.byType(MetaPanel);
+    Finder inPanel(String text) =>
+        find.descendant(of: panel, matching: find.text(text));
+    List<String> shown() => [
+      for (var i = 0; i < state.items.length; i++) state.items[i].name,
+    ]..sort();
+    Future<void> pick(String name, String prompt) async {
+      state.applySearch('');
+      await pumpUntil(tester, () => state.items.length == 11, what: 'all');
+      state.select(
+        List.generate(11, (i) => state.items[i].name).indexOf(name),
+      );
+      await pumpUntil(
+        tester,
+        () => inPanel(prompt).evaluate().isNotEmpty,
+        what: 'the metadata of $prompt',
+      );
+    }
+
+    Future<void> choose(String label) async {
+      await settle(tester);
+      expect(find.text(label), findsOneWidget);
+      await tester.tap(find.text(label));
+      await settle(tester);
+    }
+
+    // ---- press and hold the model -------------------------------------------
+    await pick('ComfyUI_00001_.png', lighthouse);
+    await tester.longPress(inPanel('flux1-dev.safetensors'));
+    await choose('Show only images made with this model');
+    await pumpUntil(tester, () => state.items.length == 4, what: 'one model');
+    expect(state.searchText.text, 'model:=flux1-dev.safetensors');
+    expect(shown(), [
+      'ComfyUI_00001_.png',
+      'ComfyUI_00002_.png',
+      'ComfyUI_00004_.png',
+      'both_strong.png',
+    ]);
+    // The image it came from is still the selected one.
+    expect(state.selected?.name, 'ComfyUI_00001_.png');
+    expect(inBar('4 matches'), findsOneWidget);
+
+    // ---- right-click the seed ------------------------------------------------
+    await tester.tap(inPanel('219670278747233'), buttons: kSecondaryButton);
+    await choose('Show only images with this seed');
+    await pumpUntil(tester, () => state.items.length == 1, what: 'one seed');
+    expect(state.searchText.text, 'seed:=219670278747233');
+
+    // ---- "LoRAs": every image that uses all of them, at any strength --------
+    await pick('both_strong.png', 'a tin robot watering ferns');
+    await tester.longPress(inPanel('LORAS'));
+    await choose('Show only images using all 2 of these LoRAs');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'both LoRAs');
+    expect(state.searchText.text.split(' ').toSet(), {
+      'lora:=$inkwash',
+      'lora:=$detail',
+    });
+    expect(shown(), ['both_faint.png', 'both_strong.png']);
+    await screenshot(tester, boundary, '14-filtered-by-loras');
+
+    // ---- one LoRA: every image that uses that one ---------------------------
+    await tester.longPress(inPanel(inkwash));
+    await choose('Show only images using this LoRA');
+    await pumpUntil(tester, () => state.items.length == 3, what: 'one LoRA');
+    expect(state.searchText.text, 'lora:=$inkwash');
+    expect(shown(), [
+      'ComfyUI_00001_.png',
+      'both_faint.png',
+      'both_strong.png',
+    ]);
+
+    // With a single LoRA the heading offers the same thing.
+    await pick('ComfyUI_00001_.png', lighthouse);
+    await tester.longPress(inPanel('LORAS'));
+    await choose('Show only images using this LoRA');
+    await pumpUntil(tester, () => state.items.length == 3, what: 'one LoRA');
+
+    // ---- a setting ------------------------------------------------------------
+    await tester.longPress(inPanel('dpmpp_2m'));
+    await choose('Show only images with this setting');
+    await pumpUntil(tester, () => state.items.length == 6, what: 'a sampler');
+    expect(state.searchText.text, 'sampler:=dpmpp_2m');
+
+    // ---- from the focus view, filtering comes back to the grid --------------
+    await pick('ComfyUI_00001_.png', lighthouse);
+    state.openFocus();
+    await tester.pump();
+    expect(state.mode, ViewMode.focus);
+    await tester.longPress(inPanel('flux1-dev.safetensors'));
+    await choose('Show only images made with this model');
+    await pumpUntil(tester, () => state.items.length == 4, what: 'one model');
+    expect(state.mode, ViewMode.grid);
+    expect(state.selected?.name, 'ComfyUI_00001_.png');
+
+    // A tap still just copies.
+    final copied = captureClipboard(tester);
+    await tester.tap(inPanel('flux1-dev.safetensors'));
+    await tester.pump();
+    expect(copied.last, 'flux1-dev.safetensors');
+    expect(state.searchText.text, 'model:=flux1-dev.safetensors');
+
+    for (final file in extras) {
+      file.deleteSync();
+    }
+    state.applySearch('');
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the nine');
+    await close(tester, state);
+  });
+
+  testWidgets('usage stats count what a folder was made with, and filter by it', (
+    tester,
+  ) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+
+    // The grid stays alive under the page, so look for things on the page.
+    Finder onPage(String text) => find.descendant(
+      of: find.byType(StatsPage),
+      matching: find.text(text),
+    );
+
+    Future<void> open() async {
+      await tester.tap(find.byTooltip('Usage stats'));
+      await pumpUntil(
+        tester,
+        () => onPage('MODELS').evaluate().isNotEmpty,
+        what: 'the usage page',
+      );
+      await settle(tester);
+    }
+
+    Future<void> closed() => pumpUntil(
+      tester,
+      () => find.byType(StatsPage).evaluate().isEmpty,
+      what: 'the usage page to close',
+    );
+
+    /// The count shown beside [label] on the page.
+    String countOf(String label) {
+      final row = find.ancestor(
+        of: onPage(label),
+        matching: find.byType(InkWell),
+      );
+      final texts = tester.widgetList<Text>(
+        find.descendant(of: row.first, matching: find.byType(Text)),
+      );
+      return texts.last.data!;
+    }
+
+    await open();
+    expect(
+      onPage('9 images  ·  8 with generation data  ·  sub-folders included'),
+      findsOneWidget,
+    );
+    // Most used first, under each heading.
+    expect(countOf('flux1-dev.safetensors'), '3');
+    expect(countOf('Juggernaut XL v9'), '2');
+    expect(countOf('sd_xl_base_1.0'), '2');
+    expect(countOf('sd_xl_base_1.0.safetensors'), '1');
+    expect(
+      tester.getTopLeft(onPage('flux1-dev.safetensors')).dy,
+      lessThan(tester.getTopLeft(onPage('Juggernaut XL v9')).dy),
+    );
+    expect(onPage('LORAS'), findsOneWidget);
+    expect(countOf('cutaway-diagram-xl'), '2');
+    expect(countOf('impasto'), '1');
+    expect(countOf('style/inkwash_v2.safetensors'), '1');
+    expect(onPage('MADE WITH'), findsOneWidget);
+    expect(countOf('ComfyUI'), '4');
+    expect(countOf('A1111'), '2');
+    expect(countOf('InvokeAI'), '2');
+    expect(onPage('PROMPT WORDS'), findsOneWidget);
+    expect(countOf('lighthouse'), '2');
+    expect(onPage('IMAGES PER DAY'), findsOneWidget);
+    await screenshot(tester, boundary, '15-usage');
+
+    // ---- tap a model: back at the grid, with only its images ----------------
+    await tester.tap(onPage('Juggernaut XL v9'));
+    await closed();
+    await pumpUntil(tester, () => state.items.length == 2, what: 'one model');
+    expect(state.searchText.text, 'model:="Juggernaut XL v9"');
+    expect(state.items[0].dir, endsWith('portraits'));
+    expect(inBar('2 matches'), findsOneWidget);
+
+    // ---- a LoRA, a tool, a prompt word, a day --------------------------------
+    await open();
+    await tester.tap(onPage('impasto'));
+    await closed();
+    await pumpUntil(tester, () => state.items.length == 1, what: 'one LoRA');
+    expect(state.searchText.text, 'lora:=impasto');
+    expect(state.items[0].name, '00012-3958203417.png');
+
+    await open();
+    await tester.tap(onPage('ComfyUI'));
+    await closed();
+    await pumpUntil(tester, () => state.items.length == 4, what: 'one tool');
+    expect(state.searchText.text, 'source:comfyui');
+
+    await open();
+    await tester.ensureVisible(onPage('lighthouse'));
+    await tester.pump();
+    await tester.tap(onPage('lighthouse'));
+    await closed();
+    await pumpUntil(tester, () => state.items.length == 2, what: 'one word');
+    expect(state.searchText.text, 'prompt:=lighthouse');
+
+    await open();
+    await tester.tap(find.byTooltip('2026-10-01  ·  9 images'));
+    await closed();
+    await pumpUntil(tester, () => state.items.length == 9, what: 'one day');
+    expect(state.searchText.text, 'date:2026-10-01');
+
+    // ---- Esc and the arrow leave without changing anything -------------------
+    await open();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await closed();
+    await open();
+    await tester.tap(find.byTooltip('Back to the grid (Esc)'));
+    await closed();
+    expect(state.searchText.text, 'date:2026-10-01');
+
+    state.applySearch('');
+    await close(tester, state);
+  });
+
+  testWidgets('an image copies, metadata and all, from its menu', (
+    tester,
+  ) async {
+    final files = captureCopiedFiles(tester);
+    final copied = captureClipboard(tester);
+    final state = await launch(tester);
+    await pumpUntil(
+      tester,
+      () => state.items.length == 9 && tilesWithImages(tester) == 9,
+      what: '9 thumbnails',
+    );
+    final path = '${library.path}/ComfyUI_00001_.png';
+
+    // ---- press and hold a tile ------------------------------------------------
+    await tester.longPress(tiles().last);
+    await settle(tester);
+    expect(state.selected?.name, 'ComfyUI_00001_.png');
+    expect(find.text('Copy image'), findsOneWidget);
+    expect(find.text('Copy prompt'), findsOneWidget);
+    expect(find.text('Copy file path'), findsOneWidget);
+    await screenshot(tester, boundary, '16-image-menu');
+    await tester.tap(find.text('Copy image'));
+    await settle(tester);
+    // The file itself was handed over, not a picture of it.
+    expect(files, [path]);
+    expect(find.text('Copied image'), findsOneWidget);
+    expect(state.mode, ViewMode.grid);
+
+    // ---- right-click works the same, on any tile ------------------------------
+    await tester.tap(tiles().first, buttons: kSecondaryButton);
+    await settle(tester);
+    expect(state.selected?.name, 'plain-photo.png');
+    await tester.tap(find.text('Copy file path'));
+    await settle(tester);
+    expect(copied.last, '${library.path}/plain-photo.png');
+
+    await tester.tap(tiles().last, buttons: kSecondaryButton);
+    await settle(tester);
+    await tester.tap(find.text('Copy prompt'));
+    await pumpUntil(tester, () => copied.last == lighthouse, what: 'the prompt');
+
+    // ---- Ctrl+Shift+C copies the selected image -------------------------------
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await settle(tester);
+    expect(files, [path, path]);
+
+    // ---- and so does the menu in the focus view -------------------------------
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await pumpUntil(
+      tester,
+      () => fullImageShown(tester),
+      what: 'the full-size image',
+    );
+    await tester.longPress(find.byType(FocusView));
+    await settle(tester);
+    await tester.tap(find.text('Copy image'));
+    await settle(tester);
+    expect(files, [path, path, path]);
+    expect(state.mode, ViewMode.focus);
+
+    // ---- a file that cannot be copied says so ---------------------------------
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('generativeview/media'),
+      (call) async => false,
+    );
+    await tester.tap(find.byType(FocusView), buttons: kSecondaryButton);
+    await settle(tester);
+    await tester.tap(find.text('Copy image'));
+    // The toast before it has to leave first.
+    await pumpUntil(
+      tester,
+      () => find.text('Could not copy this image').evaluate().isNotEmpty,
+      what: 'being told the copy failed',
+    );
+
+    await tester.pump(const Duration(seconds: 2)); // let the toast go
+    await close(tester, state);
+  });
+
+  testWidgets('zoom moves in steps of ten percent and marks 100%', (
+    tester,
+  ) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    if (state.rightOpen) state.toggleRight();
+    // An image larger than the window, beside the small ones already there.
+    final large = File('${library.path}/large.png')
+      ..writeAsBytesSync(pngWithText(1400, 1400, 80, const {}));
+    await pumpUntil(tester, () => state.items.length == 10, what: 'the image');
+    int indexOf(String name) =>
+        List.generate(state.items.length, (i) => state.items[i].name)
+            .indexOf(name);
+
+    final mouse = TestPointer(1, PointerDeviceKind.mouse);
+    Future<void> wheel(double dy) async {
+      await tester.sendEventToBinding(mouse.scroll(Offset(0, dy)));
+      await tester.pump();
+    }
+
+    Future<Size> show(String name) async {
+      if (state.mode == ViewMode.focus) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+      }
+      state.openFocus(indexOf(name));
+      await pumpUntil(
+        tester,
+        () => fullImageShown(tester),
+        what: 'the full-size image',
+      );
+      await tester.sendEventToBinding(
+        mouse.hover(tester.getCenter(find.byType(FocusView))),
+      );
+      return tester.getSize(find.byType(FocusView));
+    }
+
+    // The chip of the page on screen (its neighbours have chips of their own).
+    ZoomChip chip() {
+      final view = tester.getRect(find.byType(FocusView));
+      final onScreen = find.byType(ZoomChip).evaluate().where((element) {
+        final at = tester.getCenter(find.byWidget(element.widget));
+        return view.contains(at);
+      });
+      return onScreen.single.widget as ZoomChip;
+    }
+
+    // ---- an image larger than the view: fitted, then up to and past 100% ----
+    var view = await show('large.png');
+    var fit = math.min(view.width, view.height) / 1400 * 100;
+    expect(fit, lessThan(100));
+    expect(chip().label, '${fit.round()}%');
+    expect(chip().highlighted, isFalse);
+    final above = (fit / 10).floor() * 10 + 10;
+    for (var percent = above; percent <= 120; percent += 10) {
+      await wheel(-120);
+      expect(chip().label, '$percent%');
+      // The coloured chip is for 100% alone.
+      expect(chip().highlighted, percent == 100, reason: '$percent%');
+    }
+    await screenshot(tester, boundary, '17-zoom-120');
+    await wheel(120);
+    await wheel(120);
+    expect(chip().label, '100%');
+    expect(chip().highlighted, isTrue);
+    await screenshot(tester, boundary, '18-zoom-100');
+    // It stays for as long as the image is at 100%.
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.byWidget(chip()),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      1,
+    );
+    // Back down: ten at a time, to the fitted size and no further.
+    for (var percent = 90; percent > fit; percent -= 10) {
+      await wheel(120);
+      expect(chip().label, '$percent%');
+    }
+    await wheel(120);
+    expect(chip().label, '${fit.round()}%');
+    await wheel(120);
+    expect(chip().label, '${fit.round()}%');
+    expect(state.items[state.selectedIndex].name, 'large.png');
+    // Away from 100% the chip fades once the zooming stops.
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.byWidget(chip()),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      0,
+    );
+
+    // ---- an image smaller than the view: fitted is above 100% ---------------
+    view = await show('ComfyUI_00001_.png');
+    fit = math.min(view.width, view.height) / 384 * 100;
+    expect(fit, greaterThan(200));
+    expect(chip().label, '${fit.round()}%');
+    final next = (fit / 10).floor() * 10 + 10;
+    await wheel(-120);
+    expect(chip().label, '$next%');
+    // Down again stops at the fitted size on the way...
+    await wheel(120);
+    expect(chip().label, '${fit.round()}%');
+    // ...and carries on to 100%, where it stops for good.
+    for (var percent = next - 10; percent >= 100; percent -= 10) {
+      await wheel(120);
+      expect(chip().label, '$percent%');
+    }
+    expect(chip().highlighted, isTrue);
+    await wheel(120);
+    expect(chip().label, '100%');
+
+    // ---- a pinch is free while it lasts, then settles on a multiple of ten --
+    final centre = tester.getCenter(find.byType(FocusView));
+    final one = await tester.startGesture(centre - const Offset(0, 40));
+    final two = await tester.startGesture(
+      centre + const Offset(0, 40),
+      pointer: 7,
+    );
+    await tester.pump();
+    for (var i = 0; i < 6; i++) {
+      await one.moveBy(const Offset(0, -9));
+      await two.moveBy(const Offset(0, 9));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final during = int.parse(chip().label.replaceAll('%', ''));
+    expect(during, greaterThan(110));
+    await one.up();
+    await two.up();
+    // Whatever glide follows the fingers, then the move to the nearest stop.
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    final after = int.parse(chip().label.replaceAll('%', ''));
+    expect(after, greaterThan(110));
+    expect(
+      after % 10 == 0 || after == fit.round(),
+      isTrue,
+      reason: 'settled on $after% from $during%',
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    large.deleteSync();
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the nine');
     await close(tester, state);
   });
 }

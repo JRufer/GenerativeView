@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app_state.dart';
-import 'meta_panel.dart';
+import 'image_menu.dart';
 
 /// Counts routes above the home page, so shortcuts can stand down while a
 /// menu or dialog is open.
@@ -85,7 +85,15 @@ class ShortcutLayer extends StatelessWidget {
       return KeyEventResult.handled;
     }
     if (ctrl && key == LogicalKeyboardKey.keyC) {
-      _copyPrompt(context);
+      // Ctrl+C copies the prompt; with Shift, the image itself.
+      final item = state.selected;
+      if (item != null) {
+        if (keyboard.isShiftPressed) {
+          copyImage(context, item);
+        } else {
+          copyPrompt(context, state, item);
+        }
+      }
       return KeyEventResult.handled;
     }
     if (ctrl &&
@@ -171,18 +179,6 @@ class ShortcutLayer extends StatelessWidget {
       return KeyEventResult.ignored;
     }
     return KeyEventResult.handled;
-  }
-
-  Future<void> _copyPrompt(BuildContext context) async {
-    final item = state.selected;
-    if (item == null) return;
-    try {
-      final info = await state.metadata(item);
-      if (!context.mounted || info.prompt.isEmpty) return;
-      copyText(context, info.prompt, 'prompt');
-    } catch (_) {
-      // Nothing to copy from a file we cannot read.
-    }
   }
 
   @override

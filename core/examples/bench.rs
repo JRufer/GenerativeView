@@ -65,6 +65,16 @@ fn main() {
     for term in &search {
         query(term);
     }
+    for term in ["model:=flux1-dev.safetensors", "lora:=detail_xl.safetensors steps:30", "prompt:=fox", "date:2025-08"] {
+        query(term);
+    }
+
+    let t = Instant::now();
+    let usage = engine.call("usage", &json!({ "dir": dir, "recursive": true })).unwrap();
+    let elapsed = t.elapsed();
+    let v: Value = serde_json::from_str(&usage).unwrap();
+    let values: usize = v["groups"].as_array().map_or(0, |g| g.iter().map(|x| x["distinct"].as_u64().unwrap_or(0) as usize).sum());
+    println!("usage       : {values} different values counted in {elapsed:.2?} ({} KB of JSON)", usage.len() / 1024);
 
     // Thumbnails: the first screenful or two, cold then cached.
     let rows = all["rows"].as_array().cloned().unwrap_or_default();

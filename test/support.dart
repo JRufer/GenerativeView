@@ -90,14 +90,20 @@ Uint8List pngWithText(
   return out.toBytes();
 }
 
-/// A minimal ComfyUI API-format graph.
+/// A minimal ComfyUI API-format graph. LoRAs ([lora], then [loras]) are
+/// chained between the checkpoint and the sampler, all at [strength].
 String comfyGraph({
   required String prompt,
   String negative = 'watermark, text',
   int seed = 1,
   String checkpoint = 'flux1-dev.safetensors',
   String? lora,
+  List<String> loras = const [],
+  double strength = 0.8,
 }) {
+  final chain = [?lora, ...loras];
+  // Node ids 10, 11, ...; each takes its model from the one before.
+  String loader(int index) => '${10 + index}';
   return jsonEncode({
     '3': {
       'class_type': 'KSampler',
@@ -108,7 +114,7 @@ String comfyGraph({
         'sampler_name': 'dpmpp_2m',
         'scheduler': 'karras',
         'denoise': 1,
-        'model': [lora == null ? '4' : '10', 0],
+        'model': [chain.isEmpty ? '4' : loader(chain.length - 1), 0],
         'positive': ['6', 0],
         'negative': ['7', 0],
         'latent_image': ['5', 0],
@@ -136,14 +142,14 @@ String comfyGraph({
         'clip': ['4', 1],
       },
     },
-    if (lora != null)
-      '10': {
+    for (final (index, name) in chain.indexed)
+      loader(index): {
         'class_type': 'LoraLoader',
         'inputs': {
-          'lora_name': lora,
-          'strength_model': 0.8,
-          'strength_clip': 0.8,
-          'model': ['4', 0],
+          'lora_name': name,
+          'strength_model': strength,
+          'strength_clip': strength,
+          'model': [index == 0 ? '4' : loader(index - 1), 0],
           'clip': ['4', 1],
         },
       },
@@ -272,4 +278,31 @@ List<String> captureClipboard(WidgetTester tester) {
     },
   );
   return copied;
+}
+
+/// Capture "copy this file" requests instead of touching a real clipboard:
+/// the paths asked for, in order.
+List<String> captureCopiedFiles(WidgetTester tester) {
+  const channel = MethodChannel('generativeview/media');
+  final copied = <String>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+    call,
+  ) async {
+    if (call.method != 'copyFile') return null;
+    copied.add((call.arguments as Map)['path'] as String);
+    return true;
+  });
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      null,
+    ),
+  );
+  return copied;
+}
+
+/// Let a menu, a page or a toast finish coming or going.
+Future<void> settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 450));
 }

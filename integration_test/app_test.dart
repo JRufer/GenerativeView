@@ -11,9 +11,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart' as app;
+import 'package:generativeview/src/platform.dart';
 import 'package:generativeview/src/ui/focus_view.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/meta_panel.dart';
+import 'package:generativeview/src/ui/stats_page.dart';
 import 'package:generativeview/src/ui/video_page.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -55,6 +57,17 @@ Future<void> shot(WidgetTester tester, String name) async {
   }
   Directory(dir).createSync(recursive: true);
   await Process.run('import', ['-window', 'root', '$dir/$name.png']);
+}
+
+/// What another program gets when it pastes the clipboard as [type], or null
+/// where there is no way to ask (no `xclip` on this machine).
+Future<List<int>?> pasteFromX(String type) async {
+  try {
+    final result = await Process.run('xclip', ['-selection', 'clipboard', '-t', type, '-o'], stdoutEncoding: null);
+    return result.exitCode == 0 ? result.stdout as List<int> : const [];
+  } on ProcessException {
+    return null;
+  }
 }
 
 void main() {
@@ -148,6 +161,53 @@ void main() {
     final clip = await Clipboard.getData(Clipboard.kTextPlain);
     expect(clip?.text, 'cinematic photo of a lighthouse on a cliff');
 
+    // ---- copy image: the file itself, generation data and all -------------
+    final original = File('${root.path}/ComfyUI_00001_.png');
+    await tester.longPress(images.at(4));
+    await waitFor(tester, () => find.text('Copy image').evaluate().isNotEmpty, what: 'the image menu');
+    await shot(tester, 'it-02b-image-menu');
+    await tester.tap(find.text('Copy image'));
+    await waitFor(tester, () => find.text('Copied image').evaluate().isNotEmpty, what: 'the image to be copied');
+    // Read it back the way a program pasting it would: through the address on
+    // the clipboard on Android, as the picture on Linux.
+    final pasted = await readCopiedFile();
+    expect(pasted, isNotNull, reason: 'the clipboard holds the image');
+    expect(pasted, original.readAsBytesSync(), reason: 'the pasted image is the file, byte for byte');
+    debugPrint('COPY IMAGE: ${pasted!.length} bytes read back unchanged');
+    if (Platform.isLinux) {
+      // And from outside the app, where there is a tool to ask with.
+      final outside = await pasteFromX('image/png');
+      if (outside == null) {
+        debugPrint('COPY IMAGE: no xclip here, so no other program asked for the clipboard');
+      } else {
+        expect(outside, original.readAsBytesSync(), reason: 'another program gets the file, byte for byte');
+        final uris = String.fromCharCodes((await pasteFromX('text/uri-list'))!).trim();
+        expect(uris, Uri.file(original.path).toString());
+        final targets = String.fromCharCodes((await pasteFromX('TARGETS'))!);
+        expect(targets, contains('x-special/gnome-copied-files'));
+      }
+    }
+    await tester.pump(const Duration(seconds: 2)); // let the toast go
+
+    // ---- usage -------------------------------------------------------------
+    if (find.byTooltip('Usage stats').evaluate().isNotEmpty) {
+      await tester.tap(find.byTooltip('Usage stats'));
+      // The grid (and the metadata panel) stay alive under the page.
+      Finder onPage(String text) => find.descendant(of: find.byType(StatsPage), matching: find.text(text));
+      await waitFor(tester, () => onPage('MODELS').evaluate().isNotEmpty, what: 'the usage page');
+      expect(onPage('flux1-dev.safetensors'), findsOneWidget);
+      await shot(tester, 'it-02c-usage');
+      await tester.tap(onPage('sd_xl_base_1.0'));
+      await waitFor(tester, () => find.byType(StatsPage).evaluate().isEmpty && thumbnails() == 1, what: 'the grid filtered to one model');
+      expect(find.text('1 match'), findsOneWidget);
+      // The filter is ordinary search text: the box's own X clears it.
+      await tester.tap(find.byTooltip('Clear search'));
+      await waitFor(tester, () => thumbnails() == expected, what: 'the full grid again');
+      // The filter kept the selection; make sure it is the image we expect.
+      await tester.tap(images.at(4));
+      await tester.pump();
+    }
+
     // ---- focus view -------------------------------------------------------
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await waitFor(tester, () => find.byType(FocusView).evaluate().isNotEmpty, what: 'the focus view to open');
@@ -157,6 +217,8 @@ void main() {
       what: 'the full image',
     );
     expect(find.byType(FocusView), findsOneWidget);
+    // The zoom chip knows the image's real size (512 px), whatever the screen.
+    expect(find.byType(ZoomChip), findsWidgets);
     await shot(tester, 'it-03-focus');
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await waitFor(tester, () => find.text('ComfyUI_00002_.png').evaluate().isNotEmpty, what: 'the previous image');

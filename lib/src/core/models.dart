@@ -330,3 +330,140 @@ String formatDate(int mtimeMs) {
   String two(int v) => v.toString().padLeft(2, '0');
   return '${d.year}-${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
 }
+
+/// A search term that matches [value] as a whole rather than in part:
+/// `model:="flux dev"`, `seed:=42`.
+String exactTerm(String field, String value) {
+  final clean = value
+      .replaceAll('"', '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  return clean.contains(' ') ? '$field:="$clean"' : '$field:=$clean';
+}
+
+/// One model, LoRA, setting or word, and how many images use it.
+class UsageItem {
+  const UsageItem(this.value, this.count, this.role, this.trend);
+  final String value;
+  final int count;
+
+  /// For supporting models, what they were used as (vae, clip, ...).
+  final String role;
+
+  /// The count spread over the folder's time span, oldest first.
+  final List<int> trend;
+}
+
+/// The values of one kind, most used first.
+class UsageGroup {
+  const UsageGroup(this.kind, this.distinct, this.items);
+
+  /// model | lora | aux | sampler | scheduler | steps | cfg | size | source | word
+  final String kind;
+
+  /// How many different values there are; [items] holds the most used.
+  final int distinct;
+  final List<UsageItem> items;
+
+  String get title => switch (kind) {
+    'model' => 'Models',
+    'lora' => 'LoRAs',
+    'aux' => 'Other models',
+    'sampler' => 'Samplers',
+    'scheduler' => 'Schedulers',
+    'steps' => 'Steps',
+    'cfg' => 'CFG',
+    'size' => 'Sizes',
+    'source' => 'Made with',
+    'word' => 'Prompt words',
+    _ => kind,
+  };
+
+  /// How [item] reads on screen.
+  String label(UsageItem item) => switch (kind) {
+    'source' => GenInfo.sourceLabel(item.value),
+    'size' => item.value.replaceFirst('x', ' × '),
+    _ => item.value,
+  };
+
+  /// The search that shows the images counted under [item].
+  String queryFor(UsageItem item) => switch (kind) {
+    'aux' => exactTerm('model', item.value),
+    'word' => exactTerm('prompt', item.value),
+    'source' => 'source:${item.value}',
+    _ => exactTerm(kind, item.value),
+  };
+}
+
+/// One bar of the usage timeline.
+class TimeBucket {
+  const TimeBucket(this.label, this.query, this.count);
+
+  /// The day or month it starts on: 2026-10-09, 2026-10, 2026.
+  final String label;
+
+  /// The search that shows its images.
+  final String query;
+  final int count;
+}
+
+/// What a folder's images were made with, and when, as counted by the core.
+class UsageStats {
+  const UsageStats({
+    required this.total,
+    required this.generated,
+    required this.groups,
+    required this.unit,
+    required this.timeline,
+  });
+
+  final int total;
+
+  /// Files that carry generation data.
+  final int generated;
+  final List<UsageGroup> groups;
+
+  /// day | week | month | year
+  final String unit;
+  final List<TimeBucket> timeline;
+
+  static const UsageStats empty = UsageStats(
+    total: 0,
+    generated: 0,
+    groups: [],
+    unit: 'day',
+    timeline: [],
+  );
+
+  factory UsageStats.fromJson(Map<String, dynamic> j) {
+    int number(Object? v) => v is num ? v.toInt() : 0;
+    return UsageStats(
+      total: number(j['total']),
+      generated: number(j['generated']),
+      unit: j['unit'] as String? ?? 'day',
+      groups: [
+        for (final g in (j['groups'] as List? ?? const []))
+          if (g is Map)
+            UsageGroup(g['kind'] as String? ?? '', number(g['distinct']), [
+              for (final i in (g['items'] as List? ?? const []))
+                if (i is Map)
+                  UsageItem(
+                    i['value'] as String? ?? '',
+                    number(i['count']),
+                    i['role'] as String? ?? '',
+                    [for (final n in (i['trend'] as List? ?? const [])) number(n)],
+                  ),
+            ]),
+      ],
+      timeline: [
+        for (final b in (j['timeline'] as List? ?? const []))
+          if (b is Map)
+            TimeBucket(
+              b['label'] as String? ?? '',
+              b['query'] as String? ?? '',
+              number(b['count']),
+            ),
+      ],
+    );
+  }
+}

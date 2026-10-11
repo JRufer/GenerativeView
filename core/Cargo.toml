@@ -16,10 +16,11 @@ fast_image_resize = "5"
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
 jpeg-encoder = "0.6"
+libc = "0.2"
 notify = "8"
 parking_lot = "0.12"
 rayon = "1"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "functions"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

@@ -141,6 +141,26 @@ fn index_search_and_live_updates() {
     assert_eq!(h.names(&root, true, "fox -quickly"), ["ComfyUI_00002_.png"]);
     assert_eq!(h.names(&root, true, "nothing matches this"), Vec::<String>::new());
 
+    // ---- exact filters, and the usage counts that feed them ----------------
+    assert_eq!(h.names(&root, true, "seed:=22"), ["ComfyUI_00002_.png"]);
+    assert_eq!(h.names(&root, true, "seed:=2"), Vec::<String>::new());
+    assert_eq!(h.names(&root, true, "model:=flux1-dev.safetensors"), ["ComfyUI_00001_.png"]);
+    assert_eq!(h.names(&root, true, "model:=\"juggernaut xl v9\""), ["invoke.png"]);
+    assert_eq!(h.names(&root, true, "lora:=add_detail"), ["00003-a1111.png"]);
+    assert_eq!(h.names(&root, true, "lora:=add"), Vec::<String>::new());
+    assert_eq!(h.names(&root, true, "sampler:=euler"), ["ComfyUI_00001_.png", "ComfyUI_00002_.png"]);
+    let usage = h.call("usage", json!({ "dir": root.to_str().unwrap(), "recursive": true }));
+    assert_eq!((usage["total"].as_u64(), usage["generated"].as_u64()), (Some(5), Some(5)));
+    let group = |kind: &str| usage["groups"].as_array().unwrap().iter().find(|g| g["kind"] == kind).unwrap().clone();
+    let models = group("model");
+    assert_eq!(models["distinct"], 5, "{models}");
+    assert!(models["items"].as_array().unwrap().iter().any(|i| i["value"] == "Juggernaut XL v9" && i["count"] == 1));
+    assert_eq!(group("lora")["items"].as_array().unwrap().len(), 2);
+    assert_eq!(group("source")["items"][0], json!({ "value": "comfyui", "count": 3, "trend": group("source")["items"][0]["trend"] }));
+    assert_eq!(usage["timeline"].as_array().unwrap().iter().map(|b| b["count"].as_u64().unwrap()).sum::<u64>(), 5);
+    let scoped = h.call("usage", json!({ "dir": root.join("portraits").to_str().unwrap(), "recursive": false }));
+    assert_eq!(scoped["total"], 1);
+
     // ---- a new image appears while the folder is open ----------------------
     write_png(&root.join("ComfyUI_00003_.png"), 6, &[("prompt", &comfy_prompt("a clockwork owl", 33, "flux1-dev.safetensors"))]);
     h.wait_changed();

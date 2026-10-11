@@ -9,6 +9,7 @@ import '../app_state.dart';
 import '../core/models.dart';
 import '../core/thumb_cache.dart';
 import '../theme.dart';
+import 'image_menu.dart';
 import 'thumb_image.dart';
 
 const double _gap = 3;
@@ -17,7 +18,8 @@ const double _gap = 3;
 ///
 /// Tile size changes by slider, by pinch, or by Ctrl + scroll wheel, and the
 /// grid keeps its place while it does. Tiles crop to fill or show the whole
-/// image, per [AppState.cropTiles]. Tap selects, double tap opens the image.
+/// image, per [AppState.cropTiles]. Tap selects, double tap opens the image,
+/// and a right click or a press-and-hold brings up its menu.
 class MediaGrid extends StatefulWidget {
   const MediaGrid({super.key, required this.state});
   final AppState state;
@@ -149,6 +151,13 @@ class _MediaGridState extends State<MediaGrid> {
     } else {
       state.select(index);
     }
+  }
+
+  void _menu(int index, MediaItem item, Offset position) {
+    // Two fingers resting on the grid are a pinch, not a long press.
+    if (_pointers.length > 1) return;
+    state.select(index);
+    showImageMenu(context, state, item, position);
   }
 
   void _pointerDown(PointerDownEvent e) {
@@ -287,6 +296,7 @@ class _MediaGridState extends State<MediaGrid> {
                   fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
                   selected: index == state.selectedIndex,
                   onTap: () => _tap(index, item),
+                  onMenu: (position) => _menu(index, item, position),
                 );
               },
             ),
@@ -306,6 +316,7 @@ class _Tile extends StatelessWidget {
     required this.fit,
     required this.selected,
     required this.onTap,
+    required this.onMenu,
   });
 
   final MediaItem item;
@@ -317,11 +328,16 @@ class _Tile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  /// Called with where the pointer was on a right click or a long press.
+  final ValueChanged<Offset> onMenu;
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onSecondaryTapUp: (details) => onMenu(details.globalPosition),
+      onLongPressStart: (details) => onMenu(details.globalPosition),
       child: Semantics(
         label: item.name,
         selected: selected,

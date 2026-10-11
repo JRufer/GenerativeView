@@ -90,6 +90,10 @@ impl Engine {
                 let result = self.db.query(&Self::query_args(args)?).map_err(db_err)?;
                 Ok(serde_json::to_string(&result).unwrap_or_default())
             }
+            "usage" => {
+                let usage = self.db.usage(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive")).map_err(db_err)?;
+                Ok(serde_json::to_string(&usage).unwrap_or_default())
+            }
             "meta" => {
                 let info = meta::extract(Path::new(str_arg(args, "path")?));
                 Ok(serde_json::to_string(&info).unwrap_or_default())

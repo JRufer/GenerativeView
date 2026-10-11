@@ -74,3 +74,31 @@ Future<Uint8List?> androidVideoFrame(String path) async {
     return null;
   }
 }
+
+/// Put a file on the clipboard as the file itself, bytes untouched, so a
+/// copied image keeps the generation data stored inside it. False if this
+/// platform (or this file) cannot be copied.
+Future<bool> copyFileToClipboard(String path) async {
+  try {
+    return await _media.invokeMethod<bool>('copyFile', {'path': path}) ?? false;
+  } on PlatformException catch (e) {
+    debugPrint('copy failed: $e');
+    return false;
+  } on MissingPluginException {
+    return false;
+  }
+}
+
+/// What is on the clipboard after [copyFileToClipboard], read back the way a
+/// program pasting it would read it: through the content address on Android,
+/// as the picture on Linux. Here so the integration test can check that the
+/// bytes arrive unchanged.
+Future<Uint8List?> readCopiedFile() async {
+  try {
+    return await _media.invokeMethod<Uint8List>('readCopiedFile');
+  } on PlatformException {
+    return null;
+  } on MissingPluginException {
+    return null;
+  }
+}

@@ -39,6 +39,14 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Serves a copied image to the app it is pasted into. Not exported:
+             the clipboard grants the pasting app access to the one file that
+             was copied, and to nothing else. -->
+        <provider
+            android:name=".CopiedFileProvider"
+            android:authorities="${applicationId}.copied"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
