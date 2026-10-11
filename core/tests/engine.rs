@@ -369,24 +369,21 @@ fn content_search_embeds_and_ranks() {
         })
         .collect();
     let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
-    // (level, name) for every picture, best first. The level is the lesser
-    // of two measures, each 1 where a match begins: how far the description
-    // stands above the picture's ordinary run of scores, and how close it
-    // comes to the picture's best few everyday descriptions.
+    // (level, name) for every picture, best first. The level is how far the
+    // description stands above the picture's ordinary run of scores, in
+    // spreads of that run, with 1 where a match begins.
     let fits = |description: &str| {
         let query = embed(description);
         let mut out: Vec<(f32, String)> = pictures
             .iter()
             .map(|(name, picture)| {
                 let mut scores: Vec<f32> = everyday.iter().map(|line| dot(line, picture)).collect();
-                scores.sort_by(|a, b| b.total_cmp(a));
-                let best = scores[..5].iter().sum::<f32>() / 5.0;
+                scores.sort_by(f32::total_cmp);
                 let middle = scores[scores.len() / 2];
                 let mut apart: Vec<f32> = scores.iter().map(|score| (score - middle).abs()).collect();
                 apart.sort_by(f32::total_cmp);
                 let spread = apart[apart.len() / 2] * 1.4826;
-                let over = dot(&query, picture) - middle;
-                (((over / spread) / gvcore::clip::CLEAR).min((over / (best - middle)) / gvcore::clip::NEARLY), name.clone())
+                ((dot(&query, picture) - middle) / spread / gvcore::clip::CLEAR, name.clone())
             })
             .collect();
         out.sort_by(|a, b| b.0.total_cmp(&a.0));

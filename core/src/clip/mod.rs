@@ -48,24 +48,19 @@ const IDLE: Duration = Duration::from_secs(90);
 
 /// Everyday things a picture might show, one to a line. Nobody searches
 /// for these: they are the yardstick a search is measured against (see
-/// [`fit`]).
+/// [`Usual`]).
 const EVERYDAY: &str = include_str!("everyday.txt");
 
-/// A description matches a picture when it clears two bars, both set by
-/// how the everyday descriptions score against that same picture.
+/// A description matches a picture when it scores this many spreads above
+/// the picture's ordinary run of scores (see [`Usual`]).
 ///
-/// It has to stand clear of chance: this many spreads above the picture's
-/// ordinary run of scores. Of the descriptions that have nothing to do with
-/// a picture, about one in a thousand gets that far.
-pub const CLEAR: f32 = 3.0;
-/// And it has to suit the picture nearly as well as the things that are in
-/// it: this share of the way from the ordinary run up to the picture's best
-/// few everyday descriptions. That is what keeps out the merely related: a
-/// picture of a dog is a little like "cat" without showing one.
-pub const NEARLY: f32 = 0.75;
-/// How many of the best-scoring everyday descriptions say what a picture
-/// that matches looks like.
-const BEST_FEW: usize = 5;
+/// Measured, not reasoned: on a library of 4,500 generated pictures, the
+/// word for what nearly every picture showed sat about 2 spreads up (97% of
+/// the pictures at 1.5 or more, 24% at 2.25 or more), words that show
+/// nothing ("masterpiece", "quality") reached 1.5 in next to none, and no
+/// description of anything got as far as 3. `examples/content_probe` prints
+/// the figures for a library of your own.
+pub const CLEAR: f32 = 1.75;
 
 enum Job {
     Index { root: String, recursive: bool, generation: u64 },
@@ -208,6 +203,23 @@ impl ContentSearch {
         Ok((all, fits))
     }
 
+    /// How the pictures under `root` score against the everyday descriptions.
+    pub fn everyday(&self, root: &str, recursive: bool) -> Result<Everyday, String> {
+        let inner = &self.inner;
+        let reference = inner.reference()?;
+        let all = inner.db.query(&Query { dir: root.to_string(), recursive, ..Default::default() }).map_err(|e| e.to_string())?;
+        let pictures: Vec<Option<store::Packed>> =
+            all.rows.iter().map(|row| inner.vectors.get(&inner.key(&all.dirs[row.1 as usize], row)).filter(|vector| vector.len() == reference.dim)).collect();
+        let scores = pictures
+            .par_iter()
+            .map(|picture| {
+                let picture = store::unpack(picture.as_ref()?);
+                Some(reference.vectors.chunks_exact(reference.dim).map(|text| store::dot(text, &picture)).collect())
+            })
+            .collect();
+        Ok(Everyday { words: everyday_lines(), all, scores })
+    }
+
     /// The pictures under `root` that match a description: best match first
     /// when `sort` is "relevance", otherwise in that order. `bar` is the
     /// [`Fit::level`] a picture has to reach; None is 1, a match.
@@ -228,43 +240,35 @@ impl ContentSearch {
 /// A model's scores have no fixed meaning. Where they sit and how far apart
 /// they lie differs from model to model and from picture to picture: a busy
 /// picture is a little like everything, a plain one like nothing much. But
-/// whatever a picture shows, nearly all of a few hundred everyday things
-/// are *not* in it, and a few are. So the run of their scores says what "not
-/// a match" looks like for this picture, and the top of it what a match does.
+/// whatever a picture shows, most of a few hundred everyday things are
+/// *not* in it, so the run of their scores says what "not a match" looks
+/// like for this picture.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Usual {
-    /// The middle score: the median, which the few everyday things that are
-    /// in the picture do not move.
+    /// The middle score: the median.
     middle: f32,
     /// How widely the scores spread around it: the median distance from the
     /// middle, scaled so that for bell-shaped scores it is their standard
     /// deviation.
     spread: f32,
-    /// The average of the best few.
-    best: f32,
 }
 
 fn usual(reference: &Reference, picture: &[i16]) -> Usual {
     let picture = store::unpack(picture);
     let mut scores: Vec<f32> = reference.vectors.chunks_exact(reference.dim).map(|text| store::dot(text, &picture)).collect();
     if scores.is_empty() {
-        return Usual { middle: 0.0, spread: 0.0, best: 0.0 };
+        return Usual { middle: 0.0, spread: 0.0 };
     }
-    scores.sort_unstable_by(|a, b| b.total_cmp(a));
-    let few = BEST_FEW.min(scores.len());
-    let best = scores[..few].iter().sum::<f32>() / few as f32;
     let half = scores.len() / 2;
-    let middle = scores[half];
+    let middle = *scores.select_nth_unstable_by(half, f32::total_cmp).1;
     scores.iter_mut().for_each(|score| *score = (*score - middle).abs());
     let spread = *scores.select_nth_unstable_by(half, f32::total_cmp).1 * 1.4826;
-    Usual { middle, spread, best }
+    Usual { middle, spread }
 }
 
 impl Usual {
     fn fit(&self, score: f32) -> Fit {
-        let over = score - self.middle;
-        let reach = self.best - self.middle;
-        Fit { above: if self.spread > 0.0 { over / self.spread } else { 0.0 }, share: if reach > 0.0 { over / reach } else { 0.0 } }
+        Fit { above: if self.spread > 0.0 { (score - self.middle) / self.spread } else { 0.0 } }
     }
 }
 
@@ -272,19 +276,29 @@ impl Usual {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fit {
     /// How many spreads above the picture's ordinary run of scores the
-    /// description landed (see [`CLEAR`]).
+    /// description landed.
     pub above: f32,
-    /// How far it got from the ordinary run towards the picture's best
-    /// everyday descriptions: 0 is ordinary, 1 is as good as those (see
-    /// [`NEARLY`]).
-    pub share: f32,
 }
 
 impl Fit {
-    /// One number for both: 1 or more is a match, and more is a better one.
+    /// 1 or more is a match (see [`CLEAR`]), and more is a better one.
     pub fn level(&self) -> f32 {
-        (self.above / CLEAR).min(self.share / NEARLY)
+        self.above / CLEAR
     }
+}
+
+/// The everyday descriptions and how every picture of a folder scores
+/// against each of them: what `examples/content_probe` works from.
+pub struct Everyday {
+    pub words: Vec<&'static str>,
+    pub all: QueryResult,
+    /// For each row of `all`, its score against each of `words`; None for a
+    /// picture not looked at yet.
+    pub scores: Vec<Option<Vec<f32>>>,
+}
+
+fn everyday_lines() -> Vec<&'static str> {
+    EVERYDAY.lines().map(str::trim).filter(|line| !line.is_empty()).collect()
 }
 
 impl Inner {
@@ -342,14 +356,14 @@ impl Inner {
         if let Some(reference) = slot.as_ref() {
             return Ok(reference.clone());
         }
-        if !self.installed() {
-            return Err("the content search model is not installed".into());
-        }
-        let lines: Vec<&str> = EVERYDAY.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        let lines = everyday_lines();
         let name = format!("{MODEL}/everyday/{:016x}", xxhash_rust::xxh3::xxh3_64(EVERYDAY.as_bytes()));
         let vectors = match self.vectors.texts(&name).filter(|saved| !saved.is_empty() && saved.len() % lines.len() == 0) {
             Some(saved) => saved,
             None => {
+                if !self.installed() {
+                    return Err("the content search model is not installed".into());
+                }
                 let side = self.text_side()?;
                 let made: Result<Vec<Vec<f32>>, String> = lines.par_iter().map(|line| side.encoder.embed(&side.tokenizer.encode(line))).collect();
                 let made = made?.concat();
@@ -489,47 +503,40 @@ mod tests {
         let dim = 48;
         let thing = |i: usize| towards(dim, i, dim - 1, 0.2 + (i % 5) as f32 * 0.01);
         let reference = Reference { dim, vectors: (0..40).flat_map(thing).collect() };
-        // A picture of things 3, 5, 8, 13 and 21 in equal parts, with a
-        // trace of thing 4.
+        // A picture of things 3, 5 and 8.
         let mut picture = vec![0.0; dim];
-        for shown in [3, 5, 8, 13, 21] {
+        for shown in [3, 5, 8] {
             picture[shown] = 1.0;
         }
-        picture[4] = 0.3;
         picture[dim - 1] = 1.0;
         let length = picture.iter().map(|x| x * x).sum::<f32>().sqrt();
         let picture = store::pack(&picture.iter().map(|x| x / length).collect::<Vec<_>>());
         let usual = usual(&reference, &picture);
-        assert!(usual.middle > 0.02 && usual.spread > 0.0 && usual.best > usual.middle + 5.0 * usual.spread, "{usual:?}");
+        assert!(usual.middle > 0.02 && usual.spread > 0.0, "{usual:?}");
         let fits = |description: &[f32]| usual.fit(store::score(description, &picture));
 
         // What it shows matches, whichever of those it is...
-        for shown in [3, 5, 8, 13, 21] {
+        for shown in [3, 5, 8] {
             let fit = fits(&thing(shown));
-            assert!(fit.level() >= 1.0 && fit.above > CLEAR && (fit.share - 1.0).abs() < 0.1, "{shown}: {fit:?}");
+            assert!(fit.level() >= 1.0 && fit.above > 3.0 * CLEAR, "{shown}: {fit:?}");
         }
-        // ...what it does not show is ordinary...
-        for absent in [0, 7, 22, 39] {
+        // ...and what it does not show is ordinary.
+        for absent in [0, 4, 7, 22, 39] {
             let fit = fits(&thing(absent));
-            assert!(fit.level() < 0.5 && fit.above.abs() < CLEAR && fit.share.abs() < 0.2, "{absent}: {fit:?}");
+            assert!(fit.level() < 1.0 && fit.above.abs() < CLEAR, "{absent}: {fit:?}");
         }
-        // ...and what is only faintly there stands clear of chance, but is
-        // nowhere near as good as the real thing: not a match.
-        let trace = fits(&thing(4));
-        assert!(trace.above > CLEAR && trace.share < NEARLY && trace.level() < 1.0, "{trace:?}");
-        // A description that says more scores higher still.
-        let both = fits(&towards(dim, 3, 5, 0.5));
-        assert!(both.share > 1.1 && both.level() > fits(&thing(3)).level(), "{both:?}");
+        // A description that says more of what is there fits better still.
+        assert!(fits(&towards(dim, 3, 5, 0.5)).level() > fits(&thing(3)).level());
 
         // None of this depends on the range the model's scores happen to
         // fall in: halve every score and the fit is what it was.
-        let halved = Usual { middle: usual.middle / 2.0, spread: usual.spread / 2.0, best: usual.best / 2.0 };
-        let score = store::score(&thing(4), &picture);
+        let halved = Usual { middle: usual.middle / 2.0, spread: usual.spread / 2.0 };
+        let score = store::score(&thing(3), &picture);
         assert!((halved.fit(score / 2.0).level() - usual.fit(score).level()).abs() < 1e-3);
         // Nothing to measure against, or a picture everything scores the
         // same on: nothing fits.
         let nothing = super::usual(&Reference { dim, vectors: Vec::new() }, &picture);
         assert_eq!(nothing.fit(0.3).level(), 0.0);
-        assert_eq!(Usual { middle: 0.2, spread: 0.0, best: 0.2 }.fit(0.9).level(), 0.0);
+        assert_eq!(Usual { middle: 0.2, spread: 0.0 }.fit(0.9).level(), 0.0);
     }
 }
