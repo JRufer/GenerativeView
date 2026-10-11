@@ -1077,11 +1077,17 @@ void main() {
     final state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
 
+    // The grid stays alive under the page, so look for things on the page.
+    Finder onPage(String text) => find.descendant(
+      of: find.byType(StatsPage),
+      matching: find.text(text),
+    );
+
     Future<void> open() async {
       await tester.tap(find.byTooltip('Usage stats'));
       await pumpUntil(
         tester,
-        () => find.text('MODELS').evaluate().isNotEmpty,
+        () => onPage('MODELS').evaluate().isNotEmpty,
         what: 'the usage page',
       );
       await settle(tester);
@@ -1096,7 +1102,7 @@ void main() {
     /// The count shown beside [label] on the page.
     String countOf(String label) {
       final row = find.ancestor(
-        of: find.text(label),
+        of: onPage(label),
         matching: find.byType(InkWell),
       );
       final texts = tester.widgetList<Text>(
@@ -1107,7 +1113,7 @@ void main() {
 
     await open();
     expect(
-      find.text('9 images  ·  8 with generation data  ·  sub-folders included'),
+      onPage('9 images  ·  8 with generation data  ·  sub-folders included'),
       findsOneWidget,
     );
     // Most used first, under each heading.
@@ -1116,24 +1122,24 @@ void main() {
     expect(countOf('sd_xl_base_1.0'), '2');
     expect(countOf('sd_xl_base_1.0.safetensors'), '1');
     expect(
-      tester.getTopLeft(find.text('flux1-dev.safetensors')).dy,
-      lessThan(tester.getTopLeft(find.text('Juggernaut XL v9')).dy),
+      tester.getTopLeft(onPage('flux1-dev.safetensors')).dy,
+      lessThan(tester.getTopLeft(onPage('Juggernaut XL v9')).dy),
     );
-    expect(find.text('LORAS'), findsOneWidget);
+    expect(onPage('LORAS'), findsOneWidget);
     expect(countOf('cutaway-diagram-xl'), '2');
     expect(countOf('impasto'), '1');
     expect(countOf('style/inkwash_v2.safetensors'), '1');
-    expect(find.text('MADE WITH'), findsOneWidget);
+    expect(onPage('MADE WITH'), findsOneWidget);
     expect(countOf('ComfyUI'), '4');
     expect(countOf('A1111'), '2');
     expect(countOf('InvokeAI'), '2');
-    expect(find.text('PROMPT WORDS'), findsOneWidget);
+    expect(onPage('PROMPT WORDS'), findsOneWidget);
     expect(countOf('lighthouse'), '2');
-    expect(find.text('IMAGES PER DAY'), findsOneWidget);
+    expect(onPage('IMAGES PER DAY'), findsOneWidget);
     await screenshot(tester, boundary, '15-usage');
 
     // ---- tap a model: back at the grid, with only its images ----------------
-    await tester.tap(find.text('Juggernaut XL v9'));
+    await tester.tap(onPage('Juggernaut XL v9'));
     await closed();
     await pumpUntil(tester, () => state.items.length == 2, what: 'one model');
     expect(state.searchText.text, 'model:="Juggernaut XL v9"');
@@ -1142,22 +1148,22 @@ void main() {
 
     // ---- a LoRA, a tool, a prompt word, a day --------------------------------
     await open();
-    await tester.tap(find.text('impasto'));
+    await tester.tap(onPage('impasto'));
     await closed();
     await pumpUntil(tester, () => state.items.length == 1, what: 'one LoRA');
     expect(state.searchText.text, 'lora:=impasto');
     expect(state.items[0].name, '00012-3958203417.png');
 
     await open();
-    await tester.tap(find.text('ComfyUI'));
+    await tester.tap(onPage('ComfyUI'));
     await closed();
     await pumpUntil(tester, () => state.items.length == 4, what: 'one tool');
     expect(state.searchText.text, 'source:comfyui');
 
     await open();
-    await tester.ensureVisible(find.text('lighthouse'));
+    await tester.ensureVisible(onPage('lighthouse'));
     await tester.pump();
-    await tester.tap(find.text('lighthouse'));
+    await tester.tap(onPage('lighthouse'));
     await closed();
     await pumpUntil(tester, () => state.items.length == 2, what: 'one word');
     expect(state.searchText.text, 'prompt:=lighthouse');
@@ -1245,10 +1251,10 @@ void main() {
     expect(files, [path, path, path]);
     expect(state.mode, ViewMode.focus);
 
-    // ---- a platform that cannot copy files says so -----------------------------
+    // ---- a file that cannot be copied says so ---------------------------------
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('generativeview/media'),
-      null,
+      (call) async => false,
     );
     await tester.tap(find.byType(FocusView), buttons: kSecondaryButton);
     await settle(tester);

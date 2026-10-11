@@ -8,9 +8,20 @@ import '../core/models.dart';
 import '../theme.dart';
 
 /// Open the usage page over the grid.
+///
+/// The page covers the window but the route is not opaque, so the grid under
+/// it stays laid out: it is back the instant the page goes, already showing
+/// whatever was tapped here.
 void openStats(BuildContext context, AppState state) {
   Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => StatsPage(state: state)),
+    PageRouteBuilder<void>(
+      opaque: false,
+      transitionDuration: const Duration(milliseconds: 140),
+      reverseTransitionDuration: const Duration(milliseconds: 100),
+      pageBuilder: (_, _, _) => StatsPage(state: state),
+      transitionsBuilder: (_, animation, _, child) =>
+          FadeTransition(opacity: animation, child: child),
+    ),
   );
 }
 

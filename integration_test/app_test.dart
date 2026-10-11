@@ -192,10 +192,12 @@ void main() {
     // ---- usage -------------------------------------------------------------
     if (find.byTooltip('Usage stats').evaluate().isNotEmpty) {
       await tester.tap(find.byTooltip('Usage stats'));
-      await waitFor(tester, () => find.text('MODELS').evaluate().isNotEmpty, what: 'the usage page');
-      expect(find.text('flux1-dev.safetensors'), findsOneWidget);
+      // The grid (and the metadata panel) stay alive under the page.
+      Finder onPage(String text) => find.descendant(of: find.byType(StatsPage), matching: find.text(text));
+      await waitFor(tester, () => onPage('MODELS').evaluate().isNotEmpty, what: 'the usage page');
+      expect(onPage('flux1-dev.safetensors'), findsOneWidget);
       await shot(tester, 'it-02c-usage');
-      await tester.tap(find.text('sd_xl_base_1.0'));
+      await tester.tap(onPage('sd_xl_base_1.0'));
       await waitFor(tester, () => find.byType(StatsPage).evaluate().isEmpty && thumbnails() == 1, what: 'the grid filtered to one model');
       expect(find.text('1 match'), findsOneWidget);
       await tester.enterText(search, '');
