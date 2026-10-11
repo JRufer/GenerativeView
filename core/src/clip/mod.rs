@@ -54,13 +54,24 @@ const EVERYDAY: &str = include_str!("everyday.txt");
 /// A description matches a picture when it scores this many spreads above
 /// the picture's ordinary run of scores (see [`Usual`]).
 ///
-/// Measured, not reasoned: on a library of 4,500 generated pictures, the
-/// word for what nearly every picture showed sat about 2 spreads up (97% of
-/// the pictures at 1.5 or more, 24% at 2.25 or more), words that show
-/// nothing ("masterpiece", "quality") reached 1.5 in next to none, and no
-/// description of anything got as far as 3. `examples/content_probe` prints
-/// the figures for a library of your own.
-pub const CLEAR: f32 = 1.75;
+/// Measured, not reasoned, on a library of 4,500 generated pictures with
+/// their prompts as the answer key (`examples/content_probe` prints the
+/// same for any library):
+///
+/// * Of 98 everyday words that no prompt mentioned, the typical one turned
+///   up in no picture at all at this bar, and plain absent things in a
+///   handful (`car` in 12, `airplane` in 3).
+/// * The word for what nearly every picture was of was found in 97% of
+///   them; things a picture merely contains (a bed, something gold, water)
+///   in a tenth to a quarter of the pictures prompted with them, about half
+///   of what was found having been prompted for.
+/// * A quarter of a spread lower lets several times as many absent things
+///   in (`car` in 58). A quarter higher halves what is found, for a few
+///   points of accuracy.
+/// * Other ways of measuring a fit (rank among the everyday words, the
+///   model's own odds, the raw score) told prompted pictures from the rest
+///   no better than this one.
+pub const CLEAR: f32 = 1.5;
 
 enum Job {
     Index { root: String, recursive: bool, generation: u64 },
