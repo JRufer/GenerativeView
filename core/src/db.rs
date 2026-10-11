@@ -6,21 +6,29 @@
 //! was measured and dropped: it made first-time indexing about four times
 //! slower and bought nothing at the size of an image folder, where scanning
 //! ten thousand rows takes a few milliseconds.
+//!
+//! Exact filters (`model:="flux1-dev.safetensors"`) and the usage counts
+//! read a second text column, `facets`, the same way: one scan, no extra
+//! tables to keep in step while indexing.
 
-use crate::meta::GenInfo;
+use crate::dates;
+use crate::meta::{facet_value, GenInfo};
 use parking_lot::Mutex;
+use rusqlite::functions::FunctionFlags;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 pub type DbResult<T> = Result<T, rusqlite::Error>;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 // `files` stays narrow so listing a folder touches few pages. The search
 // text lives beside it in `ftext`, lower-cased; it is only ever searched,
 // never shown (the UI reads full metadata straight from the file when
 // asked). `blob` is every field joined, so an unqualified term is one scan.
+// `facets` lists what the image was made with, one line each, in the layout
+// `GenInfo::facets_text` describes.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS files (
     id       INTEGER PRIMARY KEY,
@@ -46,7 +54,8 @@ CREATE TABLE IF NOT EXISTS ftext (
     model    TEXT NOT NULL DEFAULT '',
     loras    TEXT NOT NULL DEFAULT '',
     extra    TEXT NOT NULL DEFAULT '',
-    blob     TEXT NOT NULL DEFAULT ''
+    blob     TEXT NOT NULL DEFAULT '',
+    facets   TEXT NOT NULL DEFAULT ''
 );
 CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
     DELETE FROM ftext WHERE id = old.id;
@@ -169,6 +178,7 @@ impl Db {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
         )?;
         read.execute_batch("PRAGMA temp_store = MEMORY; PRAGMA cache_size = -16000; PRAGMA mmap_size = 268435456;")?;
+        register_functions(&read)?;
         Ok(Db { write: Mutex::new(write), read: Mutex::new(read) })
     }
 
@@ -233,8 +243,8 @@ impl Db {
                  RETURNING id",
             )?;
             let mut text = tx.prepare_cached(
-                "INSERT OR REPLACE INTO ftext (id, lname, prompt, negative, model, loras, extra, blob)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT OR REPLACE INTO ftext (id, lname, prompt, negative, model, loras, extra, blob, facets)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
             for r in records {
                 let i = &r.info;
@@ -249,7 +259,7 @@ impl Db {
                 let loras = i.loras_text().to_lowercase();
                 let extra = i.extra_text().to_lowercase();
                 let blob = [lname.as_str(), &prompt, &negative, &model, &loras, &extra].join("\n");
-                text.execute(params![id, lname, prompt, negative, model, loras, extra, blob])?;
+                text.execute(params![id, lname, prompt, negative, model, loras, extra, blob, i.facets_text()])?;
             }
         }
         tx.commit()
@@ -349,8 +359,13 @@ fn dir_condition(root: &str, recursive: bool, prefix: &str) -> (String, Vec<Stri
 #[derive(Debug, PartialEq)]
 struct Term {
     negate: bool,
-    /// Column to search, or "seed" / "source" for exact fields; None = anywhere.
+    /// A text column to search (`lname`, `prompt`, `negative`, `model`,
+    /// `loras`), or one of the fields with rules of their own (`seed`,
+    /// `source`, `date`, and the facets `sampler`, `scheduler`, `steps`,
+    /// `cfg`, `size`). None = anywhere.
     field: Option<&'static str>,
+    /// `field:=text`: the whole value, not part of it.
+    exact: bool,
     text: String,
 }
 
@@ -363,13 +378,19 @@ fn field_alias(s: &str) -> Option<&'static str> {
         "lora" | "loras" | "l" => "loras",
         "seed" => "seed",
         "source" | "src" | "tool" => "source",
-        "sampler" | "scheduler" | "steps" | "cfg" => "extra",
+        "sampler" => "sampler",
+        "scheduler" => "scheduler",
+        "steps" => "steps",
+        "cfg" => "cfg",
+        "size" | "res" | "resolution" => "size",
+        "date" => "date",
         _ => return None,
     })
 }
 
 /// Split a search box string into terms: whitespace separated, "quoted
-/// phrases" kept whole, `-term` to exclude, `field:term` to target a column.
+/// phrases" kept whole, `-term` to exclude, `field:term` to target a column,
+/// `field:=term` to match the whole of a value rather than part of it.
 fn parse_terms(text: &str) -> Vec<Term> {
     let mut terms = Vec::new();
     let mut chars = text.chars().peekable();
@@ -391,6 +412,7 @@ fn parse_terms(text: &str) -> Vec<Term> {
         }
         let mut raw = String::new();
         let mut field = None;
+        let mut exact = false;
         let mut quoted = false;
         while let Some(&c) = chars.peek() {
             if c == '"' {
@@ -406,6 +428,10 @@ fn parse_terms(text: &str) -> Vec<Term> {
                     field = Some(f);
                     raw.clear();
                     chars.next();
+                    if chars.peek() == Some(&'=') {
+                        exact = true;
+                        chars.next();
+                    }
                     continue;
                 }
             }
@@ -413,7 +439,7 @@ fn parse_terms(text: &str) -> Vec<Term> {
             chars.next();
         }
         if !raw.is_empty() {
-            terms.push(Term { negate, field, text: raw });
+            terms.push(Term { negate, field, exact, text: raw });
         }
     }
     terms
@@ -423,26 +449,350 @@ impl Term {
     /// Append this term's predicate. Returns true if it reads the `ftext` table.
     fn to_sql(&self, cond: &mut String, args: &mut Vec<String>) -> bool {
         let not = if self.negate { "NOT " } else { "" };
-        match self.field {
-            Some("seed") => {
+        let mut bind = |value: String| {
+            args.push(value);
+            args.len()
+        };
+        // One of the image's values under `kind`: all of it, or part of it.
+        let mut facet = |kind: &str, exact: bool| {
+            let n = bind(facet_value(kind, &self.text).to_lowercase());
+            format!(" AND {not}gv_facet(t.facets, '{kind}', ?{n}, {})", exact as u8)
+        };
+        match (self.field, self.exact) {
+            (Some("seed"), true) => {
+                let n = bind(self.text.clone());
+                cond.push_str(&format!(" AND {not}(f.seed = ?{n})"));
+                false
+            }
+            (Some("seed"), false) => {
                 // Seeds are matched from the start: seed:123 finds 1234567.
-                args.push(self.text.clone());
-                let n = args.len();
+                let n = bind(self.text.clone());
                 cond.push_str(&format!(" AND {not}(substr(f.seed, 1, length(?{n})) = ?{n})"));
                 false
             }
-            Some("source") => {
-                args.push(self.text.to_lowercase());
-                cond.push_str(&format!(" AND {not}(f.source = ?{})", args.len()));
+            (Some("source"), _) => {
+                let n = bind(self.text.to_lowercase());
+                cond.push_str(&format!(" AND {not}(f.source = ?{n})"));
                 false
             }
-            field => {
-                args.push(self.text.to_lowercase());
+            (Some("date"), _) => {
+                // Numbers we worked out ourselves, so they go in as they are.
+                match dates::parse_range(&self.text) {
+                    Some((from, to)) => cond.push_str(&format!(" AND {not}(f.mtime >= {from} AND f.mtime < {to})")),
+                    None => cond.push_str(&format!(" AND {not}(0)")),
+                }
+                false
+            }
+            (Some("lname"), true) => {
+                let n = bind(self.text.to_lowercase());
+                cond.push_str(&format!(" AND {not}(t.lname = ?{n})"));
+                true
+            }
+            (Some(col @ ("prompt" | "negative")), true) => {
+                // As whole words: prompt:=fox leaves foxglove out.
+                let n = bind(self.text.to_lowercase());
+                cond.push_str(&format!(" AND {not}gv_word(t.{col}, ?{n})"));
+                true
+            }
+            (Some("model"), true) => {
+                cond.push_str(&facet("model", true));
+                true
+            }
+            (Some("loras"), true) => {
+                cond.push_str(&facet("lora", true));
+                true
+            }
+            (Some(kind @ ("sampler" | "scheduler" | "size")), exact) => {
+                cond.push_str(&facet(kind, exact));
+                true
+            }
+            // Numbers have no "part of": steps:30 is not steps 130.
+            (Some(kind @ ("steps" | "cfg")), _) => {
+                cond.push_str(&facet(kind, true));
+                true
+            }
+            (field, _) => {
+                let n = bind(self.text.to_lowercase());
                 let col = field.unwrap_or("blob");
-                cond.push_str(&format!(" AND {not}(instr(t.{col}, ?{}) > 0)", args.len()));
+                cond.push_str(&format!(" AND {not}(instr(t.{col}, ?{n}) > 0)"));
                 true
             }
         }
+    }
+}
+
+/// Whether an image's facets (see `GenInfo::facets_text`) hold `needle`,
+/// already lower-cased, under `kind`: as a whole value, or anywhere inside
+/// one. `model` covers the main model and every supporting one.
+fn facet_matches(facets: &str, kind: &str, needle: &str, exact: bool) -> bool {
+    facets.split('\n').any(|line| {
+        let mut parts = line.split('\t');
+        let (Some(k), Some(value)) = (parts.next(), parts.next()) else { return false };
+        (k == kind || (kind == "model" && k == "aux")) && if exact { value == needle } else { value.contains(needle) }
+    })
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Whether `needle` occurs in `text` as whole words, not inside longer ones.
+fn has_word(text: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(at) = text[from..].find(needle) {
+        let start = from + at;
+        let end = start + needle.len();
+        let before = text[..start].chars().next_back().map_or(false, is_word_char);
+        let after = text[end..].chars().next().map_or(false, is_word_char);
+        if !before && !after {
+            return true;
+        }
+        from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
+}
+
+/// The SQL functions the predicates above call.
+fn register_functions(conn: &Connection) -> DbResult<()> {
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    conn.create_scalar_function("gv_facet", 4, flags, |ctx| {
+        let facets = ctx.get_raw(0).as_str().unwrap_or("");
+        let kind = ctx.get_raw(1).as_str().unwrap_or("");
+        let needle = ctx.get_raw(2).as_str().unwrap_or("");
+        let exact = ctx.get_raw(3).as_i64().unwrap_or(0) != 0;
+        Ok(facet_matches(facets, kind, needle, exact))
+    })?;
+    conn.create_scalar_function("gv_word", 2, flags, |ctx| {
+        let text = ctx.get_raw(0).as_str().unwrap_or("");
+        let needle = ctx.get_raw(1).as_str().unwrap_or("");
+        Ok(has_word(text, needle))
+    })
+}
+
+// ---------------------------------------------------------------- usage
+
+/// The facet kinds that are counted, in the order they are reported.
+const USAGE_KINDS: [&str; 9] = ["model", "lora", "aux", "sampler", "scheduler", "steps", "cfg", "size", "source"];
+/// How many values of a kind are reported, most used first.
+const USAGE_TOP: usize = 100;
+const USAGE_WORDS: usize = 60;
+/// How finely each value's use is spread over the folder's time span.
+pub const TREND_SLOTS: usize = 24;
+
+#[derive(Debug, Default, serde::Serialize)]
+pub struct UsageItem {
+    /// As written in the images (the first spelling met).
+    pub value: String,
+    /// How many images use it.
+    pub count: u32,
+    /// For supporting models, what they were used as: vae, clip, controlnet...
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub role: String,
+    /// The count again, spread over the folder's time span, oldest first.
+    pub trend: Vec<u32>,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+pub struct UsageGroup {
+    /// model | lora | aux | sampler | scheduler | steps | cfg | size | source | word
+    pub kind: &'static str,
+    /// How many different values there are; `items` holds the most used.
+    pub distinct: usize,
+    pub items: Vec<UsageItem>,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+pub struct TimeBucket {
+    /// The day or month it starts on: 2026-10-09, 2026-10, 2026.
+    pub label: String,
+    /// The search that shows this bucket's images.
+    pub query: String,
+    pub count: u32,
+}
+
+/// What a folder's images were made with, and when.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Usage {
+    pub total: u32,
+    /// Files that carry generation data.
+    pub generated: u32,
+    pub groups: Vec<UsageGroup>,
+    /// day | week | month | year
+    pub unit: &'static str,
+    pub timeline: Vec<TimeBucket>,
+}
+
+struct Tally {
+    value: String,
+    role: String,
+    count: u32,
+    trend: [u32; TREND_SLOTS],
+}
+
+fn tally(map: &mut HashMap<String, Tally>, key: &str, value: &str, role: &str, slot: usize) {
+    if let Some(t) = map.get_mut(key) {
+        t.count += 1;
+        t.trend[slot] += 1;
+        return;
+    }
+    let mut trend = [0; TREND_SLOTS];
+    trend[slot] = 1;
+    map.insert(key.to_string(), Tally { value: value.to_string(), role: role.to_string(), count: 1, trend });
+}
+
+fn ranked(kind: &'static str, map: HashMap<String, Tally>, top: usize) -> UsageGroup {
+    let distinct = map.len();
+    let mut all: Vec<Tally> = map.into_values().collect();
+    all.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
+    all.truncate(top);
+    let items = all.into_iter().map(|t| UsageItem { value: t.value, count: t.count, role: t.role, trend: t.trend.to_vec() }).collect();
+    UsageGroup { kind, distinct, items }
+}
+
+/// Words that say nothing about what a picture shows.
+fn is_filler(word: &str) -> bool {
+    matches!(
+        word,
+        "the" | "and" | "with" | "for" | "from" | "that" | "this" | "these" | "those" | "its" | "his" | "her" | "their" | "they"
+            | "she" | "him" | "who" | "whose" | "which" | "what" | "when" | "where" | "while" | "into" | "onto" | "over" | "under"
+            | "above" | "below" | "behind" | "between" | "through" | "across" | "around" | "against" | "along" | "near" | "off"
+            | "out" | "are" | "was" | "were" | "been" | "being" | "has" | "have" | "had" | "but" | "not" | "nor" | "than" | "then"
+            | "there" | "here" | "also" | "very" | "some" | "any" | "all" | "each" | "one" | "two" | "can" | "will" | "about"
+            | "like" | "such" | "other" | "both" | "more" | "most" | "you" | "your" | "our" | "lora" | "break"
+    )
+}
+
+/// Where a `<lora:name:0.8>`-style tag that opens at `rest` ends, if it is one.
+fn tag_len(rest: &str) -> Option<usize> {
+    let colon = rest.find(':')?;
+    if colon < 2 || colon > 16 || !rest[1..colon].chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    rest.find('>').map(|end| end + 1)
+}
+
+/// The distinct words of a (lower-cased) prompt worth counting: three
+/// letters or more, not numbers, not filler, not embedded LoRA tags.
+fn prompt_words(prompt: &str) -> Vec<&str> {
+    let mut words: Vec<&str> = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut i = 0;
+    while i < prompt.len() {
+        let c = prompt[i..].chars().next().unwrap_or(' ');
+        let skip = if c == '<' { tag_len(&prompt[i..]) } else { None };
+        if is_word_char(c) && skip.is_none() {
+            start.get_or_insert(i);
+            i += c.len_utf8();
+            continue;
+        }
+        if let Some(s) = start.take() {
+            words.push(&prompt[s..i]);
+        }
+        i += skip.unwrap_or(c.len_utf8());
+    }
+    if let Some(s) = start {
+        words.push(&prompt[s..]);
+    }
+    words.retain(|w| w.chars().count() >= 3 && w.chars().any(char::is_alphabetic) && !is_filler(w));
+    words.sort_unstable();
+    words.dedup();
+    words
+}
+
+fn timeline(days: &BTreeMap<dates::Day, u32>) -> (&'static str, Vec<TimeBucket>) {
+    let (Some((&first, _)), Some((&last, _))) = (days.first_key_value(), days.last_key_value()) else {
+        return ("day", Vec::new());
+    };
+    let within = |from: dates::Day, to: dates::Day| days.range(from..to).map(|(_, n)| n).sum::<u32>();
+    let mut out = Vec::new();
+    let span = last - first + 1;
+    if span <= 45 {
+        for day in first..=last {
+            let label = dates::format_day(day);
+            out.push(TimeBucket { query: format!("date:{label}"), label, count: within(day, day + 1) });
+        }
+        return ("day", out);
+    }
+    if span <= 400 {
+        let mut monday = first - dates::weekday(first) as dates::Day;
+        while monday <= last {
+            let label = dates::format_day(monday);
+            let query = format!("date:{label}..{}", dates::format_day(monday + 6));
+            out.push(TimeBucket { label, query, count: within(monday, monday + 7) });
+            monday += 7;
+        }
+        return ("week", out);
+    }
+    let (mut year, mut month, _) = dates::civil_from_days(first);
+    let (last_year, last_month, _) = dates::civil_from_days(last);
+    if span <= 1900 {
+        while (year, month) <= (last_year, last_month) {
+            let from = dates::days_from_civil(year, month, 1);
+            let label = format!("{year:04}-{month:02}");
+            let count = within(from, from + dates::days_in_month(year, month) as dates::Day);
+            out.push(TimeBucket { query: format!("date:{label}"), label, count });
+            (year, month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        }
+        return ("month", out);
+    }
+    while year <= last_year {
+        let label = format!("{year:04}");
+        let count = within(dates::days_from_civil(year, 1, 1), dates::days_from_civil(year + 1, 1, 1));
+        out.push(TimeBucket { query: format!("date:{label}"), label, count });
+        year += 1;
+    }
+    ("year", out)
+}
+
+impl Db {
+    /// Count what the images under `dir` were made with. One pass over the
+    /// same rows a search reads; ten thousand images take a few milliseconds.
+    pub fn usage(&self, dir: &str, recursive: bool) -> DbResult<Usage> {
+        let (cond, args) = dir_condition(dir, recursive, "f.");
+        let conn = self.read.lock();
+        let (first, last): (Option<i64>, Option<i64>) = conn.query_row(
+            &format!("SELECT min(f.mtime), max(f.mtime) FROM files f WHERE {cond}"),
+            params_from_iter(args.iter()),
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut usage = Usage { unit: "day", ..Default::default() };
+        let (Some(first), Some(last)) = (first, last) else { return Ok(usage) };
+        let span = (last - first).max(0) as i128 + 1;
+        let slot = |mtime: i64| (((mtime - first).max(0) as i128 * TREND_SLOTS as i128) / span) as usize;
+
+        let mut kinds: Vec<HashMap<String, Tally>> = USAGE_KINDS.iter().map(|_| HashMap::new()).collect();
+        let mut words: HashMap<String, Tally> = HashMap::new();
+        let mut days: BTreeMap<dates::Day, u32> = BTreeMap::new();
+
+        let sql = format!("SELECT f.mtime, f.source, t.facets, t.prompt FROM files f JOIN ftext t ON t.id = f.id WHERE {cond}");
+        let mut stmt = conn.prepare_cached(&sql)?;
+        let mut rows = stmt.query(params_from_iter(args.iter()))?;
+        while let Some(r) = rows.next()? {
+            let mtime: i64 = r.get(0)?;
+            let at = slot(mtime).min(TREND_SLOTS - 1);
+            usage.total += 1;
+            if !r.get_ref(1)?.as_str()?.is_empty() {
+                usage.generated += 1;
+            }
+            *days.entry(dates::local_day(mtime)).or_insert(0) += 1;
+            for line in r.get_ref(2)?.as_str()?.split('\n') {
+                let mut parts = line.split('\t');
+                let (Some(kind), Some(key), Some(value)) = (parts.next(), parts.next(), parts.next()) else { continue };
+                let Some(k) = USAGE_KINDS.iter().position(|x| *x == kind) else { continue };
+                tally(&mut kinds[k], key, value, parts.next().unwrap_or(""), at);
+            }
+            for word in prompt_words(r.get_ref(3)?.as_str()?) {
+                tally(&mut words, word, word, "", at);
+            }
+        }
+
+        usage.groups = USAGE_KINDS.iter().zip(kinds).map(|(kind, map)| ranked(kind, map, USAGE_TOP)).collect();
+        usage.groups.push(ranked("word", words, USAGE_WORDS));
+        (usage.unit, usage.timeline) = timeline(&days);
+        Ok(usage)
     }
 }
 
@@ -468,15 +818,25 @@ mod tests {
     fn terms() {
         let t = parse_terms(r#"blue "red fox" -ugly model:flux -lora:"detail xl" a-b"#);
         assert_eq!(t.len(), 6);
-        assert_eq!(t[0], Term { negate: false, field: None, text: "blue".into() });
-        assert_eq!(t[1], Term { negate: false, field: None, text: "red fox".into() });
-        assert_eq!(t[2], Term { negate: true, field: None, text: "ugly".into() });
-        assert_eq!(t[3], Term { negate: false, field: Some("model"), text: "flux".into() });
+        let term = |negate, field, exact, text: &str| Term { negate, field, exact, text: text.into() };
+        assert_eq!(t[0], term(false, None, false, "blue"));
+        assert_eq!(t[1], term(false, None, false, "red fox"));
+        assert_eq!(t[2], term(true, None, false, "ugly"));
+        assert_eq!(t[3], term(false, Some("model"), false, "flux"));
         assert_eq!(parse_terms("name:IMG")[0].field, Some("lname"));
-        assert_eq!(t[4], Term { negate: true, field: Some("loras"), text: "detail xl".into() });
-        assert_eq!(t[5], Term { negate: false, field: None, text: "a-b".into() });
+        assert_eq!(t[4], term(true, Some("loras"), false, "detail xl"));
+        assert_eq!(t[5], term(false, None, false, "a-b"));
         // A URL-ish token is not mistaken for a field.
         assert_eq!(parse_terms("http://x")[0].field, None);
+        // `:=` asks for the whole value; on its own `=` is just a character.
+        let t = parse_terms(r#"model:="flux dev" -lora:=detail seed:=12 a=b =c size:=1024x1024 date:2026-10"#);
+        assert_eq!(t[0], term(false, Some("model"), true, "flux dev"));
+        assert_eq!(t[1], term(true, Some("loras"), true, "detail"));
+        assert_eq!(t[2], term(false, Some("seed"), true, "12"));
+        assert_eq!(t[3], term(false, None, false, "a=b"));
+        assert_eq!(t[4], term(false, None, false, "=c"));
+        assert_eq!(t[5], term(false, Some("size"), true, "1024x1024"));
+        assert_eq!(t[6], term(false, Some("date"), false, "2026-10"));
     }
 
     #[test]
@@ -528,6 +888,238 @@ mod tests {
         assert_eq!(names(&db, "/out", true, "wolf"), Vec::<String>::new());
         db.delete_tree("/out").unwrap();
         assert_eq!(names(&db, "/", true, "").len(), 2);
+    }
+
+    /// A record with everything spelled out, dated at noon on a local day.
+    fn made(name: &str, date: (i32, u32, u32), fill: impl FnOnce(&mut GenInfo)) -> FileRecord {
+        let mut info = GenInfo::default();
+        fill(&mut info);
+        let mtime = dates::local_midnight_ms(dates::days_from_civil(date.0, date.1, date.2)) + 12 * 3_600_000;
+        FileRecord { dir: "/out".into(), name: name.into(), size: 10, mtime, video: false, info }
+    }
+
+    fn library() -> (tempfile::TempDir, Db) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path()).unwrap();
+        db.upsert(&[
+            made("a.png", (2026, 10, 1), |i| {
+                i.source = "comfyui".into();
+                i.prompt = "a red fox in the snow <lora:detail_xl:0.8>".into();
+                i.seed = "22".into();
+                i.model = "Flux1-Dev.safetensors".into();
+                i.add_model("unet", "Flux1-Dev.safetensors", "");
+                i.add_model("vae", "ae.safetensors", "");
+                i.add_lora("detail_xl", Some(0.8), None);
+                i.add_lora("style/Ink  Wash.safetensors", Some(1.0), None);
+                i.param("Steps", "20");
+                i.param("CFG", "7.0");
+                i.param("Sampler", "euler");
+                i.param("Scheduler", "simple");
+                (i.width, i.height) = (1024, 1024);
+            }),
+            made("b.png", (2026, 10, 2), |i| {
+                i.source = "a1111".into();
+                i.prompt = "foxglove meadow at dawn".into();
+                i.seed = "2201".into();
+                i.model = "flux1-dev.safetensors".into();
+                i.add_model("checkpoint", "flux1-dev.safetensors", "");
+                i.add_lora("detail_xl", Some(0.3), None);
+                i.param("Steps", "30");
+                i.param("CFG scale", "7");
+                i.param("Sampler", "DPM++ 2M Karras");
+                (i.width, i.height) = (832, 1216);
+            }),
+            made("c.png", (2026, 10, 9), |i| {
+                i.source = "comfyui".into();
+                i.prompt = "a clockwork fox".into();
+                i.seed = "22".into();
+                i.model = "sd_xl_base_1.0".into();
+                i.add_model("checkpoint", "sd_xl_base_1.0", "");
+                i.add_model("vae", "ae.safetensors", "");
+                i.add_lora("detail_xl_v2", None, None);
+                i.param("Steps", "130");
+                i.param("CFG", "6.5");
+                (i.width, i.height) = (1024, 1024);
+            }),
+            made("d.png", (2026, 11, 3), |i| (i.width, i.height) = (640, 480)),
+        ])
+        .unwrap();
+        (tmp, db)
+    }
+
+    #[test]
+    fn exact_filters() {
+        let (_tmp, db) = library();
+        let find = |text: &str| names(&db, "/out", true, text);
+        let none = Vec::<String>::new();
+
+        // A seed in full, where plain seed: matches from the start.
+        assert_eq!(find("seed:22"), ["a.png", "b.png", "c.png"]);
+        assert_eq!(find("seed:=22"), ["a.png", "c.png"]);
+
+        // A model by its whole name, however it is capitalised and whatever
+        // it was used as.
+        assert_eq!(find("model:flux1"), ["a.png", "b.png"]);
+        assert_eq!(find("model:=flux1"), none);
+        assert_eq!(find("model:=flux1-dev.safetensors"), ["a.png", "b.png"]);
+        assert_eq!(find("model:=FLUX1-DEV.safetensors"), ["a.png", "b.png"]);
+        assert_eq!(find("model:=ae.safetensors"), ["a.png", "c.png"]);
+
+        // LoRAs: one, or all of several, at any strength.
+        assert_eq!(find("lora:detail"), ["a.png", "b.png", "c.png"]);
+        assert_eq!(find("lora:=detail_xl"), ["a.png", "b.png"]);
+        assert_eq!(find(r#"lora:=detail_xl lora:="style/ink wash.safetensors""#), ["a.png"]);
+        assert_eq!(find("-lora:=detail_xl"), ["c.png", "d.png"]);
+
+        // Settings. Numbers compare as numbers and never match in part.
+        assert_eq!(find("steps:30"), ["b.png"]);
+        assert_eq!(find("steps:=30.0"), ["b.png"]);
+        assert_eq!(find("cfg:7"), ["a.png", "b.png"]);
+        assert_eq!(find("cfg:=6.5"), ["c.png"]);
+        assert_eq!(find("sampler:dpm"), ["b.png"]);
+        assert_eq!(find("sampler:=dpm"), none);
+        assert_eq!(find(r#"sampler:="dpm++ 2m karras""#), ["b.png"]);
+        assert_eq!(find("sampler:=euler scheduler:=simple"), ["a.png"]);
+        assert_eq!(find("size:=1024x1024"), ["a.png", "c.png"]);
+        assert_eq!(find("size:1024×1024"), ["a.png", "c.png"]);
+        assert_eq!(find("size:x12"), ["b.png"]);
+
+        // Whole words in a prompt; a whole file name.
+        assert_eq!(find("prompt:fox"), ["a.png", "b.png", "c.png"]);
+        assert_eq!(find("prompt:=fox"), ["a.png", "c.png"]);
+        assert_eq!(find(r#"prompt:="red fox""#), ["a.png"]);
+        assert_eq!(find("name:=a.png"), ["a.png"]);
+        assert_eq!(find("name:=a"), none);
+
+        // Dates, in this machine's time zone.
+        assert_eq!(find("date:2026-10-02"), ["b.png"]);
+        assert_eq!(find("date:2026-10"), ["a.png", "b.png", "c.png"]);
+        assert_eq!(find("date:2026").len(), 4);
+        assert_eq!(find("date:2026-10-01..2026-10-02"), ["a.png", "b.png"]);
+        assert_eq!(find("-date:2026-10"), ["d.png"]);
+        assert_eq!(find("date:soon"), none);
+        assert_eq!(find("date:2026-10 model:=sd_xl_base_1.0"), ["c.png"]);
+    }
+
+    #[test]
+    fn usage_counts() {
+        let (_tmp, db) = library();
+        let usage = db.usage("/out", true).unwrap();
+        assert_eq!((usage.total, usage.generated), (4, 3));
+
+        let group = |kind: &str| usage.groups.iter().find(|g| g.kind == kind).unwrap_or_else(|| panic!("no {kind} group"));
+        let counts = |kind: &str| group(kind).items.iter().map(|i| (i.value.to_lowercase(), i.count)).collect::<Vec<_>>();
+        let pairs = |list: &[(&str, u32)]| list.iter().map(|(v, n)| (v.to_string(), *n)).collect::<Vec<_>>();
+
+        // Most used first; spellings that differ only in case are one model.
+        assert_eq!(counts("model"), pairs(&[("flux1-dev.safetensors", 2), ("sd_xl_base_1.0", 1)]));
+        assert_eq!(counts("lora"), pairs(&[("detail_xl", 2), ("detail_xl_v2", 1), ("style/ink wash.safetensors", 1)]));
+        assert_eq!(counts("aux"), pairs(&[("ae.safetensors", 2)]));
+        assert_eq!(group("aux").items[0].role, "vae");
+        assert_eq!(counts("sampler"), pairs(&[("dpm++ 2m karras", 1), ("euler", 1)]));
+        assert_eq!(counts("steps"), pairs(&[("130", 1), ("20", 1), ("30", 1)]));
+        assert_eq!(counts("cfg"), pairs(&[("7", 2), ("6.5", 1)]));
+        assert_eq!(counts("size"), pairs(&[("1024x1024", 2), ("640x480", 1), ("832x1216", 1)]));
+        assert_eq!(counts("source"), pairs(&[("comfyui", 2), ("a1111", 1)]));
+        assert_eq!(group("lora").distinct, 3);
+        // Values keep the way they were written.
+        assert!(group("sampler").items.iter().any(|i| i.value == "DPM++ 2M Karras"));
+
+        // Prompt words: no filler, no LoRA tags, no part-words.
+        let words = counts("word");
+        assert_eq!(words[0], ("fox".to_string(), 2));
+        assert!(words.contains(&("foxglove".to_string(), 1)));
+        assert!(!words.iter().any(|(w, _)| w == "the" || w == "lora" || w == "detail_xl"), "{words:?}");
+
+        // Every count is spread over the time span, and adds up.
+        for g in &usage.groups {
+            for item in &g.items {
+                assert_eq!(item.trend.len(), TREND_SLOTS);
+                assert_eq!(item.trend.iter().sum::<u32>(), item.count, "{} {}", g.kind, item.value);
+            }
+        }
+        let flux = &group("model").items[0];
+        assert!(flux.trend[0] == 2 && flux.trend[1..].iter().all(|n| *n == 0), "{:?}", flux.trend);
+
+        // The timeline: a bar a day here, and each bar's search finds its images.
+        assert_eq!(usage.unit, "day");
+        assert_eq!(usage.timeline.len(), 34);
+        assert_eq!((usage.timeline[0].label.as_str(), usage.timeline[0].count), ("2026-10-01", 1));
+        assert_eq!(usage.timeline[33].label, "2026-11-03");
+        assert_eq!(usage.timeline.iter().map(|b| b.count).sum::<u32>(), 4);
+        for bucket in &usage.timeline {
+            assert_eq!(names(&db, "/out", true, &bucket.query).len() as u32, bucket.count, "{}", bucket.query);
+        }
+
+        // Counting a facet and filtering by it agree.
+        for (kind, field) in [("model", "model"), ("lora", "lora"), ("steps", "steps"), ("cfg", "cfg"), ("size", "size"), ("word", "prompt")] {
+            for item in &group(kind).items {
+                let found = names(&db, "/out", true, &format!("{field}:=\"{}\"", item.value)).len() as u32;
+                assert_eq!(found, item.count, "{field}:={}", item.value);
+            }
+        }
+
+        // Scope follows the folder.
+        assert_eq!(db.usage("/elsewhere", true).unwrap().total, 0);
+        assert!(db.usage("/elsewhere", true).unwrap().timeline.is_empty());
+    }
+
+    #[test]
+    fn timeline_units() {
+        let day = dates::days_from_civil;
+        let series = |list: &[(dates::Day, u32)]| timeline(&list.iter().copied().collect());
+
+        // Up to six weeks: a bar a day, gaps included.
+        let (unit, bars) = series(&[(day(2026, 10, 1), 2), (day(2026, 10, 4), 1)]);
+        assert_eq!(unit, "day");
+        assert_eq!(bars.iter().map(|b| (b.label.as_str(), b.count)).collect::<Vec<_>>(), [("2026-10-01", 2), ("2026-10-02", 0), ("2026-10-03", 0), ("2026-10-04", 1)]);
+
+        // Up to a year or so: weeks, Monday to Sunday.
+        let (unit, bars) = series(&[(day(2026, 7, 1), 1), (day(2026, 7, 5), 2), (day(2026, 7, 6), 4), (day(2026, 10, 11), 8)]);
+        assert_eq!(unit, "week");
+        assert_eq!((bars[0].label.as_str(), bars[0].query.as_str(), bars[0].count), ("2026-06-29", "date:2026-06-29..2026-07-05", 3));
+        assert_eq!((bars[1].label.as_str(), bars[1].count), ("2026-07-06", 4));
+        let last = bars.last().unwrap();
+        assert_eq!((last.query.as_str(), last.count), ("date:2026-10-05..2026-10-11", 8));
+        assert_eq!(bars.len(), 15);
+
+        // Longer: months, then years.
+        let (unit, bars) = series(&[(day(2024, 11, 30), 1), (day(2026, 2, 1), 5)]);
+        assert_eq!(unit, "month");
+        assert_eq!(bars.len(), 16);
+        assert_eq!((bars[0].query.as_str(), bars[0].count), ("date:2024-11", 1));
+        assert_eq!((bars[15].query.as_str(), bars[15].count), ("date:2026-02", 5));
+        let (unit, bars) = series(&[(day(2019, 6, 1), 1), (day(2026, 2, 1), 5)]);
+        assert_eq!(unit, "year");
+        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]);
+        assert_eq!(bars[7].query, "date:2026");
+
+        assert!(series(&[]).1.is_empty());
+    }
+
+    #[test]
+    fn words() {
+        assert_eq!(
+            prompt_words("a red fox, (masterpiece:1.2), <lora:detail_xl:0.8> 4k uhd, x < y, the fox and 2024"),
+            ["fox", "masterpiece", "red", "uhd"]
+        );
+        assert_eq!(prompt_words("<lora:a:1>"), Vec::<&str>::new());
+        assert_eq!(prompt_words("größe ünïcode_word"), ["größe", "ünïcode_word"]);
+
+        assert!(has_word("a red fox.", "fox"));
+        assert!(has_word("fox", "fox"));
+        assert!(has_word("a red fox", "red fox"));
+        assert!(has_word("foxglove, fox2, fox", "fox"));
+        assert!(!has_word("foxglove", "fox"));
+        assert!(!has_word("fox_like", "fox"));
+        assert!(!has_word("éfox", "fox"));
+        assert!(!has_word("anything", ""));
+
+        assert!(facet_matches("\nmodel\tflux\tFlux\t\naux\tae\tae\tvae\n", "model", "ae", true));
+        assert!(facet_matches("\nlora\tdetail_xl\tdetail_xl\t\n", "lora", "detail", false));
+        assert!(!facet_matches("\nlora\tdetail_xl\tdetail_xl\t\n", "lora", "detail", true));
+        assert!(!facet_matches("\nlora\tdetail_xl\tdetail_xl\t\n", "model", "detail_xl", true));
+        assert!(!facet_matches("", "model", "", true));
     }
 
     #[test]

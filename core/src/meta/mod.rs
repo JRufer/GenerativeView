@@ -159,6 +159,55 @@ impl GenInfo {
         s
     }
 
+    /// What this image was made with, as the index stores it: one line per
+    /// model, LoRA and setting worth counting or filtering by exactly.
+    ///
+    /// ```text
+    /// \n kind \t lower-cased value \t value as written \t role \n ...
+    /// ```
+    ///
+    /// Kinds: `model` (the main one), `aux` (every other model, with what it
+    /// was used as for a role), `lora`, `sampler`, `scheduler`, `steps`,
+    /// `cfg`, `size` and `source`.
+    pub fn facets_text(&self) -> String {
+        let mut out = String::from("\n");
+        let mut add = |kind: &str, value: &str, role: &str| {
+            let value = facet_value(kind, value);
+            if value.is_empty() {
+                return;
+            }
+            let line = format!("{kind}\t{}\t{value}\t{role}\n", value.to_lowercase());
+            // Listed twice (two LoRA loaders, say) still counts once.
+            if !out.contains(&format!("\n{line}")) {
+                out.push_str(&line);
+            }
+        };
+        add("model", &self.model, "");
+        for m in &self.models {
+            if m.name != self.model {
+                add("aux", &m.name, &m.kind);
+            }
+        }
+        for l in &self.loras {
+            add("lora", &l.name, "");
+        }
+        for (key, value) in &self.params {
+            let kind = match key.to_ascii_lowercase().as_str() {
+                "sampler" => "sampler",
+                "scheduler" => "scheduler",
+                "steps" => "steps",
+                "cfg" | "cfg scale" => "cfg",
+                _ => continue,
+            };
+            add(kind, value, "");
+        }
+        if self.width > 0 && self.height > 0 {
+            add("size", &format!("{}x{}", self.width, self.height), "");
+        }
+        add("source", &self.source, "");
+        out
+    }
+
     fn finish(&mut self) {
         if self.model.is_empty() {
             let pick = ["checkpoint", "unet", "model"]
@@ -180,6 +229,22 @@ impl GenInfo {
         self.models.sort_by_key(|m| rank(&m.kind));
         self.prompt = self.prompt.trim().to_string();
         self.negative = self.negative.trim().to_string();
+    }
+}
+
+/// A facet value as it is stored and compared: on one line, single-spaced,
+/// free of the quote character the search box uses for phrases, and with
+/// numbers written one way (`7.0` and `7` are the same CFG).
+pub fn facet_value(kind: &str, value: &str) -> String {
+    let mut clean = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    clean.retain(|c| c != '"');
+    match kind {
+        "steps" | "cfg" => match clean.parse::<f64>() {
+            Ok(n) if n.is_finite() => format!("{n}"),
+            _ => clean,
+        },
+        "size" => clean.replace(['×', '*', 'X'], "x").replace(' ', ""),
+        _ => clean,
     }
 }
 
@@ -301,5 +366,40 @@ pub fn media_kind(path: &Path) -> Option<bool> {
         b"png" | b"jpg" | b"jpeg" | b"webp" | b"gif" | b"bmp" => Some(false),
         b"mp4" | b"webm" | b"mov" | b"mkv" | b"m4v" => Some(true),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn facets() {
+        let mut info = GenInfo { source: "comfyui".into(), model: "Flux Dev.safetensors".into(), width: 832, height: 1216, ..Default::default() };
+        info.add_model("unet", "Flux Dev.safetensors", "");
+        info.add_model("vae", "ae.safetensors", "");
+        info.add_lora("style/Ink \"Wash\"\tv2", Some(0.8), None);
+        info.param("Steps", "24");
+        info.param("CFG", "7.0");
+        info.param("Sampler", "euler");
+        info.param("Denoise", "1");
+        assert_eq!(
+            info.facets_text(),
+            "\nmodel\tflux dev.safetensors\tFlux Dev.safetensors\t\n\
+             aux\tae.safetensors\tae.safetensors\tvae\n\
+             lora\tstyle/ink wash v2\tstyle/Ink Wash v2\t\n\
+             steps\t24\t24\t\n\
+             cfg\t7\t7\t\n\
+             sampler\teuler\teuler\t\n\
+             size\t832x1216\t832x1216\t\n\
+             source\tcomfyui\tcomfyui\t\n"
+        );
+        assert_eq!(GenInfo::default().facets_text(), "\n");
+
+        assert_eq!(facet_value("cfg", " 6.50 "), "6.5");
+        assert_eq!(facet_value("steps", "20"), "20");
+        assert_eq!(facet_value("steps", "twenty"), "twenty");
+        assert_eq!(facet_value("size", "1024 × 1024"), "1024x1024");
+        assert_eq!(facet_value("model", "  a \"b\"\n c "), "a b c");
     }
 }
