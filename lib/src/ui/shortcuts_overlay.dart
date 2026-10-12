@@ -22,6 +22,8 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
     'Moving around',
     [
       ('Arrows  or  W A S D', 'Move the selection; previous / next in the focus view'),
+      ('↑  /  ↓', 'Zoom in or out in the focus view (up to 200%)'),
+      ('Pinch  or  wheel', 'Zoom in the focus view; drag to look around'),
       ('Home  End  PgUp  PgDn', 'Jump'),
       ('Enter  or  Space', 'Open the picture / back to the grid'),
       ('Esc', 'Back, close a panel, or clear the selection'),

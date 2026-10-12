@@ -127,6 +127,17 @@ class AppState extends ChangeNotifier {
   final StreamController<String> _notices = StreamController.broadcast();
   Stream<String> get notices => _notices.stream;
 
+  /// Zoom nudges from the keyboard for the picture in the focus view: one
+  /// stop in (positive) or out (negative) per step.
+  final StreamController<int> _zoomSteps = StreamController.broadcast();
+  Stream<int> get zoomSteps => _zoomSteps.stream;
+
+  /// Zooms the picture in the focus view [steps] stops in, or out if negative.
+  void zoomFocus(int steps) {
+    if (mode != ViewMode.focus || steps == 0) return;
+    _zoomSteps.add(steps);
+  }
+
   // ---------------------------------------------------------------- view
 
   String? folder;
@@ -1285,6 +1296,7 @@ class AppState extends ChangeNotifier {
     upscales.dispose();
     notesTick.dispose();
     _notices.close();
+    _zoomSteps.close();
     for (final t in _saveTimers.values) {
       t.cancel();
     }
