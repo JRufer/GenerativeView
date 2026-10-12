@@ -460,7 +460,8 @@ void main() {
     results.add(RemixImage(pngWithText(256, 384, 99, const {})));
     unawaited(results.close());
     await pumpUntil(tester, () => find.text('Remix Done').evaluate().isNotEmpty, what: 'the done chip');
-    expect(find.text('Remix Running'), findsNothing);
+    // The running chip fades out as the done one comes in.
+    await pumpUntil(tester, () => find.text('Remix Running').evaluate().isEmpty, what: 'the running chip to go');
     final made = File('${library.path}/sub/sailor_remix1.png');
     expect(made.existsSync(), isTrue);
     expect((notesFile('${library.path}/sub')['images']['sailor_remix1.png'] as Map)['collections'], [AppState.remixCollection]);
