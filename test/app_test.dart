@@ -1430,6 +1430,19 @@ void main() {
     expect(chip().label, '100%');
     expect(chip().highlighted, isTrue);
     await screenshot(tester, boundary, '18-zoom-100');
+    // It stays for as long as the image is at 100%.
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.byWidget(chip()),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      1,
+    );
     // Back down: ten at a time, to the fitted size and no further.
     for (var percent = 90; percent > fit; percent -= 10) {
       await wheel(120);
@@ -1440,9 +1453,6 @@ void main() {
     await wheel(120);
     expect(chip().label, '${fit.round()}%');
     expect(state.items[state.selectedIndex].name, 'large.png');
-    // The zoom bar and its percentage stay on screen whatever the zoom.
-    await tester.pump(const Duration(seconds: 3));
-    expect(chip().label, '${fit.round()}%');
 
     // ---- 200% is as far in as it goes -----------------------------------------
     for (var i = 0; i < 40; i++) {
@@ -1473,34 +1483,20 @@ void main() {
     expect(chip().label, '180%');
     expect(state.selectedIndex, picture, reason: 'up and down only zoom');
 
-    // ---- the buttons either side of the slider step too ----------------------
-    Future<void> settle() async {
-      for (var i = 0; i < 6; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-    }
-
-    await tester.tap(find.byTooltip('Zoom out').hitTestable());
-    await settle();
-    expect(chip().label, '170%');
-    await tester.tap(find.byTooltip('Zoom in').hitTestable());
-    await settle();
-    expect(chip().label, '180%');
-
-    // ---- the slider: far left is fitted, far right is 200% -------------------
-    final slider = find.byKey(const ValueKey<String>('zoom-slider')).hitTestable();
-    expect(slider, findsOneWidget);
-    await tester.drag(slider, const Offset(-900, 0));
-    await settle();
-    expect(chip().label, '${fit.round()}%');
-    await tester.drag(slider, const Offset(900, 0));
-    await settle();
-    expect(chip().label, '200%');
-    expect(state.selectedIndex, picture, reason: 'the slider does not swipe');
-    // Tapping the percentage fits the picture again.
-    await tester.tap(find.byTooltip('Fit to the view').hitTestable());
-    await settle();
-    expect(chip().label, '${fit.round()}%');
+    // Away from 100% the chip fades once the zooming stops.
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.byWidget(chip()),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      0,
+    );
+    expect(find.byKey(const ValueKey<String>('zoom-slider')), findsNothing);
 
     // ---- an image smaller than the view: fitted is above 100% ---------------
     view = await show('ComfyUI_00001_.png');

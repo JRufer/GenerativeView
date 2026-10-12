@@ -13,8 +13,8 @@ import 'thumb_image.dart';
 import 'video_page.dart';
 
 /// One image at a time. Swipe (or use the keyboard) to move through the
-/// folder; zoom with the slider along the top, a pinch, the wheel or the up
-/// and down keys, and drag to look around while zoomed in. Double tap to go
+/// folder; zoom with a pinch, the wheel or the up and down keys, and drag
+/// to look around while zoomed in. Double tap to go
 /// back to the grid, right-click or press and hold for the image's menu.
 class FocusView extends StatefulWidget {
   const FocusView({super.key, required this.state});
@@ -116,7 +116,7 @@ class _FocusViewState extends State<FocusView> {
 }
 
 /// The chip that says how far in the image is zoomed, as a percentage of its
-/// real size. It is coloured at exactly 100 %.
+/// real size. It is coloured, and stays, at exactly 100 %.
 class ZoomChip extends StatelessWidget {
   const ZoomChip({super.key, required this.label, required this.highlighted});
   final String label;
@@ -188,6 +188,7 @@ const double maxZoomPercent = 200;
 class _FocusPageState extends State<_FocusPage>
     with SingleTickerProviderStateMixin {
   final TransformationController _transform = TransformationController();
+  final ValueNotifier<bool> _chipShown = ValueNotifier<bool>(false);
   late final AnimationController _glide;
   late final StreamSubscription<int> _keys;
 
@@ -199,12 +200,10 @@ class _FocusPageState extends State<_FocusPage>
   bool _wasZoomed = false;
   double _lastScale = 1;
   int _pointers = 0;
-
-  /// True while the zoom slider is being dragged.
-  bool _sliding = false;
   double _glideFrom = 1;
   double _glideTo = 1;
   Timer? _settle;
+  Timer? _chipTimer;
 
   MediaItem get item => widget.item;
 
@@ -229,9 +228,11 @@ class _FocusPageState extends State<_FocusPage>
   @override
   void dispose() {
     _settle?.cancel();
+    _chipTimer?.cancel();
     _keys.cancel();
     _glide.dispose();
     _transform.dispose();
+    _chipShown.dispose();
     super.dispose();
   }
 
@@ -304,6 +305,7 @@ class _FocusPageState extends State<_FocusPage>
     _settle?.cancel();
     _glide.stop();
     _set(_centred(_fitScale));
+    _chipShown.value = false;
     _noteZoomed();
   }
 
@@ -365,9 +367,18 @@ class _FocusPageState extends State<_FocusPage>
     }
     if ((scale - _lastScale).abs() > 1e-5) {
       _lastScale = scale;
+      _showChip();
       _settleSoon();
     }
     _noteZoomed();
+  }
+
+  void _showChip() {
+    _chipShown.value = true;
+    _chipTimer?.cancel();
+    _chipTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) _chipShown.value = false;
+    });
   }
 
   /// The scale one notch of the wheel away from [scale]: the next stop.
@@ -419,13 +430,7 @@ class _FocusPageState extends State<_FocusPage>
 
   void _settleNow() {
     _settle = null;
-    if (!mounted ||
-        _pointers > 0 ||
-        _sliding ||
-        _glide.isAnimating ||
-        item.isVideo) {
-      return;
-    }
+    if (!mounted || _pointers > 0 || _glide.isAnimating || item.isVideo) return;
     final unit = _unit;
     final percent = _scale * unit;
     final fitted = _fitScale * unit;
@@ -468,8 +473,7 @@ class _FocusPageState extends State<_FocusPage>
     _glide.forward(from: 0);
   }
 
-  /// [steps] stops in, or out when negative: the up and down keys, and the
-  /// buttons either side of the slider. Held keys carry on from where the
+  /// [steps] stops in, or out when negative: the up and down keys. Held keys carry on from where the
   /// last nudge was heading, not from wherever the glide has got to.
   void _zoomBy(int steps) {
     if (item.isVideo || _fit == null) return;
@@ -485,12 +489,6 @@ class _FocusPageState extends State<_FocusPage>
     _zoomBy(steps);
   }
 
-  void _slide(double percent) {
-    _glide.stop();
-    _settle?.cancel();
-    _zoomAboutMiddle((percent / _unit).clamp(1.0, _maxScale).toDouble());
-  }
-
   void _pointerGone(PointerEvent _) {
     _pointers = math.max(0, _pointers - 1);
     if (_pointers == 0) _settleSoon();
@@ -498,95 +496,24 @@ class _FocusPageState extends State<_FocusPage>
 
   // ---------------------------------------------------------------- build
 
-  /// Along the top: out, the slider, in, and how far in the image is.
-  /// Tapping the percentage fits the image to the view again.
-  Widget _zoomBar() {
-    return ValueListenableBuilder<Matrix4>(
-      valueListenable: _transform,
-      builder: (context, _, _) {
-        final percent = _percent;
-        if (percent == null) return const SizedBox.shrink();
-        final low = _unit;
-        final high = _maxScale * _unit;
-        final exact = (percent - 100).abs() < 0.5;
-        final canSlide = high - low >= 1;
-        return ExcludeFocus(
-          child: Container(
-            key: const ValueKey<String>('zoom-bar'),
-            constraints: const BoxConstraints(maxWidth: 440),
-            padding: const EdgeInsets.only(left: 2, right: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xD9151518),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: Palette.line),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Zoom out',
-                  iconSize: 18,
-                  color: Palette.text,
-                  onPressed: percent > low + _zoomSlack
-                      ? () => _zoomBy(-1)
-                      : null,
-                  icon: const Icon(Icons.remove),
-                ),
-                Expanded(
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 3,
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 9,
-                      ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 20,
-                      ),
-                    ),
-                    child: Slider(
-                      key: const ValueKey<String>('zoom-slider'),
-                      min: low,
-                      max: canSlide ? high : low + 1,
-                      value: percent.clamp(low, canSlide ? high : low + 1),
-                      onChangeStart: (_) => _sliding = true,
-                      onChanged: canSlide ? _slide : null,
-                      onChangeEnd: (_) {
-                        _sliding = false;
-                        _settleSoon();
-                      },
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Zoom in',
-                  iconSize: 18,
-                  color: Palette.text,
-                  onPressed: percent < high - _zoomSlack
-                      ? () => _zoomBy(1)
-                      : null,
-                  icon: const Icon(Icons.add),
-                ),
-                Tooltip(
-                  message: 'Fit to the view',
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _glideToScale(_fitScale),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minWidth: 58),
-                      child: Center(
-                        widthFactor: 1,
-                        child: ZoomChip(
-                          label: '${percent.round()}%',
-                          highlighted: exact,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+  /// How far in the image is, shown while zooming and whenever it is at
+  /// exactly 100 %. Small, and out of the way of the pointer.
+  Widget _chip() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _chipShown,
+      builder: (context, shown, _) => ValueListenableBuilder<Matrix4>(
+        valueListenable: _transform,
+        builder: (context, _, _) {
+          final percent = _percent;
+          if (percent == null) return const SizedBox.shrink();
+          final exact = (percent - 100).abs() < 0.5;
+          return AnimatedOpacity(
+            opacity: exact || shown ? 1 : 0,
+            duration: const Duration(milliseconds: 160),
+            child: ZoomChip(label: '${percent.round()}%', highlighted: exact),
+          );
+        },
+      ),
     );
   }
 
@@ -680,10 +607,10 @@ class _FocusPageState extends State<_FocusPage>
             ),
             if (!item.isVideo)
               Positioned(
-                top: 10,
-                left: 12,
-                right: 12,
-                child: Center(child: _zoomBar()),
+                top: 12,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(child: Center(child: _chip())),
               ),
           ],
         );
