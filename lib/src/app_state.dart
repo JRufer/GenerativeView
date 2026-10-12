@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
+import 'core/backends.dart' show RemixImage;
 import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
@@ -1184,6 +1186,65 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ================================================================ remix
+
+  /// Remixes sent and not yet all back.
+  final ValueNotifier<int> remixesWaiting = ValueNotifier(0);
+  final List<StreamSubscription<RemixImage>> _remixes = [];
+
+  /// Save each picture [results] brings back beside [original], as
+  /// `<name>_remix1.png`, `<name>_remix2.png` and so on, saying so as each
+  /// lands. Waits in the background for as long as the app is open.
+  void collectRemix(MediaItem original, Stream<RemixImage> results) {
+    final sep = Platform.pathSeparator;
+    final cut = original.path.lastIndexOf(sep);
+    final dir = cut < 0 ? '.' : original.path.substring(0, cut);
+    final file = original.path.substring(cut + 1);
+    final dot = file.lastIndexOf('.');
+    final stem = dot > 0 ? file.substring(0, dot) : file;
+    var saving = Future<void>.value();
+    late final StreamSubscription<RemixImage> sub;
+    void finish() {
+      _remixes.remove(sub);
+      if (!_disposed) remixesWaiting.value = _remixes.length;
+    }
+
+    sub = results.listen(
+      (image) {
+        // One at a time, so two pictures never take the same name.
+        saving = saving.then((_) => _saveRemix(dir, stem, image));
+      },
+      onError: (Object e) {
+        if (!_disposed) _notices.add('Remix failed: $e');
+      },
+      onDone: () => saving.whenComplete(finish),
+    );
+    _remixes.add(sub);
+    remixesWaiting.value = _remixes.length;
+  }
+
+  Future<void> _saveRemix(String dir, String stem, RemixImage image) async {
+    try {
+      final sep = Platform.pathSeparator;
+      var n = 1;
+      String name() => '${stem}_remix$n.${image.extension}';
+      while (await File('$dir$sep${name()}').exists()) {
+        n++;
+      }
+      final path = '$dir$sep${name()}';
+      // Written aside and renamed, so the folder watcher never sees half a
+      // picture.
+      final part = File('$dir$sep.${name()}.part');
+      await part.writeAsBytes(image.bytes, flush: true);
+      await part.rename(path);
+      if (_disposed) return;
+      _notices.add('Saved ${name()}');
+      _rescanSoon();
+    } catch (e) {
+      if (!_disposed) _notices.add('Could not save the remix: $e');
+    }
+  }
+
   // ================================================================ upscale
 
   /// The upscale models, whether each is here, and where they come from.
@@ -1294,6 +1355,10 @@ class AppState extends ChangeNotifier {
     _upscaleDownload?.cancel();
     upscaleDownload.dispose();
     upscales.dispose();
+    for (final sub in [..._remixes]) {
+      sub.cancel();
+    }
+    remixesWaiting.dispose();
     notesTick.dispose();
     _notices.close();
     _zoomSteps.close();
