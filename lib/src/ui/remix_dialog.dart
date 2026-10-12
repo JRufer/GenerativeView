@@ -143,7 +143,7 @@ class _RemixPanelState extends State<RemixPanel> {
       toast(
         context,
         '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
-        'saved beside the original when done.',
+        'saved beside the original and added to ${AppState.remixCollection}.',
       );
       Navigator.of(context).maybePop();
     } catch (e) {

@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../theme.dart';
 import 'filter_sheet.dart';
 import 'remix_dialog.dart';
+import 'remix_status.dart';
 import 'shortcuts_overlay.dart';
 import 'stats_page.dart';
 
@@ -67,6 +68,7 @@ class TopBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   Expanded(child: _FocusTitle(state: state)),
+                  RemixStatus(state: state, compact: true),
                   const SizedBox(width: 4),
                   info,
                 ],

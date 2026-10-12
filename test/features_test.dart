@@ -7,6 +7,7 @@
 // `realesr-general-x4v3.pth` (CI downloads it); otherwise only its panel is
 // checked.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,6 +16,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
+import 'package:generativeview/src/core/backends.dart' show RemixImage;
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/prompt_weights.dart';
@@ -440,6 +442,43 @@ void main() {
     expect(plain!.hasGeneration, isFalse);
     out.deleteSync();
     bare.deleteSync();
+    await close(tester, state);
+  });
+  testWidgets('a remix shows while it runs, goes to its picture when done, and joins Remixes', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => indexOf(state, 'sailor.png') >= 0, what: 'the sailor');
+    final sailor = state.items[indexOf(state, 'sailor.png')];
+    final results = StreamController<RemixImage>();
+    state.collectRemix(sailor, results.stream);
+    await pumpUntil(tester, () => find.text('Remix Running').evaluate().isNotEmpty, what: 'the running chip');
+    await screenshot(tester, boundary, '40-remix-running');
+
+    // The server answers; the picture is saved beside the original and put
+    // in the Remixes collection, which did not exist before.
+    final before = await tester.runAsync(state.collections);
+    expect(before!.any((c) => c.$1 == AppState.remixCollection), isFalse);
+    results.add(RemixImage(pngWithText(256, 384, 99, const {})));
+    unawaited(results.close());
+    await pumpUntil(tester, () => find.text('Remix Done').evaluate().isNotEmpty, what: 'the done chip');
+    expect(find.text('Remix Running'), findsNothing);
+    final made = File('${library.path}/sub/sailor_remix1.png');
+    expect(made.existsSync(), isTrue);
+    expect((notesFile('${library.path}/sub')['images']['sailor_remix1.png'] as Map)['collections'], [AppState.remixCollection]);
+    final after = await tester.runAsync(state.collections);
+    expect(after!.any((c) => c.$1 == AppState.remixCollection && c.$2 == 1), isTrue);
+
+    // Tapped, it goes to the folder the remix is in and points it out.
+    await tester.tap(find.text('Remix Done'));
+    await pumpUntil(
+      tester,
+      () => (state.folder ?? '').endsWith('sub') && state.selected?.name == 'sailor_remix1.png',
+      what: 'the remix picked out in its folder',
+    );
+    expect(state.highlightIds, contains(state.selected!.id));
+    expect(state.remixes.value, isEmpty);
+    await screenshot(tester, boundary, '41-remix-shown');
+    await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
+    made.deleteSync();
     await close(tester, state);
   });
 }

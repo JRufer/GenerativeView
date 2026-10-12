@@ -12,6 +12,7 @@ import 'focus_view.dart';
 import 'folder_panel.dart';
 import 'media_grid.dart';
 import 'meta_panel.dart';
+import 'remix_status.dart';
 import 'top_bar.dart';
 import 'upscale_dialog.dart';
 
@@ -147,6 +148,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       children: [
                         _body(constraints.maxWidth),
                         Positioned(right: 12, bottom: 12, child: UpscaleJobs(state: state)),
+                        // Over the grid, top and centre where it is seen. In
+                        // the focus view it sits in the top bar instead, so
+                        // nothing covers the picture.
+                        if (!focus)
+                          Positioned(
+                            top: 12,
+                            left: 0,
+                            right: 0,
+                            child: Center(child: RemixStatus(state: state)),
+                          ),
                       ],
                     ),
                   ),
