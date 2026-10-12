@@ -379,6 +379,9 @@ class _MetaPanelState extends State<MetaPanel> {
             controller: _scroll,
             child: ListView(
               controller: _scroll,
+              // A few screens of text at most: build it all, so nothing
+              // below the fold is missing when looked for.
+              cacheExtent: 4000,
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
               children: sideBySide
                   ? [

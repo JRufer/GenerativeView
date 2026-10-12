@@ -30,8 +30,8 @@ jobs:
         run: cargo build --release --lib
       - name: Sample images and upscale model
         run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
-          (cd "$RUNNER_TEMP/samples" && git sparse-checkout set flux sdxl sd3 hidream lora area_composition)
+          git clone --depth 1 https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
+          find "$RUNNER_TEMP/samples" -name '*.png' | wc -l
           curl -sSL -o "$RUNNER_TEMP/realesr-general-x4v3.pth" https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
       - name: Analyze and test
         env:

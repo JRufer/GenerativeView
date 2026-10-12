@@ -435,6 +435,8 @@ void main() {
       find.descendant(of: panel, matching: find.byType(Scrollable)),
       const Offset(0, -200),
     );
+    await tester.ensureVisible(find.textContaining('prompt · '));
+    await tester.pump();
     await tester.tap(find.textContaining('prompt · '));
     await tester.pump();
     expect(copied.last, startsWith('{"3":{"class_type":"KSampler"'));
@@ -1950,12 +1952,12 @@ void main() {
 
     // ---- and the search box, short of room, grows over the tools as well ----
     // The bar: 6 of padding, the folder button and a gap, then everything
-    // else; four tools of 36 at the far end and a gap of 4 before them.
+    // else; six tools of 36 at the far end and a gap of 4 before them.
     const barLeft = 6.0 + 36 + 6;
     const barRight = 700.0 - 6;
-    const toolsLeft = barRight - 4 * 36;
+    const toolsLeft = barRight - 6 * 36;
     Rect box() => tester.getRect(search);
-    expect(tester.getRect(find.byTooltip('Sort and refresh')).left, toolsLeft);
+    expect(tester.getRect(find.byTooltip('Filters (F)')).left, toolsLeft);
     expect(box().width, 170);
     expect(box().right, closeTo(toolsLeft - 4, 0.01));
     await tester.tap(search);

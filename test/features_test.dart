@@ -133,6 +133,8 @@ void main() {
     state.select(indexOf(state, 'fox_01.png'));
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('new-collection')).evaluate().isNotEmpty, what: 'the collection panel');
+    await settle(tester);
     await settle(tester);
     await tester.enterText(find.byKey(const ValueKey('new-collection')), 'Foxes');
     await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -232,6 +234,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
     await settle(tester);
     await pumpUntil(tester, () => find.byKey(const ValueKey('remix-prompt')).evaluate().isNotEmpty, what: 'the remix panel');
+    await settle(tester);
     final editor = tester.widget<PromptEditor>(find.byKey(const ValueKey('remix-prompt')));
     final c = editor.controller;
     expect(c.text, 'a red fox at dawn, misty forest');
@@ -274,10 +277,11 @@ void main() {
 
     // ---- a slip is underlined, and corrected from the caret ---------------------
     await pumpUntil(tester, () => c.spelling?.ready ?? false, what: 'the dictionary');
-    c.value = const TextEditingValue(text: 'a red fox at dwan, misty forrest', selection: TextSelection.collapsed(offset: 28));
+    c.value = const TextEditingValue(text: 'a red fox at dwan, misty forset', selection: TextSelection.collapsed(offset: 28));
     await tester.pump();
     await tester.pump();
-    expect(c.misspelled('forrest'), isTrue);
+    expect(c.misspelled('forset'), isTrue);
+    expect(c.misspelled('dwan'), isTrue);
     expect(c.misspelled('misty'), isFalse);
     expect(c.misspelled('cinematic'), isFalse, reason: 'prompt words are known');
     expect(find.byKey(const ValueKey('spelling-popup')), findsOneWidget);
@@ -396,6 +400,7 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
     await settle(tester);
     await pumpUntil(tester, () => find.byKey(const ValueKey('upscale-start')).evaluate().isNotEmpty, what: 'the upscale panel');
+    await settle(tester);
     expect(find.text('Real-ESRGAN general'), findsOneWidget);
     expect(find.text('Real-ESRGAN anime'), findsOneWidget);
     expect(find.text('320 × 320  →  640 × 640'), findsOneWidget);
@@ -423,7 +428,7 @@ void main() {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await settle(tester);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('upscale-strip-metadata')).evaluate().isNotEmpty, what: 'the upscale panel again');
     await tester.tap(find.byKey(const ValueKey('upscale-strip-metadata')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('upscale-start')));

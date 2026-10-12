@@ -18,6 +18,17 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 - **Room to type**: while you are typing in it the search box grows over the folder's name and shrinks back when you are done; the count of matches stays in view beside it. Where the bar is too short for that to gain much (a tablet held upright, a narrow window) it takes the whole bar instead, tools included, until you press Enter or tap elsewhere. That, the search switch and the two panels move into place over a fifth of a second, or at once where the system is set to reduce motion.
 - **Pinned searches**: type a search and click the pin beside the ✕ to keep it. Clicking in the search box lists your pinned searches underneath; click one to run it, or its ✕ to remove it. Typing narrows the list to the pins that contain what you typed.
 - **Usage** (the bar-chart button; in a narrow window it is in the sort menu): which models, LoRAs, samplers, schedulers, step counts, CFG values, sizes and prompt words the folder's images use most, how each one's use is spread over time, and a timeline of images per day, week, month or year. Click anything to go back to the grid showing only the images behind that number.
+- **Ratings, flags and collections**: give a picture one to five stars (keys `1`–`5`, or the stars in the metadata panel), flag it to keep (`P`) or reject (`X`), and put it in any number of collections (`B`). Stars and flags show on the tiles; rejected pictures fade back. They are saved in a small `.generativeview.json` file in each picture's own folder, not inside the app, so a folder synced between machines carries them along: rate on the tablet, see the stars on the desktop. Edits made elsewhere show up as soon as the file changes. Collections are listed in the folder panel; tap one to see its pictures. See [Notes files](#notes-files).
+- **Filters** (the sliders button, or `F`): every model, LoRA, collection, prompt, prompt word, sampler, scheduler, step count, CFG, size and tool the folder's pictures used, with how many each, as chips to tap; plus a minimum star rating and keep / reject. Chips in one group widen the selection (this model or that one), groups narrow it (this model and that sampler). The filters are written into the search box as ordinary search text, so a typed search and filters work together, and the whole thing can be pinned. The button shows how many filters are on.
+- **Filter by prompt** like any other value: right-click or press and hold the prompt (or the negative prompt) in the metadata panel and choose "Show only images with this prompt".
+- **More like this** (`L`, or from the image menu or the metadata panel): the pictures that look like the selected one, most alike first, using the content-search model. It can be combined with any other search, `rating:4+ similar:"…"`.
+- **Remix** (`R`): the picture's prompt and negative prompt in an editor, with its seed (or a random one each time), size and a count, and a button that queues them on **ComfyUI**, **InvokeAI** or **Forge / A1111**. ComfyUI and InvokeAI get the picture's own workflow with those values changed in place; Forge gets the settings as values, so it can take a picture from any of the three. Server addresses are set once, under ⋮ › Generation servers, each with a Test button. Nothing is sent until Send is pressed.
+- **Prompt editor**: spelling is checked as you type, with corrections offered when the caret is in an underlined word (or on right-click). It knows an English word list, the words of prompts (`bokeh`, `sdxl`, `isometric`), every word used in two or more of the folder's prompts, and words you add. **Select a word or several and a slider appears under them** for their weight: drag it and the words become `(words:1.2)`, anywhere from 0.1 to 2.0 in steps of 0.05, starting from 1.0. With the caret inside a weighted group, the slider edits that group; the cross takes the weight off. `Ctrl` `↑` / `↓` nudge the weight by a step, as in ComfyUI. Weighted words are tinted, warmer the heavier.
+- **Upscale** (`Shift` `U`): on the device, with no server and no upload. Pick Real-ESRGAN *general* (photos, renders) or *anime* (illustration, flat colour), 2× or 4×. The result is saved beside the original as `name_up2x.png` with **either an exact copy of the original's metadata** (its PNG text chunks, JPEG EXIF/XMP/comment segments or WebP EXIF/XMP chunks, byte for byte, so the upscale searches and remixes like the original) **or none at all**. These models need no prompt. Each model is a one-time download of 2.5 or 4.9 MB from the Real-ESRGAN releases on github.com. See [Upscaling](#upscaling).
+- **New pictures** that arrive while a folder is open get a blue dot and a "3 new pictures" button over the grid that jumps to them. **Follow new pictures** (`N`, or ⋮) goes further and selects each one as it lands, in the focus view too, so the app can sit on a second screen while you generate.
+- **Best rated** (on the usage page): models and LoRAs ranked by the average stars of their rated pictures, with how many are rated, kept and rejected, and their best three pictures.
+- **Look up on Civitai**: right-click a model or LoRA in the metadata panel. By the hash A1111 and Forge save (the exact file), or else by file name, it shows the base model, the trigger words (tap to copy) and a link to its page. Only the hash or name is sent, and only when asked.
+- **Keyboard shortcuts**: `?` or `F1` lists them all.
 - **Image menu**: right-click, or press and hold, an image in the grid or the focus view. **Copy image** puts the file itself on the clipboard, bytes untouched, so the generation data goes with it wherever you paste. The menu also copies the prompt and the file path.
 - **Live**: images that appear, change or disappear while the folder is open show up in the grid and in search on their own.
 - **Folder panel** on the left: a lazily loaded tree, plus a box to paste a path into.
@@ -41,6 +52,11 @@ Both panels collapse; on narrow screens they slide over the grid instead of sitt
 | `steps:30` | exactly 30 steps (also `cfg:7`, where `7` and `7.0` are the same) |
 | `size:1024x1024` | image dimensions contain `1024x1024` |
 | `date:2026-10` | file dated that month (also `date:2026-10-09`, `date:2026`, and `date:2026-10-01..2026-10-07` for a range) |
+| `rating:4` | exactly four stars (also `rating:4+` or `rating:>=4`, `rating:<3`, `rating:2..4`, `rating:none` for unrated, `rating:any`) |
+| `flag:keep` | flagged to keep (also `flag:reject`, `flag:none`, and `flag:keep\|none`) |
+| `collection:fox` | in a collection whose name contains `fox` (`collection:="Night city"` for that one) |
+| `fullprompt:="a red fox"` | that whole prompt, give or take case and spacing (also `fullneg:` for the negative prompt) |
+| `similar:"/path/to/a.png"` | pictures that look like that one, most alike first |
 
 Matching is case-insensitive, and in prompts it is by whole word: `fox` finds `a red fox`, `fox's` and `red_fox`, but not `foxglove` or `firefox`, and `lond` does not find `blonde` (`*lond*` does). Names are not made of words in the same way, so in the names of files, models and LoRAs a search only has to start where a word starts: `flux` finds `flux1-dev.safetensors` and `dev` does too, but `lux` does not. The fields that name one of those (`model:`, `lora:`, `name:`, `sampler:`) match any part of it.
 
@@ -60,12 +76,13 @@ Put `=` after the colon to match a whole value instead of part of one. This is w
 | `model:="flux1-dev.safetensors"` | images made with exactly that model, whatever it was used as |
 | `lora:=detail_xl lora:=inkwash` | images that use both LoRAs, at any strength |
 | `sampler:=euler`, `size:=1024x1024`, `name:=a.png` | the whole sampler name, size or file name |
+| `model:="flux1-dev.safetensors\|sdxl_base.safetensors"` | either model: `\|` between whole values means any of them |
 
 ### Content search
 
 Content search uses a CLIP model: a network that turns a picture and a description into numbers that agree when one matches the other. GenerativeView uses [TinyCLIP ViT-40M/32](https://huggingface.co/wkcn/TinyCLIP-ViT-40M-32-Text-19M-LAION400M) (MIT licence): about half the size and half the arithmetic of the original CLIP ViT-B/32, for somewhat lower accuracy (59.8 % against 63.3 % on the usual ImageNet zero-shot test).
 
-- **The model is not in the app.** The first time you switch content search on, a banner offers to download it: three files, 337 MB, from huggingface.co into the app's data folder (`models/tinyclip-vit-40m-32-text-19m`). That download is the only time GenerativeView uses the network; the pictures and what you type never leave the device. On Android this is what the app's network permission is for. To do without it, copy `config.json`, `tokenizer.json` and `model.safetensors` from that page into the folder yourself.
+- **The model is not in the app.** The first time you switch content search on, a banner offers to download it: three files, 337 MB, from huggingface.co into the app's data folder (`models/tinyclip-vit-40m-32-text-19m`). The pictures and what you type never leave the device. (The app's other uses of the network are the upscale models, a Civitai lookup when you ask for one, and sending a remix to your own servers.) On Android this is what the app's network permission is for. To do without it, copy `config.json`, `tokenizer.json` and `model.safetensors` from that page into the folder yourself.
 - **Pictures are looked at once.** With content search on, the app works through the open folder in the background, newest pictures first, and remembers what it saw in `vectors.db` beside the index (about 1 KB per picture). Searches answer from whatever has been looked at so far and fill in as the rest is done. It uses half the machine's cores and the small thumbnails the grid already made. On one core of a cloud VM a picture took 65 to 80 ms; a tablet will be slower, so a first pass over thousands of pictures there takes a while.
 - **What you get back** is the pictures that match, best match first, and nothing when none does. The model's scores have no fixed scale, so each picture is measured against itself: the app scores it against a few hundred everyday words (`woman`, `forest`, `sword`, `car`…, in `core/src/clip/everyday.txt`), most of which are *not* in any given picture, and a description matches when it scores well clear of that ordinary run.
 - **It is still a judgement, not a lookup.** The model is good at what a picture is of, and weak at small details, counting and text. In a folder where every picture is of much the same thing it tells them apart poorly: it can say "a person, not a landscape" far more reliably than which detail of the person is in view. So a search can miss a picture where the thing is small, and can include one that only resembles it. Where the bar sits is one constant, `CLEAR` in `core/src/clip/mod.rs`, set from measurements on a real library; `cargo run --release --example content_probe -- ~/.local/share/com.jrufer.generativeview "/your/folder"` prints the same measurements for a library you have already searched, using its prompts as a rough answer key.
@@ -89,6 +106,17 @@ The model runs on the CPU in the Rust core (`core/src/clip`): no GPU, no extra l
 | `[` | toggle folder panel | |
 | `C` | thumbnails cropped to fill / whole image | |
 | `F5` | rescan the folder | |
+| `1`–`5`, `0` | rate the selection (the same number again clears), clear | same |
+| `P` / `X` / `U` | flag to keep / reject / clear the flag | same |
+| `B` | add to a collection | same |
+| `L` | more like this | same |
+| `R` | remix | same |
+| `Shift` `U` | upscale | same |
+| `F` | filters | |
+| `N` | follow new pictures | same |
+| `?` or `F1` | list every shortcut | same |
+
+In the prompt editor, `Ctrl` `↑` / `↓` change the weight of the selected words.
 
 ### Metadata it reads
 
@@ -100,6 +128,27 @@ The model runs on the CPU in the Rust core (`core/src/clip`): no GPU, no extra l
 | Also | SwarmUI, Fooocus and NovelAI basics. Anything unrecognised still appears under "Raw metadata". |
 
 ComfyUI has no fixed schema, so prompts and settings are found by walking the graph back from the sampler. That handles custom samplers, ControlNet, prompt-concatenation and primitive nodes, rgthree's Power Lora Loader and similar; an unusual custom node may still be missed. The full node list and raw JSON are always there to fall back on.
+
+### Notes files
+
+Ratings, flags and collections are kept in a file called `.generativeview.json` in each folder that has any, beside the pictures they are about:
+
+```json
+{
+  "generativeview": 1,
+  "images": {
+    "ComfyUI_00012_.png": { "rating": 4, "flag": "keep", "collections": ["Night city"] }
+  }
+}
+```
+
+The file is small, readable, and written whole (to a temporary file that is then renamed over it), so a sync tool such as Syncthing never sees half of one. Every change reads the file first and changes only the pictures it is about, so notes made on two machines are merged rather than lost, and anything else in the file (fields from a newer version, or another tool) is kept as it is. A picture with no stars, flag or collections has no entry; a folder with none has no file. The app keeps a copy in its index for searching, which it rebuilds from the files whenever they change.
+
+### Upscaling
+
+The upscaler is Real-ESRGAN's compact model (SRVGGNetCompact, BSD-3-Clause), run on the CPU by the Rust core (`core/src/sr`), which reads the project's own `.pth` files directly: a small zip-and-pickle reader that understands state dicts and refuses anything else, so nothing in the file is ever run. Its output is checked against an independent NumPy implementation of the same network, to within one level in 255 (rounding).
+
+A picture is upscaled in 160-pixel tiles with a 12-pixel margin that is thrown away, so tiles meet without seams; each layer is one matrix multiplication per tile, using all cores. On two cores of a cloud VM a 256 × 256 picture took six seconds at 4×; a desktop with more cores is proportionally quicker, a tablet slower. 2× is the 4× result brought down with Lanczos, which keeps the detail the model added. Transparency is enlarged plainly alongside. Upscales run in the background with a progress bar in the corner and can be stopped; the file appears in the grid when it is done. `cargo run --release --example upscale_check -- MODEL.pth in.png out.png` runs one from the command line.
 
 ## Install
 
@@ -207,6 +256,8 @@ Set `GV_SCREENSHOT_DIR` to have the tests save a PNG of each stage, and `GV_SAMP
 - Dark theme only.
 - Video thumbnails on Linux need `ffmpeg` on the `PATH`; without it videos show a placeholder tile.
 - Video metadata is read from MP4, MOV and WebM. Animated WebP and GIF play in the focus view.
-- Nothing in the app deletes, moves or edits your files.
+- Nothing in the app deletes, moves or edits your pictures. It writes two kinds of file into your folders, and only when you ask: `.generativeview.json` notes files, and upscaled copies beside their originals.
+- A remixed prompt is put into a ComfyUI or InvokeAI workflow by finding the text the prompt was read from. Where a workflow builds its prompt from several pieces (concatenation nodes, wildcards), an edited prompt cannot be placed and the app says so; an unchanged one is still sent.
+- The spelling check is English.
 - Whether a pasted image keeps its generation data is up to the program you paste into. File managers, and anything that takes the copied *file*, get it untouched; a program that takes the *picture* and re-encodes it (browsers do, for images pasted into a web page) drops the data.
 - LoRA and model names are compared as written in each file, so the same LoRA saved as `style/inkwash.safetensors` by ComfyUI and as `inkwash` by A1111 counts as two.
