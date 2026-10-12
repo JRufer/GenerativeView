@@ -34,6 +34,15 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 - **Folder panel** on the left: a lazily loaded tree, plus a box to paste a path into.
 - **Pinned folders**: right-click, or press and hold, any folder and choose "Pin this folder". Pinned folders are listed in a section at the top of the panel, under the path box, and wear a filled blue folder icon there and in the tree. Click one to jump to it; the same menu unpins it. Click the section's heading to fold it away.
 
+| | |
+| --- | --- |
+| ![Stars, flags and a collection on real ComfyUI pictures](docs/screenshot-ratings.png) | ![The filter panel: rating, flag, models, LoRAs, prompts and more](docs/screenshot-filters.png) |
+| Ratings, flags and collections, saved beside the pictures | Filters, with counts |
+| ![The remix panel: a phrase weighted with the slider under it](docs/screenshot-remix.png) | ![Upscaling on the device, keeping the metadata](docs/screenshot-upscale.png) |
+| Remix: select words, drag their weight | Upscale on the device, metadata kept or stripped |
+| ![Models ranked by the stars of their pictures](docs/screenshot-best-rated.png) | ![Every keyboard shortcut](docs/screenshot-shortcuts.png) |
+| Best rated models and LoRAs | `?` lists every shortcut |
+
 Both panels collapse; on narrow screens they slide over the grid instead of sitting beside it. When the window is taller than it is wide — a tablet held upright, a window tiled to half the screen — the metadata panel moves under the grid or the focused image as a footer, with a top edge you can drag to resize it.
 
 ### Search syntax
