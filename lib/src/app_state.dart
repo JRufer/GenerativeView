@@ -1299,45 +1299,78 @@ class AppState extends ChangeNotifier {
     return path;
   }
 
-  /// Go to the folder [job]'s pictures were saved in, pick the first of
-  /// them and draw the eye to them all. The job is put away.
-  Future<void> showRemix(RemixJob job) async {
-    dismissRemix(job);
-    if (job.saved.isEmpty) return;
-    final first = job.saved.first;
-    final sep = Platform.pathSeparator;
-    final cut = first.lastIndexOf(sep);
-    final dir = cut <= 0 ? first : first.substring(0, cut);
-    _highlightPending = job.saved.toSet();
+  /// Show the [remixCollection], with the pictures of every remix that has
+  /// come back picked out by a short animation. Those remixes are put away;
+  /// any still running stay.
+  ///
+  /// A collection is shown within the open folder and its sub-folders, so
+  /// when the new remixes are elsewhere the folder they all share is opened
+  /// (and sub-folders included) so they can be seen.
+  Future<void> showRemixes() async {
+    final done = [for (final j in remixes.value) if (!j.running) j];
+    remixes.value = [for (final j in remixes.value) if (j.running) j];
+    final paths = [for (final j in done) ...j.saved];
+    if (paths.isEmpty) return;
+    _highlightPending = paths.toSet();
     _highlightPendingSince = DateTime.now();
     if (mode == ViewMode.focus) mode = ViewMode.grid;
-    // Panels slid over the grid would hide them, and so could a search.
+    // Panels slid over the grid would hide them.
     closeOverlays();
-    if (query.isNotEmpty || contentSearch) {
-      searchText.value = TextEditingValue.empty;
-      _queryTimer?.cancel();
-      query = '';
-      if (contentSearch) {
-        contentSearch = false;
-        _save('content_search', 'false');
-      }
+
+    final dirs = {for (final p in paths) _parentOf(p)};
+    var root = folder ?? dirs.first;
+    for (final d in dirs) {
+      root = _commonDir(root, d);
     }
-    if (folder != dir) {
-      await openFolder(dir);
+    final filter = exactTerm('collection', remixCollection);
+    _queryTimer?.cancel();
+    query = filter;
+    searchText.value = TextEditingValue(
+      text: filter,
+      selection: TextSelection.collapsed(offset: filter.length),
+    );
+    if (contentSearch) {
+      contentSearch = false;
+      _save('content_search', 'false');
+    }
+    var reopen = folder != root;
+    if (!recursive && dirs.any((d) => d != root)) {
+      recursive = true;
+      _save('recursive', 'true');
+      reopen = true;
+    }
+    if (reopen) {
+      await openFolder(root);
     } else {
       notifyListeners();
       await _reload();
     }
-    // Not indexed yet, most likely: look again for it.
+    // Not indexed yet, most likely: look again for them.
     if (_highlightPending != null && !_disposed) rescan();
   }
 
-  /// Put [job] away without going to it.
-  void dismissRemix(RemixJob job) {
-    remixes.value = [
-      for (final j in remixes.value)
-        if (j.id != job.id) j,
-    ];
+  static String _parentOf(String path) {
+    final cut = path.lastIndexOf(Platform.pathSeparator);
+    if (cut < 0) return '.';
+    return cut == 0 ? Platform.pathSeparator : path.substring(0, cut);
+  }
+
+  /// The deepest folder holding both [a] and [b].
+  static String _commonDir(String a, String b) {
+    final sep = Platform.pathSeparator;
+    final x = a.split(sep);
+    final y = b.split(sep);
+    var n = 0;
+    while (n < x.length && n < y.length && x[n] == y[n]) {
+      n++;
+    }
+    final common = x.take(n).join(sep);
+    return common.isEmpty ? sep : common;
+  }
+
+  /// Put away the remixes that have come back, without going to them.
+  void dismissDoneRemixes() {
+    remixes.value = [for (final j in remixes.value) if (j.running) j];
   }
 
   /// Called with each new list: if it now holds the pictures waiting to be

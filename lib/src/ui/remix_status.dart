@@ -10,8 +10,8 @@ import '../theme.dart';
 const Color _remixBlue = Color(0xFF3B7BF6);
 
 /// How the remixes sent to a server are getting on: a blue chip that moves
-/// while any is running, and one saying a remix is done that, tapped, goes
-/// to the pictures it brought back.
+/// while any is running, and one saying remixes are done that, tapped, opens
+/// the Remixes collection with the new pictures picked out.
 class RemixStatus extends StatelessWidget {
   const RemixStatus({super.key, required this.state, this.compact = false});
   final AppState state;
@@ -36,11 +36,10 @@ class RemixStatus extends StatelessWidget {
           if (done.isNotEmpty)
             _DoneChip(
               key: const ValueKey<String>('remix-done'),
-              job: done.last,
-              more: done.length - 1,
+              jobs: done,
               compact: compact,
-              onOpen: () => state.showRemix(done.last),
-              onDismiss: () => state.dismissRemix(done.last),
+              onOpen: state.showRemixes,
+              onDismiss: state.dismissDoneRemixes,
             ),
         ];
         return AnimatedSize(
@@ -201,16 +200,13 @@ class _RunningChipState extends State<_RunningChip> with SingleTickerProviderSta
 class _DoneChip extends StatefulWidget {
   const _DoneChip({
     super.key,
-    required this.job,
-    required this.more,
+    required this.jobs,
     required this.compact,
     required this.onOpen,
     required this.onDismiss,
   });
-  final RemixJob job;
-
-  /// Other finished remixes waiting behind this one.
-  final int more;
+  /// The remixes back and not yet looked at, oldest first.
+  final List<RemixJob> jobs;
   final bool compact;
   final VoidCallback onOpen;
   final VoidCallback onDismiss;
@@ -229,7 +225,8 @@ class _DoneChipState extends State<_DoneChip> with SingleTickerProviderStateMixi
   @override
   void didUpdateWidget(_DoneChip old) {
     super.didUpdateWidget(old);
-    if (old.job.id != widget.job.id) _pop.forward(from: 0);
+    // Another one back: pop again.
+    if (widget.jobs.length > old.jobs.length) _pop.forward(from: 0);
   }
 
   @override
@@ -240,8 +237,9 @@ class _DoneChipState extends State<_DoneChip> with SingleTickerProviderStateMixi
 
   @override
   Widget build(BuildContext context) {
-    final count = widget.job.saved.length;
-    final label = widget.more > 0 ? 'Remix Done (+${widget.more})' : 'Remix Done';
+    final n = widget.jobs.length;
+    final pictures = widget.jobs.fold<int>(0, (sum, j) => sum + j.saved.length);
+    final label = n == 1 ? 'Remix Done' : '$n Remixes Done';
     return AnimatedBuilder(
       animation: _pop,
       builder: (context, child) {
@@ -253,7 +251,7 @@ class _DoneChipState extends State<_DoneChip> with SingleTickerProviderStateMixi
       child: _ChipShape(
         compact: widget.compact,
         onTap: widget.onOpen,
-        tooltip: 'Show ${count == 1 ? 'the remix' : 'the $count remixes'} of ${widget.job.name}',
+        tooltip: 'Show ${pictures == 1 ? 'it' : 'them'} in ${AppState.remixCollection}',
         child: Row(
           key: const ValueKey<String>('remix-done-chip'),
           mainAxisSize: MainAxisSize.min,
