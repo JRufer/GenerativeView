@@ -102,3 +102,23 @@ Future<Uint8List?> readCopiedFile() async {
     return null;
   }
 }
+
+/// Open a web page in the user's browser.
+Future<bool> openUrl(String url) async {
+  if (!url.startsWith('https://') && !url.startsWith('http://')) return false;
+  if (Platform.isAndroid) {
+    try {
+      return await _media.invokeMethod<bool>('openUrl', {'url': url}) ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+  try {
+    final result = await Process.run('xdg-open', [url]);
+    return result.exitCode == 0;
+  } on ProcessException {
+    return false;
+  }
+}

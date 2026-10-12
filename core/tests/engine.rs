@@ -429,6 +429,32 @@ fn content_search_embeds_and_ranks() {
     }
     assert_ne!(found("a red fox asleep in fresh snow", Some(-1e6), None), found("lighthouse", Some(-1e6), None));
 
+    // ---- more like this: the pictures nearest one, nearest first -----------
+    let target = root.join("img03.png");
+    let by_likeness = {
+        let (_, mine) = pictures.iter().find(|(n, _)| n == "img03.png").unwrap();
+        let mut all: Vec<(f32, String)> = pictures.iter().map(|(n, v)| (dot(mine, v), n.clone())).collect();
+        all.sort_by(|a, b| b.0.total_cmp(&a.0));
+        all
+    };
+    let similar = |bar: f64, extra: &str| {
+        let text = format!("{extra} similar:\"{}\"", target.display());
+        let r = h.call("query", json!({ "dir": dir, "recursive": true, "text": text, "sort": "relevance", "bar": bar }));
+        r["rows"].as_array().unwrap().iter().map(|row| row[2].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    let everything = similar(-1.0, "");
+    assert_eq!(everything, names_of(&by_likeness), "every picture, most alike first");
+    assert_eq!(everything[0], "img03.png");
+    // Other terms narrow it as usual.
+    assert_eq!(similar(-1.0, "-name:=img03.png"), names_of(&by_likeness[1..]));
+    // Asked for a picture not looked at yet, it is looked at there and then.
+    let fresh = root.join("unseen.png");
+    std::fs::write(&fresh, png_with_text(90, 90, 123, &[])).unwrap();
+    let described = h.call("describe", json!({ "path": fresh.to_str().unwrap() }));
+    assert!(described["prompt"].as_str().unwrap().contains("highly detailed"), "{described}");
+    assert!(described["style"].as_str().is_some());
+    std::fs::remove_file(&fresh).unwrap();
+
     // The packed form the UI reads carries the same rows.
     let packed = match h.engine.request("content_query", &json!({ "dir": dir, "recursive": true, "text": "lighthouse", "bar": -1e6 })).unwrap() {
         gvcore::engine::Reply::Bytes(bytes) => bytes,
@@ -450,4 +476,63 @@ fn content_search_embeds_and_ranks() {
     content_done(&h);
     assert_eq!(h.call("content_status", scope)["embedded"], 12);
     assert_eq!(found("lighthouse", Some(-1e6), None).len(), 12);
+}
+
+#[test]
+fn notes_live_in_the_folder() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    std::fs::create_dir(root.join("sub")).unwrap();
+    for (i, name) in ["a.png", "b.png", "sub/c.png"].iter().enumerate() {
+        write_png(&root.join(name), i as u32, &[("prompt", &comfy_prompt("a fox", i as u64, "flux.safetensors"))]);
+    }
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+
+    // Rated from the app: written beside the pictures, one file per folder.
+    let out = h.call("notes_set", json!({ "paths": [path("a.png"), path("sub/c.png")], "rating": 4, "flag": "keep", "add": ["Best"] }));
+    assert_eq!(out[1], json!({ "rating": 4, "flag": "keep", "collections": ["Best"] }));
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
+    assert_eq!(file["images"]["a.png"]["rating"], 4);
+    assert!(root.join("sub/.generativeview.json").exists());
+    h.expect_names(&root, true, "rating:4 flag:keep collection:=best", &["a.png", "c.png"]);
+    assert_eq!(h.call("notes_get", json!({ "path": path("a.png") }))["collections"], json!(["Best"]));
+    assert_eq!(h.call("collections", json!({}))[0], json!({ "name": "Best", "count": 2 }));
+
+    // Changed on another machine and synced in: the index follows.
+    std::fs::write(root.join(".generativeview.json"), r#"{"generativeview":1,"images":{"b.png":{"rating":5,"flag":"reject"}}}"#).unwrap();
+    h.expect_names(&root, true, "rating:5", &["b.png"]);
+    h.expect_names(&root, true, "rating:4", &["c.png"]);
+    assert!(h.call("notes_get", json!({ "path": path("a.png") }))["collections"].as_array().unwrap().is_empty());
+
+    // Opened afresh (another session, an index rebuilt): read from the files.
+    drop(h);
+    let h = Harness::new();
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    h.expect_names(&root, true, "flag:reject", &["b.png"]);
+    h.expect_names(&root, true, "collection:best", &["c.png"]);
+    let usage = h.call("usage", json!({ "dir": dir, "recursive": true, "text": "fox" }));
+    let ratings = usage["groups"].as_array().unwrap().iter().find(|g| g["kind"] == "rating").unwrap();
+    assert_eq!(ratings["items"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn upscale_runs_and_reports() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let models = h.call("upscale_models", json!({}));
+    assert_eq!(models["models"].as_array().unwrap().len(), 2);
+    assert_eq!(models["models"][0]["installed"], false);
+    assert!(models["source"].as_str().unwrap().starts_with("https://github.com/xinntao/Real-ESRGAN/"));
+    write_png(&root.join("a.png"), 3, &[("parameters", "a fox\nSteps: 20, Seed: 7")]);
+    // Without the model: an error event, not a crash.
+    let job = h.call("upscale", json!({ "path": root.join("a.png").to_str().unwrap(), "model": "general", "factor": 2, "metadata": "copy" }))["job"].clone();
+    let e = h.wait("upscale end", |e| e["t"] == "upscale" && e["state"] != "running");
+    assert_eq!((e["job"].clone(), e["state"].as_str()), (job, Some("error")));
+    assert!(h.engine.call("upscale", &json!({ "path": "x", "model": "nope" })).is_err());
 }

@@ -75,6 +75,7 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
       title: 'GenerativeView',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
+      navigatorKey: appNavigator,
       navigatorObservers: [_routes],
       builder: (context, child) => state == null
           ? child!

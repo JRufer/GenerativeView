@@ -1,0 +1,54 @@
+# TEMPORARY (removed before merge): runs the analyzer and the Flutter tests
+# and pushes their full output and screenshots to the ci-report branch,
+# where they can be read without the Actions log viewer.
+name: ci-report
+on:
+  push:
+    branches: [feature/ratings-filters-upscale]
+permissions:
+  contents: write
+env:
+  FLUTTER_VERSION: 3.47.7
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv ffmpeg
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build core
+        working-directory: core
+        run: cargo build --release --lib
+      - name: Sample images and upscale model
+        run: |
+          git clone --depth 1 https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
+          find "$RUNNER_TEMP/samples" -name '*.png' | wc -l
+          curl -sSL -o "$RUNNER_TEMP/realesr-general-x4v3.pth" https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+      - name: Analyze and test
+        env:
+          GV_SCREENSHOT_DIR: ${{ github.workspace }}/out/screens
+          GV_SAMPLE_DIR: ${{ runner.temp }}/samples
+          GV_UPSCALE_MODEL: ${{ runner.temp }}/realesr-general-x4v3.pth
+        run: |
+          mkdir -p out/screens
+          flutter pub get > out/pub.txt 2>&1 || true
+          flutter analyze > out/analyze.txt 2>&1 || true
+          timeout 40m flutter test --reporter expanded > out/test.txt 2>&1 || true
+          tail -5 out/test.txt
+      - name: Publish the report
+        if: always()
+        run: |
+          cd out
+          git init -q -b ci-report
+          git -c user.name=ci -c user.email=ci@localhost add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "report ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-report

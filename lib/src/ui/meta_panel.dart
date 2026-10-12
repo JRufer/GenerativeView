@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/models.dart';
 import '../theme.dart';
+import 'civitai_sheet.dart';
 import 'context_menu.dart';
+import 'notes_widgets.dart';
+import 'remix_dialog.dart';
+import 'upscale_dialog.dart';
 
 /// Say something briefly at the foot of the window.
 void toast(BuildContext context, String message) {
@@ -112,12 +117,48 @@ class _MetaPanelState extends State<MetaPanel> {
         );
   }
 
-  /// Offer to narrow the grid to the images that match [query].
-  Future<void> _offerFilter(Offset position, String label, String query) async {
-    final choice = await showContextMenu<bool>(context, position, [
-      MenuEntry(true, label, Icons.filter_alt_outlined),
+  /// Offer to narrow the grid to the images that match [query], and, for a
+  /// model or LoRA, to look it up on Civitai.
+  Future<void> _offerFilter(
+    Offset position,
+    String label,
+    String query, {
+    ({String name, String hash, String kind})? civitai,
+  }) async {
+    final choice = await showContextMenu<String>(context, position, [
+      MenuEntry('filter', label, Icons.filter_alt_outlined),
+      if (civitai != null) const MenuEntry('civitai', 'Look up on Civitai', Icons.travel_explore),
     ]);
-    if (choice == true) widget.state.applyFilter(query);
+    if (!mounted) return;
+    if (choice == 'filter') widget.state.applyFilter(query);
+    if (choice == 'civitai' && civitai != null) {
+      await openCivitai(context, name: civitai.name, hash: civitai.hash, kind: civitai.kind);
+    }
+  }
+
+  /// The menu of a prompt: show the pictures made with exactly it, or
+  /// remix it.
+  Future<void> _promptMenu(Offset position, String field, String text, MediaItem item) async {
+    final negative = field == 'fullneg';
+    final choice = await showContextMenu<String>(context, position, [
+      MenuEntry(
+        'filter',
+        negative ? 'Show only images with this negative prompt' : 'Show only images with this prompt',
+        Icons.filter_alt_outlined,
+      ),
+      const MenuEntry('remix', 'Edit and remix… (R)', Icons.auto_fix_high),
+    ]);
+    if (!mounted) return;
+    if (choice == 'filter') widget.state.applyFilter(exactTerm(field, text));
+    if (choice == 'remix') await openRemix(context, widget.state, item);
+  }
+
+  /// The hash saved with the model called [name], if any.
+  static String _hashOf(GenInfo info, String name) {
+    for (final m in info.models) {
+      if (m.name == name && m.hash.isNotEmpty) return m.hash;
+    }
+    return '';
   }
 
   @override
@@ -134,8 +175,36 @@ class _MetaPanelState extends State<MetaPanel> {
       return const SizedBox.expand();
     }
     // What it is and what was asked for …
+    final state = widget.state;
     final lead = <Widget>[
       _FileHeader(item: item, info: info),
+      NotesBar(state: state, item: item),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          if (info.hasGeneration)
+            _Chip(
+              label: 'Remix',
+              icon: Icons.auto_fix_high,
+              tooltip: 'Edit the prompt and send it to a server (R)',
+              onTap: () => openRemix(context, state, item),
+            ),
+          if (!item.isVideo)
+            _Chip(
+              label: 'Upscale',
+              icon: Icons.photo_size_select_large,
+              tooltip: 'Make it bigger, on this device (Shift U)',
+              onTap: () => openUpscale(context, state, item),
+            ),
+          _Chip(
+            label: 'More like this',
+            icon: Icons.image_search,
+            tooltip: 'Pictures that look like this one (L)',
+            onTap: () => state.findSimilar(item),
+          ),
+        ],
+      ),
       if (!info.hasGeneration)
         const Text(
           'No generation data found in this file.',
@@ -144,19 +213,23 @@ class _MetaPanelState extends State<MetaPanel> {
       if (info.prompt.isNotEmpty)
         _Section(
           label: 'Prompt',
+          onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item),
           child: _CopyBlock(
             text: info.prompt,
             what: 'prompt',
             semanticsLabel: 'Prompt',
+            onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item),
           ),
         ),
       if (info.negative.isNotEmpty)
         _Section(
           label: 'Negative prompt',
+          onMenu: (at) => _promptMenu(at, 'fullneg', info.negative, item),
           child: _CopyBlock(
             text: info.negative,
             what: 'negative prompt',
             semanticsLabel: 'Negative prompt',
+            onMenu: (at) => _promptMenu(at, 'fullneg', info.negative, item),
           ),
         ),
     ];
@@ -186,6 +259,7 @@ class _MetaPanelState extends State<MetaPanel> {
                     at,
                     'Show only images made with this model',
                     exactTerm('model', info.model),
+                    civitai: (name: info.model, hash: _hashOf(info, info.model), kind: 'checkpoint'),
                   ),
                 ),
             ],
@@ -227,6 +301,7 @@ class _MetaPanelState extends State<MetaPanel> {
                     at,
                     'Show only images using this LoRA',
                     exactTerm('lora', l.name),
+                    civitai: (name: l.name, hash: l.hash, kind: 'lora'),
                   ),
                 ),
             ],
@@ -246,6 +321,7 @@ class _MetaPanelState extends State<MetaPanel> {
                       at,
                       'Show only images made with this model',
                       exactTerm('model', m.name),
+                      civitai: (name: m.name, hash: m.hash, kind: m.kind),
                     ),
                   ),
             ],
@@ -304,6 +380,9 @@ class _MetaPanelState extends State<MetaPanel> {
             controller: _scroll,
             child: ListView(
               controller: _scroll,
+              // A few screens of text at most: build it all, so nothing
+              // below the fold is missing when looked for.
+              scrollCacheExtent: const ScrollCacheExtent.viewport(8),
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
               children: sideBySide
                   ? [
@@ -555,17 +634,25 @@ class _CopyBlock extends StatelessWidget {
     required this.text,
     required this.what,
     required this.semanticsLabel,
+    this.onMenu,
   });
   final String text;
   final String what;
   final String semanticsLabel;
 
+  /// Called with where the pointer was on a right click or a long press.
+  final ValueChanged<Offset>? onMenu;
+
   @override
   Widget build(BuildContext context) {
+    final menu = onMenu;
     return Semantics(
       label: '$semanticsLabel, tap to copy',
       button: true,
-      child: Material(
+      child: GestureDetector(
+        onSecondaryTapUp: menu == null ? null : (d) => menu(d.globalPosition),
+        onLongPressStart: menu == null ? null : (d) => menu(d.globalPosition),
+        child: Material(
         color: Palette.raised,
         borderRadius: BorderRadius.circular(6),
         child: InkWell(
@@ -584,6 +671,7 @@ class _CopyBlock extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -652,10 +740,11 @@ class _Field extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.onTap, this.tooltip});
+  const _Chip({required this.label, required this.onTap, this.tooltip, this.icon});
   final String label;
   final VoidCallback onTap;
   final String? tooltip;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -670,10 +759,19 @@ class _Chip extends StatelessWidget {
         onTap: onTap,
         hoverColor: Palette.hover,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 12, color: Palette.text),
+          padding: EdgeInsets.symmetric(horizontal: 9, vertical: icon == null ? 5 : 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 15, color: Palette.muted),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: Palette.text),
+              ),
+            ],
           ),
         ),
       ),

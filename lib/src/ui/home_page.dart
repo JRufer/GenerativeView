@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -12,6 +13,7 @@ import 'folder_panel.dart';
 import 'media_grid.dart';
 import 'meta_panel.dart';
 import 'top_bar.dart';
+import 'upscale_dialog.dart';
 
 /// Below this width the side panels slide over the content instead of
 /// sitting beside it.
@@ -44,6 +46,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // of the window when a tablet turns.
   final GlobalKey _metaKey = GlobalKey(debugLabel: 'metadata');
   bool _storageOk = true;
+  late final StreamSubscription<String> _notices;
 
   AppState get state => widget.state;
 
@@ -52,6 +55,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     state.addListener(_onState);
+    _notices = state.notices.listen((message) {
+      if (mounted) toast(context, message);
+    });
     state.searchText.text = state.query;
     _checkStorage();
   }
@@ -60,6 +66,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     state.removeListener(_onState);
+    _notices.cancel();
     super.dispose();
   }
 
@@ -132,9 +139,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   TopBar(state: state),
                   _ScanBar(state: state),
                   if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
-                  if (state.contentSearch && !focus)
+                  if ((state.contentSearch || state.lookingAlike) && !focus)
                     _ContentBanner(state: state),
-                  Expanded(child: _body(constraints.maxWidth)),
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _body(constraints.maxWidth),
+                        Positioned(right: 12, bottom: 12, child: UpscaleJobs(state: state)),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),

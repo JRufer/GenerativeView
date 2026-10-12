@@ -13,6 +13,8 @@ class MediaItem {
     required this.mtime,
     required this.size,
     required this.durationMs,
+    this.rating = 0,
+    this.flag = Flag.none,
   });
 
   final int id;
@@ -26,6 +28,10 @@ class MediaItem {
   final int mtime;
   final int size;
   final int durationMs;
+
+  /// What the user said about it, as of the query (see [Note]).
+  final int rating;
+  final Flag flag;
 
   String get path => dir.endsWith('/') ? '$dir$name' : '$dir/$name';
 
@@ -95,6 +101,13 @@ class ItemList {
 
   int idAt(int index) => _data.getInt64(_header + index * _row, Endian.little);
 
+  /// Every id in the list, in order.
+  Iterable<int> get ids sync* {
+    for (var i = 0; i < length; i++) {
+      yield idAt(i);
+    }
+  }
+
   /// Position of the item with this id, or -1.
   int indexOfId(int id) {
     for (var i = 0; i < length; i++) {
@@ -119,10 +132,71 @@ class ItemList {
       durationMs: _data.getUint32(o + 32, Endian.little),
       name: utf8.decode(Uint8List.view(_data.buffer, start, nameLen)),
       isVideo: _data.getUint8(o + 42) == 1,
+      rating: _data.getUint8(o + 43) & 7,
+      flag: Flag.fromIndex((_data.getUint8(o + 43) >> 3) & 3),
       dir: _dirs[_data.getUint32(o + 44, Endian.little)],
     );
     _cache[index] = item;
     return item;
+  }
+}
+
+/// A picture's keep-or-reject flag.
+enum Flag {
+  none,
+  keep,
+  reject;
+
+  static Flag fromIndex(int i) => i == 1
+      ? Flag.keep
+      : i == 2
+      ? Flag.reject
+      : Flag.none;
+
+  static Flag parse(String? name) => switch (name) {
+    'keep' => Flag.keep,
+    'reject' => Flag.reject,
+    _ => Flag.none,
+  };
+
+  /// As the core takes it.
+  String get word => switch (this) {
+    Flag.none => 'none',
+    Flag.keep => 'keep',
+    Flag.reject => 'reject',
+  };
+
+  String get label => switch (this) {
+    Flag.none => 'Not flagged',
+    Flag.keep => 'Keep',
+    Flag.reject => 'Reject',
+  };
+}
+
+/// What the user has said about a picture: stars, a flag, and the
+/// collections it is in. Kept in a small file in the picture's own folder.
+class Note {
+  const Note({
+    this.rating = 0,
+    this.flag = Flag.none,
+    this.collections = const [],
+  });
+  final int rating;
+  final Flag flag;
+  final List<String> collections;
+
+  static const Note empty = Note();
+
+  factory Note.fromJson(Object? j) {
+    if (j is! Map) return empty;
+    return Note(
+      rating: (j['rating'] as num?)?.toInt() ?? 0,
+      flag: Flag.parse(j['flag'] as String?),
+      collections: [
+        for (final c in (j['collections'] as List? ?? const []))
+          if (c is String) c,
+      ],
+    );
   }
 }
 
@@ -333,19 +407,114 @@ String formatDate(int mtimeMs) {
 
 /// A search term that matches [value] as a whole rather than in part:
 /// `model:="flux dev"`, `seed:=42`.
-String exactTerm(String field, String value) {
-  final clean = value
-      .replaceAll('"', '')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+String exactTerm(String field, String value) => anyOfTerm(field, [value]);
+
+/// A search term that matches any of [values] as a whole:
+/// `model:="flux dev|sdxl"`. Prompts are taken whole, `|` and all.
+String anyOfTerm(String field, Iterable<String> values) {
+  final clean = [
+    for (final v in values)
+      v.replaceAll('"', '').replaceAll(RegExp(r'\s+'), ' ').trim(),
+  ].where((v) => v.isNotEmpty).join('|');
   return clean.contains(' ') ? '$field:="$clean"' : '$field:=$clean';
 }
 
+/// One whitespace-separated term of a search, as typed: quotes and all.
+/// Splits the way the core does, so a quoted phrase stays one term.
+List<String> splitTerms(String text) {
+  final out = <String>[];
+  final b = StringBuffer();
+  var quoted = false;
+  for (final rune in text.runes) {
+    final c = String.fromCharCode(rune);
+    if (c == '"') quoted = !quoted;
+    if (!quoted && c.trim().isEmpty) {
+      if (b.isNotEmpty) out.add(b.toString());
+      b.clear();
+      continue;
+    }
+    b.write(c);
+  }
+  if (b.isNotEmpty) out.add(b.toString());
+  return out;
+}
+
+/// A search term split into its field, whether it is exact (`:=`), and its
+/// value without quotes. Field is empty for a plain word.
+({bool negate, String field, bool exact, String value}) parseTerm(
+  String term,
+) {
+  var t = term;
+  var negate = false;
+  if (t.length > 1 && t.startsWith('-')) {
+    negate = true;
+    t = t.substring(1);
+  }
+  final m = RegExp(r'^([a-zA-Z]+):(=?)(.*)$').firstMatch(t);
+  if (m == null) {
+    return (negate: negate, field: '', exact: false, value: t.replaceAll('"', ''));
+  }
+  return (
+    negate: negate,
+    field: m.group(1)!.toLowerCase(),
+    exact: m.group(2) == '=',
+    value: m.group(3)!.replaceAll('"', ''),
+  );
+}
+
 /// One model, LoRA, setting or word, and how many images use it.
+/// One image standing for a model or LoRA in the usage page.
+class UsageSample {
+  const UsageSample(this.path, this.mtime, this.size, this.rating);
+  final String path;
+  final int mtime;
+  final int size;
+  final int rating;
+
+  /// Enough of a [MediaItem] to ask for its thumbnail.
+  MediaItem get item {
+    final slash = path.lastIndexOf('/');
+    return MediaItem(
+      id: path.hashCode,
+      dir: slash <= 0 ? '/' : path.substring(0, slash),
+      name: path.substring(slash + 1),
+      isVideo: false,
+      width: 0,
+      height: 0,
+      mtime: mtime,
+      size: size,
+      durationMs: 0,
+      rating: rating,
+    );
+  }
+}
+
 class UsageItem {
-  const UsageItem(this.value, this.count, this.role, this.trend);
+  const UsageItem(
+    this.value,
+    this.count,
+    this.role,
+    this.trend, {
+    this.rated = 0,
+    this.stars = 0,
+    this.keeps = 0,
+    this.rejects = 0,
+    this.samples = const [],
+  });
   final String value;
   final int count;
+
+  /// How many of its images are rated, and their stars added up; how many
+  /// are flagged keep and reject.
+  final int rated;
+  final int stars;
+  final int keeps;
+  final int rejects;
+
+  /// Its best rated images (models and LoRAs).
+  final List<UsageSample> samples;
+
+  double get averageRating => rated == 0 ? 0 : stars / rated;
 
   /// For supporting models, what they were used as (vae, clip, ...).
   final String role;
@@ -376,6 +545,10 @@ class UsageGroup {
     'size' => 'Sizes',
     'source' => 'Made with',
     'word' => 'Prompt words',
+    'prompt' => 'Prompts',
+    'rating' => 'Rating',
+    'flag' => 'Flag',
+    'collection' => 'Collections',
     _ => kind,
   };
 
@@ -383,6 +556,10 @@ class UsageGroup {
   String label(UsageItem item) => switch (kind) {
     'source' => GenInfo.sourceLabel(item.value),
     'size' => item.value.replaceFirst('x', ' × '),
+    'rating' => item.value == '0'
+        ? 'Not rated'
+        : '★' * (int.tryParse(item.value) ?? 0),
+    'flag' => Flag.parse(item.value).label,
     _ => item.value,
   };
 
@@ -390,6 +567,9 @@ class UsageGroup {
   String queryFor(UsageItem item) => switch (kind) {
     'aux' => exactTerm('model', item.value),
     'word' => exactTerm('prompt', item.value),
+    'prompt' => exactTerm('fullprompt', item.value),
+    'rating' => 'rating:${item.value}',
+    'flag' => 'flag:${item.value}',
     'source' => 'source:${item.value}',
     _ => exactTerm(kind, item.value),
   };
@@ -452,6 +632,20 @@ class UsageStats {
                     number(i['count']),
                     i['role'] as String? ?? '',
                     [for (final n in (i['trend'] as List? ?? const [])) number(n)],
+                    rated: number(i['rated']),
+                    stars: number(i['stars']),
+                    keeps: number(i['keeps']),
+                    rejects: number(i['rejects']),
+                    samples: [
+                      for (final s in (i['samples'] as List? ?? const []))
+                        if (s is Map)
+                          UsageSample(
+                            s['path'] as String? ?? '',
+                            number(s['mtime']),
+                            number(s['size']),
+                            number(s['rating']),
+                          ),
+                    ],
                   ),
             ]),
       ],

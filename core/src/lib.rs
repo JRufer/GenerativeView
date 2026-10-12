@@ -9,4 +9,7 @@ pub mod ffi;
 pub mod fsnav;
 pub mod index;
 pub mod meta;
+pub mod notes;
+pub mod sr;
 pub mod thumbs;
+pub mod upscale;

@@ -1,0 +1,377 @@
+import 'package:flutter/material.dart';
+
+import '../app_state.dart';
+import '../core/models.dart';
+import '../theme.dart';
+import 'notes_widgets.dart' show starColor;
+import 'sheet.dart';
+
+/// The facets the filter panel offers, in order: (usage kind, search field,
+/// heading).
+const List<(String, String, String)> _facets = [
+  ('model', 'model', 'Models'),
+  ('lora', 'lora', 'LoRAs'),
+  ('collection', 'collection', 'Collections'),
+  ('prompt', 'fullprompt', 'Prompts'),
+  ('word', 'prompt', 'Prompt words'),
+  ('sampler', 'sampler', 'Samplers'),
+  ('scheduler', 'scheduler', 'Schedulers'),
+  ('steps', 'steps', 'Steps'),
+  ('cfg', 'cfg', 'CFG'),
+  ('size', 'size', 'Sizes'),
+  ('source', 'source', 'Made with'),
+];
+
+/// Fields whose values all have to match, one term each, rather than any.
+const Set<String> _allOf = {'prompt'};
+
+/// What the filter panel has chosen, and the rest of the search it leaves
+/// alone.
+class FilterSet {
+  FilterSet({required this.free, required this.chosen, this.minRating = 0, this.unrated = false, Set<Flag>? flags})
+    : flags = flags ?? {};
+
+  /// Terms the panel does not manage: typed words, dates, negations.
+  final List<String> free;
+
+  /// Values chosen per search field.
+  final Map<String, Set<String>> chosen;
+  int minRating;
+  bool unrated;
+  final Set<Flag> flags;
+
+  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag'};
+
+  /// Read the panel's choices back out of a search.
+  factory FilterSet.parse(String query) {
+    final free = <String>[];
+    final chosen = <String, Set<String>>{};
+    var minRating = 0;
+    var unrated = false;
+    final flags = <Flag>{};
+    for (final raw in splitTerms(query)) {
+      final t = parseTerm(raw);
+      if (t.negate || !_managed.contains(t.field)) {
+        free.add(raw);
+        continue;
+      }
+      if (t.field == 'rating') {
+        final m = RegExp(r'^>=(\d)$').firstMatch(t.value);
+        if (m != null) {
+          minRating = int.parse(m.group(1)!);
+        } else if (t.value == 'none') {
+          unrated = true;
+        } else {
+          free.add(raw);
+        }
+        continue;
+      }
+      if (t.field == 'flag') {
+        flags.addAll(t.value.split('|').map((f) => f == 'none' ? Flag.none : Flag.parse(f)));
+        continue;
+      }
+      if (!t.exact) {
+        free.add(raw);
+        continue;
+      }
+      final values = _allOf.contains(t.field) || t.field == 'fullprompt' ? [t.value] : t.value.split('|');
+      chosen.putIfAbsent(t.field, () => {}).addAll(values.where((v) => v.isNotEmpty));
+    }
+    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags);
+  }
+
+  bool get isEmpty => chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty;
+
+  int get count => chosen.values.fold(0, (n, s) => n + s.length) + (minRating > 0 ? 1 : 0) + (unrated ? 1 : 0) + flags.length;
+
+  bool has(String field, String value) => chosen[field]?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
+
+  void toggle(String field, String value) {
+    final set = chosen.putIfAbsent(field, () => {});
+    final existing = set.where((v) => v.toLowerCase() == value.toLowerCase()).toList();
+    if (existing.isEmpty) {
+      set.add(value);
+    } else {
+      set.removeAll(existing);
+    }
+  }
+
+  /// The free part of the search alone, for counting what is on offer.
+  String get freeText => free.join(' ');
+
+  /// The whole search.
+  String toQuery() {
+    final parts = [...free];
+    for (final (_, field, _) in _facets) {
+      final values = chosen[field];
+      if (values == null || values.isEmpty) continue;
+      if (_allOf.contains(field) || field == 'fullprompt') {
+        // Words all have to be there; whole prompts are one or the other,
+        // but a prompt can hold `|`, so each is a term of its own and only
+        // one may be chosen at a time.
+        for (final v in values) {
+          parts.add(exactTerm(field, v));
+        }
+      } else {
+        parts.add(anyOfTerm(field, values));
+      }
+    }
+    if (minRating > 0) parts.add('rating:>=$minRating');
+    if (unrated) parts.add('rating:none');
+    if (flags.isNotEmpty) parts.add('flag:${flags.map((f) => f.word).join('|')}');
+    return parts.join(' ');
+  }
+}
+
+/// Whether [query] has anything the filter panel set.
+bool hasFilters(String query) => !FilterSet.parse(query).isEmpty;
+
+/// Open the filter panel: what the folder's pictures were made with, rated
+/// and collected as, each a chip to narrow the grid by. Chips in one group
+/// widen it (this model or that one); groups narrow it (this model and
+/// this sampler). Prompt words all have to be there.
+Future<void> openFilters(BuildContext context, AppState state) {
+  return showPanel<void>(
+    context,
+    title: 'Filters',
+    icon: Icons.tune,
+    width: 720,
+    builder: (context) => FilterPanel(state: state),
+  );
+}
+
+class FilterPanel extends StatefulWidget {
+  const FilterPanel({super.key, required this.state});
+  final AppState state;
+
+  @override
+  State<FilterPanel> createState() => _FilterPanelState();
+}
+
+class _FilterPanelState extends State<FilterPanel> {
+  late FilterSet _filters = FilterSet.parse(widget.state.query);
+  UsageStats? _stats;
+  String? _countedFor;
+  final Set<String> _expanded = {};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.state.addListener(_onState);
+    _count();
+  }
+
+  @override
+  void dispose() {
+    widget.state.removeListener(_onState);
+    super.dispose();
+  }
+
+  void _onState() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _count() async {
+    final text = _filters.freeText;
+    if (_countedFor == text && _stats != null) return;
+    _countedFor = text;
+    try {
+      final stats = await widget.state.usage(text: text);
+      if (mounted && _countedFor == text) setState(() => _stats = stats);
+    } catch (_) {}
+  }
+
+  void _apply() {
+    widget.state.applySearch(_filters.toQuery(), content: false);
+    setState(() {});
+  }
+
+  void _toggle(String field, String value) {
+    _filters.toggle(field, value);
+    _apply();
+  }
+
+  void _clear() {
+    _filters = FilterSet(free: _filters.free, chosen: {});
+    _apply();
+  }
+
+  UsageGroup? _group(String kind) {
+    for (final g in _stats?.groups ?? const <UsageGroup>[]) {
+      if (g.kind == kind) return g;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = _stats;
+    final matches = widget.state.items.length;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(
+          child: stats == null
+              ? const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+              : ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+                  children: [
+                    if (_filters.free.isNotEmpty)
+                      Text(
+                        'Within: ${_filters.freeText}',
+                        style: const TextStyle(fontSize: 12, color: Palette.faint),
+                      ),
+                    const PanelHeading('Rating and flag'),
+                    _ratingRow(),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final flag in Flag.values)
+                          ChoiceChipButton(
+                            key: ValueKey<String>('filter-flag-${flag.word}'),
+                            label: flag.label,
+                            icon: switch (flag) {
+                              Flag.keep => Icons.check_circle_outline,
+                              Flag.reject => Icons.cancel_outlined,
+                              Flag.none => Icons.radio_button_unchecked,
+                            },
+                            selected: _filters.flags.contains(flag),
+                            onTap: () {
+                              if (!_filters.flags.remove(flag)) _filters.flags.add(flag);
+                              _apply();
+                            },
+                          ),
+                      ],
+                    ),
+                    for (final (kind, field, title) in _facets) ..._section(kind, field, title),
+                  ],
+                ),
+        ),
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
+          child: Row(
+            children: [
+              TextButton(onPressed: _filters.isEmpty ? null : _clear, child: const Text('Clear filters')),
+              const Spacer(),
+              FilledButton(
+                key: const ValueKey<String>('filters-done'),
+                onPressed: () => Navigator.of(context).maybePop(),
+                child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _ratingRow() {
+    final min = _filters.minRating;
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var n = 1; n <= 5; n++)
+              Tooltip(
+                message: min == n ? 'Any rating' : '$n stars or more',
+                child: InkResponse(
+                  key: ValueKey<String>('filter-stars-$n'),
+                  radius: 20,
+                  onTap: () {
+                    _filters.minRating = min == n ? 0 : n;
+                    if (_filters.minRating > 0) _filters.unrated = false;
+                    _apply();
+                  },
+                  child: SizedBox(
+                    width: 38,
+                    height: 40,
+                    child: Icon(
+                      n <= min ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: n <= min ? starColor : Palette.faint,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        Text(min == 0 ? 'Any rating' : '$min or more', style: const TextStyle(fontSize: 12.5, color: Palette.muted)),
+        ChoiceChipButton(
+          label: 'Not rated',
+          selected: _filters.unrated,
+          count: _group('rating')?.items.where((i) => i.value == '0').firstOrNull?.count,
+          onTap: () {
+            _filters.unrated = !_filters.unrated;
+            if (_filters.unrated) _filters.minRating = 0;
+            _apply();
+          },
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _section(String kind, String field, String title) {
+    final group = _group(kind);
+    final items = group?.items ?? const <UsageItem>[];
+    // Chosen values stay on offer even where this search no longer has them.
+    final chosen = _filters.chosen[field] ?? const <String>{};
+    final listed = items.map((i) => i.value.toLowerCase()).toSet();
+    final missing = [
+      for (final v in chosen)
+        if (!listed.contains(v.toLowerCase())) v,
+    ];
+    if (items.isEmpty && missing.isEmpty) return const [];
+    final all = _expanded.contains(kind);
+    final shown = all ? items : items.take(kind == 'prompt' ? 6 : 14).toList();
+    return [
+      PanelHeading(
+        title,
+        trailing: items.length > shown.length || all
+            ? TextButton(
+                onPressed: () => setState(() {
+                  if (!_expanded.remove(kind)) _expanded.add(kind);
+                }),
+                child: Text(all ? 'Fewer' : 'All ${items.length}'),
+              )
+            : null,
+      ),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final v in missing)
+            ChoiceChipButton(label: _short(v), selected: true, onTap: () => _toggle(field, v)),
+          for (final item in shown)
+            ChoiceChipButton(
+              key: ValueKey<String>('filter-$kind-${item.value}'),
+              label: _short(group!.label(item)),
+              tooltip: item.value.length > 60 ? item.value : null,
+              count: item.count,
+              selected: _filters.has(field, item.value),
+              onTap: () {
+                if (field == 'fullprompt') {
+                  // One whole prompt at a time.
+                  final on = _filters.has(field, item.value);
+                  _filters.chosen[field] = on ? {} : {item.value};
+                  _apply();
+                } else {
+                  _toggle(field, item.value);
+                }
+              },
+            ),
+        ],
+      ),
+    ];
+  }
+
+  static String _short(String s) => s.length > 64 ? '${s.substring(0, 61)}…' : s;
+}
