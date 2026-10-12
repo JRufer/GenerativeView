@@ -208,7 +208,7 @@ class _RemixPanelState extends State<RemixPanel> {
                 },
               ),
               SizedBox(width: 90, child: TextField(controller: _height, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], decoration: _box('Height'))),
-              _Stepper(value: _count, min: 1, max: 16, label: 'pictures', onChanged: (v) => setState(() => _count = v)),
+              _Stepper(value: _count, min: 1, max: 16, label: _count == 1 ? 'picture' : 'pictures', onChanged: (v) => setState(() => _count = v)),
             ],
           ),
           if (!_random && _count > 1)

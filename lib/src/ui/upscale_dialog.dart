@@ -126,7 +126,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                '${item.width} × ${item.height}  →  $w × $h',
+                '${item.width} × ${item.height} to $w × $h',
                 style: const TextStyle(fontSize: 12, color: Palette.faint),
               ),
             ),

@@ -14,6 +14,7 @@ import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
+import 'package:generativeview/src/ui/stats_page.dart';
 
 import 'support.dart';
 
@@ -27,7 +28,6 @@ void main() {
     await tester.runAsync(loadAppFonts);
     // Real shadows in the pictures, not the test framework's outlines.
     debugDisableShadows = false;
-    addTearDown(() => debugDisableShadows = true);
     final scratch = Directory.systemTemp.createTempSync('gv-gallery-');
     addTearDown(() => scratch.deleteSync(recursive: true));
     final core = NativeCore.start(
@@ -212,7 +212,12 @@ void main() {
     await settle(tester);
     await pumpUntil(
       tester,
-      () => tester.widgetList<RawImage>(find.byType(RawImage)).where((w) => w.image != null).length >= 4,
+      () =>
+          tester
+              .widgetList<RawImage>(find.descendant(of: find.byType(StatsPage), matching: find.byType(RawImage)))
+              .where((w) => w.image != null)
+              .length >=
+          6,
       what: 'sample thumbnails',
       timeout: const Duration(minutes: 1),
     );
@@ -230,5 +235,6 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     state.dispose();
     await tester.pump(const Duration(seconds: 5));
+    debugDisableShadows = true;
   });
 }

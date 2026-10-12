@@ -403,7 +403,7 @@ void main() {
     await settle(tester);
     expect(find.text('Real-ESRGAN general'), findsOneWidget);
     expect(find.text('Real-ESRGAN anime'), findsOneWidget);
-    expect(find.text('320 × 320  →  640 × 640'), findsOneWidget);
+    expect(find.text('320 × 320 to 640 × 640'), findsOneWidget);
     await screenshot(tester, boundary, '25-upscale');
     if (model.isEmpty) {
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
