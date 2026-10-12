@@ -481,14 +481,16 @@ void main() {
     final middle = tester.getCenter(find.byType(FocusView));
     await tester.sendEventToBinding(mouse.hover(middle));
     final fitted = zoomLabels(tester);
-    await tester.sendEventToBinding(mouse.scroll(const Offset(0, -120)));
-    await tester.pump();
-    expect(zoomLabels(tester), isNot(fitted), reason: 'wheel up zooms in');
-    expect(state.selectedIndex, 8, reason: 'wheel up does not change image');
+    // This picture is small enough to be fitted above 200%, as far in as
+    // zoom goes, so out first and then back in.
     await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
     await tester.pump();
-    expect(zoomLabels(tester), fitted, reason: 'wheel down zooms back out');
+    expect(zoomLabels(tester), isNot(fitted), reason: 'wheel down zooms out');
     expect(state.selectedIndex, 8, reason: 'wheel down does not change image');
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, -120)));
+    await tester.pump();
+    expect(zoomLabels(tester), fitted, reason: 'wheel up zooms back in');
+    expect(state.selectedIndex, 8, reason: 'wheel up does not change image');
     expect(state.mode, ViewMode.focus);
 
     // ---- Space and Enter flip between the image and the grid ---------------
