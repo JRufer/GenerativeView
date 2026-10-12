@@ -16,20 +16,29 @@ final GlobalKey<NavigatorState> appNavigator = GlobalKey<NavigatorState>(debugLa
 /// A context under the navigator, for opening panels from a shortcut.
 BuildContext? get _panelContext => appNavigator.currentState?.overlay?.context;
 
-const Map<LogicalKeyboardKey, int> _digits = {
-  LogicalKeyboardKey.digit0: 0,
-  LogicalKeyboardKey.digit1: 1,
-  LogicalKeyboardKey.digit2: 2,
-  LogicalKeyboardKey.digit3: 3,
-  LogicalKeyboardKey.digit4: 4,
-  LogicalKeyboardKey.digit5: 5,
-  LogicalKeyboardKey.numpad0: 0,
-  LogicalKeyboardKey.numpad1: 1,
-  LogicalKeyboardKey.numpad2: 2,
-  LogicalKeyboardKey.numpad3: 3,
-  LogicalKeyboardKey.numpad4: 4,
-  LogicalKeyboardKey.numpad5: 5,
-};
+/// The number of stars a digit key gives, or null for any other key.
+int? _stars(LogicalKeyboardKey key) {
+  const digits = [
+    LogicalKeyboardKey.digit0,
+    LogicalKeyboardKey.digit1,
+    LogicalKeyboardKey.digit2,
+    LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.digit4,
+    LogicalKeyboardKey.digit5,
+  ];
+  const pad = [
+    LogicalKeyboardKey.numpad0,
+    LogicalKeyboardKey.numpad1,
+    LogicalKeyboardKey.numpad2,
+    LogicalKeyboardKey.numpad3,
+    LogicalKeyboardKey.numpad4,
+    LogicalKeyboardKey.numpad5,
+  ];
+  final i = digits.indexOf(key);
+  if (i >= 0) return i;
+  final j = pad.indexOf(key);
+  return j >= 0 ? j : null;
+}
 
 /// Counts routes above the home page, so shortcuts can stand down while a
 /// menu or dialog is open.
@@ -225,7 +234,7 @@ class ShortcutLayer extends StatelessWidget {
   bool _pictureKey(LogicalKeyboardKey key, bool shift) {
     final panel = _panelContext;
     final item = state.selected;
-    final stars = _digits[key];
+    final stars = _stars(key);
     if (stars != null) {
       if (item != null) state.rateSelected(stars, toggle: stars > 0);
       return true;
@@ -239,14 +248,14 @@ class ShortcutLayer extends StatelessWidget {
       return true;
     }
     if (item == null) {
-      return const {
+      return [
         LogicalKeyboardKey.keyP,
         LogicalKeyboardKey.keyX,
         LogicalKeyboardKey.keyU,
         LogicalKeyboardKey.keyB,
         LogicalKeyboardKey.keyL,
         LogicalKeyboardKey.keyR,
-      }.contains(key);
+      ].contains(key);
     }
     if (key == LogicalKeyboardKey.keyP) {
       state.flagSelected(Flag.keep);
