@@ -9,6 +9,7 @@
 
 use crate::db::{Db, FileRecord};
 use crate::meta;
+use crate::notes::{self, Notes};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rayon::prelude::*;
@@ -40,11 +41,12 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    pub fn start(db: Arc<Db>, sink: EventSink) -> Indexer {
+    pub fn start(db: Arc<Db>, notes: Arc<Notes>, sink: EventSink) -> Indexer {
         let (tx, rx) = unbounded();
         let generation = Arc::new(AtomicU64::new(0));
         let worker = Worker {
             db,
+            notes,
             sink,
             tx: tx.clone(),
             generation: generation.clone(),
@@ -178,6 +180,7 @@ struct Session {
 
 struct Worker {
     db: Arc<Db>,
+    notes: Arc<Notes>,
     sink: EventSink,
     tx: Sender<Cmd>,
     generation: Arc<AtomicU64>,
@@ -322,6 +325,18 @@ impl Worker {
         }
         s.dir_mtimes = dirs;
 
+        // The notes files: any that changed since last read, and any that
+        // went away along with their folders.
+        let mut notes_changed = false;
+        let mut note_dirs: HashSet<String> = s.dir_mtimes.keys().cloned().collect();
+        note_dirs.extend(self.db.note_dirs(&s.root, s.recursive).unwrap_or_default());
+        for dir in &note_dirs {
+            notes_changed |= self.notes.load_dir(&self.db, dir, false);
+        }
+        if notes_changed {
+            self.changed(s);
+        }
+
         let known = match self.db.snapshot(&s.root, s.recursive) {
             Ok(k) => k,
             Err(e) => {
@@ -408,6 +423,11 @@ impl Worker {
             };
             let parent = normalize(parent);
             if full == s.root {
+                continue;
+            }
+            if name == notes::FILE_NAME {
+                // Notes written here, or arriving from another machine.
+                removed += self.notes.load_dir(&self.db, &parent, false) as usize;
                 continue;
             }
             let in_scope = if s.recursive { parent == s.root || parent.starts_with(&join(&s.root, "")) } else { parent == s.root };

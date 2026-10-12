@@ -241,7 +241,102 @@ impl ContentSearch {
         if sort == "relevance" {
             matched.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         }
-        Ok(QueryResult { dirs: all.dirs.clone(), rows: matched.into_iter().map(|(_, i)| all.rows[i].clone()).collect() })
+        Ok(all.pick(matched.into_iter().map(|(_, i)| i)))
+    }
+}
+
+/// How alike two pictures must be for "more like this": the cosine of
+/// their vectors. Measured on generated pictures: variations of one prompt
+/// sit around 0.85 to 0.95, pictures of the same kind of thing around 0.7
+/// to 0.8, unrelated ones well below.
+pub const SIMILAR: f32 = 0.78;
+
+/// However strict [`SIMILAR`] is, "more like this" shows at least this many
+/// pictures, as long as they are not plainly unrelated ([`SIMILAR_FLOOR`]).
+const SIMILAR_AT_LEAST: usize = 12;
+const SIMILAR_FLOOR: f32 = 0.6;
+
+/// Kinds of picture, for describing one: the best fitting is named first.
+const STYLES: [&str; 14] = [
+    "a photograph",
+    "a cinematic film still",
+    "a portrait photograph",
+    "a landscape photograph",
+    "digital art",
+    "an anime illustration",
+    "a comic book illustration",
+    "an oil painting",
+    "a watercolor painting",
+    "a pencil sketch",
+    "a 3d render",
+    "pixel art",
+    "concept art",
+    "a vector illustration",
+];
+
+impl ContentSearch {
+    /// The pictures of `all` that look like the picture at `target`, most
+    /// alike first when `sort` is "relevance", otherwise in `all`'s order.
+    /// `bar` overrides [`SIMILAR`].
+    pub fn similar(&self, target: &str, all: &QueryResult, sort: &str, bar: Option<f32>) -> Result<QueryResult, String> {
+        let inner = &self.inner;
+        let wanted = store::unpack(&inner.picture_vector(target)?);
+        let bar = bar.unwrap_or(SIMILAR);
+        let scored: Vec<(f32, usize)> = all
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| {
+                let vector = inner.vectors.get(&inner.key(&all.dirs[row.1 as usize], row))?;
+                (vector.len() == wanted.len()).then(|| (store::score(&wanted, &vector), i))
+            })
+            .collect();
+        let mut best = scored.clone();
+        best.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut keep: Vec<(f32, usize)> = best.iter().copied().filter(|(score, _)| *score >= bar).collect();
+        if keep.len() < SIMILAR_AT_LEAST {
+            let floor = SIMILAR_FLOOR.min(bar);
+            keep = best.iter().copied().filter(|(score, _)| *score >= floor).take(SIMILAR_AT_LEAST.max(keep.len())).collect();
+        }
+        if sort != "relevance" {
+            keep.sort_by_key(|(_, i)| *i);
+        }
+        Ok(all.pick(keep.into_iter().map(|(_, i)| i)))
+    }
+
+    /// Describe a picture in words, from what the model sees in it: the
+    /// kind of picture it is and the everyday things that stand out in it.
+    /// A starting prompt for whatever needs one (a diffusion upscale).
+    pub fn describe(&self, path: &str) -> Result<Value, String> {
+        let inner = &self.inner;
+        let picture = inner.picture_vector(path)?;
+        let reference = inner.reference()?;
+        let lines = everyday_lines();
+        let usual = usual(&reference, &picture);
+        let mut seen: Vec<(f32, &str)> = reference
+            .vectors
+            .chunks_exact(reference.dim)
+            .zip(&lines)
+            .map(|(text, line)| (usual.fit(store::score(text, &picture)).level(), *line))
+            .filter(|(level, _)| *level >= 1.0)
+            .collect();
+        seen.sort_by(|a, b| b.0.total_cmp(&a.0));
+        seen.truncate(8);
+        let styles = inner.styles()?;
+        let style = styles
+            .chunks_exact(reference.dim)
+            .zip(STYLES)
+            .map(|(text, name)| (store::score(text, &picture), name))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or("a picture", |(_, name)| name);
+        let subjects: Vec<&str> = seen.iter().map(|(_, w)| *w).collect();
+        let mut prompt = style.to_string();
+        if !subjects.is_empty() {
+            prompt.push_str(" of ");
+            prompt.push_str(&subjects.join(", "));
+        }
+        prompt.push_str(", highly detailed, sharp focus, high resolution");
+        Ok(json!({ "prompt": prompt, "style": style, "subjects": subjects }))
     }
 }
 
@@ -358,6 +453,46 @@ impl Inner {
         let side = Arc::new(TextSide { tokenizer: tokenizer::Tokenizer::load(&self.model_dir.join("tokenizer.json"))?, encoder: model::Text::load(&self.model_dir)? });
         *slot = Some(side.clone());
         Ok(side)
+    }
+
+    /// A picture's vector: as stored, or made now (and stored) if the
+    /// folder pass has not got to it yet.
+    fn picture_vector(&self, path: &str) -> Result<store::Packed, String> {
+        let md = std::fs::metadata(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+        let size = md.len() as i64;
+        let key = store::key(MODEL, path, mtime, size);
+        if let Some(vector) = self.vectors.get(&key) {
+            return Ok(vector);
+        }
+        if !self.installed() {
+            return Err("the content search model is not installed".into());
+        }
+        let jpeg = match self.thumbs.get(path, mtime, size, 0) {
+            Ok(jpeg) => jpeg,
+            Err(ThumbError::NeedHost) => return Err("this picture has not been shown yet; open it once and try again".into()),
+            Err(ThumbError::Failed(e)) => return Err(e),
+        };
+        let encoder = model::Vision::load(&self.model_dir)?;
+        let img = ::image::load_from_memory(&jpeg).map_err(|e| e.to_string())?;
+        let prepared = image::prepare(&img, encoder.image_size)?;
+        let vector = encoder.embed(&prepared);
+        let vector: Vec<f32> = vector.chunks_exact(encoder.dim).next().ok_or("the model gave nothing back")?.to_vec();
+        let _ = self.vectors.put(&[(key, vector.clone())], &[]);
+        Ok(store::pack(&vector))
+    }
+
+    /// The vectors of [`STYLES`], end to end.
+    fn styles(&self) -> Result<Vec<f32>, String> {
+        let name = format!("{MODEL}/styles/{:016x}", xxhash_rust::xxh3::xxh3_64(STYLES.join("\n").as_bytes()));
+        if let Some(saved) = self.vectors.texts(&name).filter(|saved| !saved.is_empty() && saved.len() % STYLES.len() == 0) {
+            return Ok(saved);
+        }
+        let side = self.text_side()?;
+        let made: Result<Vec<Vec<f32>>, String> = STYLES.par_iter().map(|line| side.encoder.embed(&side.tokenizer.encode(line))).collect();
+        let made = made?.concat();
+        let _ = self.vectors.put_texts(&name, &made);
+        Ok(made)
     }
 
     /// The everyday descriptions' vectors: from memory, from the store, or

@@ -13,6 +13,7 @@
 
 use crate::dates;
 use crate::meta::{facet_value, GenInfo};
+use crate::notes::{Flag, Note};
 use parking_lot::Mutex;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags};
@@ -21,7 +22,7 @@ use std::path::Path;
 
 pub type DbResult<T> = Result<T, rusqlite::Error>;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 // `files` stays narrow so listing a folder touches few pages. The search
 // text lives beside it in `ftext`, lower-cased; it is only ever searched,
@@ -62,6 +63,20 @@ CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS notes (
+    dir         TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    rating      INTEGER NOT NULL DEFAULT 0,
+    flag        INTEGER NOT NULL DEFAULT 0,
+    collections TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (dir, name)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS note_files (
+    dir   TEXT PRIMARY KEY,
+    mtime INTEGER NOT NULL,
+    size  INTEGER NOT NULL
+) WITHOUT ROWID;
 "#;
 
 /// What the scanner knows about a file on disk, plus its parsed metadata.
@@ -95,6 +110,28 @@ pub type Row = (i64, u32, String, u8, u32, u32, i64, i64, i64);
 pub struct QueryResult {
     pub dirs: Vec<String>,
     pub rows: Vec<Row>,
+    /// For each row, what the user has said about it (see [`mark`]); may be
+    /// empty, which is the same as all zero.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<u8>,
+}
+
+impl QueryResult {
+    /// The rows at `indexes`, in that order, with their marks.
+    pub fn pick(&self, indexes: impl IntoIterator<Item = usize>) -> QueryResult {
+        let mut out = QueryResult { dirs: self.dirs.clone(), ..Default::default() };
+        for i in indexes {
+            out.rows.push(self.rows[i].clone());
+            out.marks.push(self.marks.get(i).copied().unwrap_or(0));
+        }
+        out
+    }
+}
+
+/// A picture's rating (0 to 5) and flag (see [`crate::notes::Flag`]) in one
+/// byte: the rating in the low three bits, the flag in the two above.
+pub fn mark(rating: u8, flag: u8) -> u8 {
+    (rating & 7) | (flag & 3) << 3
 }
 
 impl QueryResult {
@@ -107,7 +144,7 @@ impl QueryResult {
     /// rows    48 bytes each:
     ///           i64 id, i64 mtime (ms), i64 size,
     ///           u32 width, u32 height, u32 duration (ms),
-    ///           u32 name offset, u16 name length, u8 kind, u8 0, u32 dir index
+    ///           u32 name offset, u16 name length, u8 kind, u8 mark, u32 dir index
     /// dirs    8 bytes each: u32 offset, u32 length
     /// strings UTF-8, addressed by the offsets above
     /// ```
@@ -120,7 +157,7 @@ impl QueryResult {
         out.extend_from_slice(&(self.rows.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.dirs.len() as u32).to_le_bytes());
         out.extend_from_slice(&((names + dirs) as u32).to_le_bytes());
-        for (id, dir, name, kind, width, height, mtime, size, duration) in &self.rows {
+        for (i, (id, dir, name, kind, width, height, mtime, size, duration)) in self.rows.iter().enumerate() {
             out.extend_from_slice(&id.to_le_bytes());
             out.extend_from_slice(&mtime.to_le_bytes());
             out.extend_from_slice(&size.to_le_bytes());
@@ -130,7 +167,7 @@ impl QueryResult {
             out.extend_from_slice(&(strings.len() as u32).to_le_bytes());
             out.extend_from_slice(&(name.len() as u16).to_le_bytes());
             out.push(*kind);
-            out.push(0);
+            out.push(self.marks.get(i).copied().unwrap_or(0));
             out.extend_from_slice(&dir.to_le_bytes());
             strings.extend_from_slice(name.as_bytes());
         }
@@ -172,7 +209,9 @@ impl Db {
             tx.execute_batch(
                 "DROP TABLE IF EXISTS search;
                  DROP TABLE IF EXISTS ftext;
-                 DROP TABLE IF EXISTS files;",
+                 DROP TABLE IF EXISTS files;
+                 DROP TABLE IF EXISTS notes;
+                 DROP TABLE IF EXISTS note_files;",
             )?;
             tx.execute_batch(SCHEMA)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -214,6 +253,92 @@ impl Db {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    // ------------------------------------------------------------ notes
+
+    /// When `dir`'s notes file was last read: (mtime, size), or None if it
+    /// was not there.
+    pub fn notes_stamp(&self, dir: &str) -> Option<(i64, i64)> {
+        self.read
+            .lock()
+            .query_row("SELECT mtime, size FROM note_files WHERE dir = ?1", [dir], |r| Ok((r.get(0)?, r.get(1)?)))
+            .ok()
+    }
+
+    pub fn set_notes_stamp(&self, dir: &str, stamp: Option<(i64, i64)>) -> DbResult<()> {
+        let conn = self.write.lock();
+        match stamp {
+            Some((mtime, size)) => conn.execute(
+                "INSERT INTO note_files (dir, mtime, size) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (dir) DO UPDATE SET mtime = excluded.mtime, size = excluded.size",
+                params![dir, mtime, size],
+            )?,
+            None => conn.execute("DELETE FROM note_files WHERE dir = ?1", [dir])?,
+        };
+        Ok(())
+    }
+
+    /// Every note held for pictures in `dir`, by name.
+    pub fn notes_in(&self, dir: &str) -> DbResult<Vec<(String, Note)>> {
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare_cached("SELECT name, rating, flag, collections FROM notes WHERE dir = ?1 ORDER BY name")?;
+        let rows = stmt.query_map([dir], |r| Ok((r.get::<_, String>(0)?, note_from(r.get(1)?, r.get(2)?, &r.get::<_, String>(3)?))))?;
+        rows.collect()
+    }
+
+    /// Replace what the index holds for `dir`'s notes.
+    pub fn replace_notes(&self, dir: &str, notes: &[(String, Note)]) -> DbResult<()> {
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM notes WHERE dir = ?1", [dir])?;
+        {
+            let mut stmt = tx.prepare_cached("INSERT OR REPLACE INTO notes (dir, name, rating, flag, collections) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            for (name, note) in notes {
+                if note.is_empty() {
+                    continue;
+                }
+                let collections = note.collections.iter().map(|c| format!("{c}\n")).collect::<String>();
+                stmt.execute(params![dir, name, note.rating, note.flag as u8, collections])?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// The note for one picture; empty if there is none.
+    pub fn note(&self, dir: &str, name: &str) -> Note {
+        self.read
+            .lock()
+            .query_row("SELECT rating, flag, collections FROM notes WHERE dir = ?1 AND name = ?2", [dir, name], |r| {
+                Ok(note_from(r.get(0)?, r.get(1)?, &r.get::<_, String>(2)?))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Every collection name anywhere in the index, with how many pictures
+    /// are in it, most used first.
+    pub fn collection_names(&self) -> DbResult<Vec<(String, u32)>> {
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare_cached("SELECT collections FROM notes WHERE collections != ''")?;
+        let mut rows = stmt.query([])?;
+        let mut counts: HashMap<String, (String, u32)> = HashMap::new();
+        while let Some(r) = rows.next()? {
+            for name in r.get_ref(0)?.as_str()?.split('\n').filter(|n| !n.is_empty()) {
+                counts.entry(name.to_lowercase()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
+            }
+        }
+        let mut out: Vec<(String, u32)> = counts.into_values().collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        Ok(out)
+    }
+
+    /// The folders under `root` that hold a notes file the index knows of.
+    pub fn note_dirs(&self, root: &str, recursive: bool) -> DbResult<Vec<String>> {
+        let conn = self.read.lock();
+        let (cond, args) = dir_condition(root, recursive, "");
+        let mut stmt = conn.prepare(&format!("SELECT dir FROM note_files WHERE {cond}"))?;
+        let rows = stmt.query_map(params_from_iter(args.iter()), |r| r.get(0))?;
+        rows.collect()
     }
 
     // ------------------------------------------------------------ indexing
@@ -302,19 +427,17 @@ impl Db {
     // ------------------------------------------------------------ querying
 
     pub fn query(&self, q: &Query) -> DbResult<QueryResult> {
-        let (mut cond, mut args) = dir_condition(&q.dir, q.recursive, "f.");
-        let mut needs_text = false;
         let terms = parse_terms(&q.text);
-        for term in &terms {
-            needs_text |= term.to_sql(&mut cond, &mut args);
-        }
+        let (cond, mut args) = filter_sql(&q.dir, q.recursive, &terms);
         let ranked = if q.sort == "relevance" { rank_sql(&terms, &mut args) } else { None };
-        needs_text |= ranked.is_some();
         let plain = |sort: &str| match sort {
             "oldest" => "f.mtime ASC, f.name ASC",
             "name" => "f.dir ASC, f.name COLLATE NOCASE ASC",
             "name_desc" => "f.dir DESC, f.name COLLATE NOCASE DESC",
             "size" => "f.size DESC, f.name ASC",
+            // Best rated first; kept before unflagged before rejected among
+            // equals, then newest.
+            "rating" => "coalesce(n.rating, 0) DESC, CASE coalesce(n.flag, 0) WHEN 1 THEN 0 WHEN 0 THEN 1 ELSE 2 END, f.mtime DESC, f.name DESC",
             _ => "f.mtime DESC, f.name DESC",
         };
         let order = match (q.sort.as_str(), &ranked) {
@@ -322,11 +445,14 @@ impl Db {
             ("relevance", None) => plain(&q.then).to_string(),
             (sort, _) => plain(sort).to_string(),
         };
-        // Only pull in the text table when a term actually needs it.
-        let join = if needs_text { "JOIN ftext t ON t.id = f.id" } else { "" };
+        // The text table only when a term actually reads it; the notes
+        // always, for the marks on the tiles (a lookup by key per row).
+        let join = if needs_text(&terms) || ranked.is_some() { "JOIN ftext t ON t.id = f.id" } else { "" };
         let sql = format!(
-            "SELECT f.id, f.dir, f.name, f.kind, f.width, f.height, f.mtime, f.size, f.duration
-             FROM files f {join} WHERE {cond} ORDER BY {order}"
+            "SELECT f.id, f.dir, f.name, f.kind, f.width, f.height, f.mtime, f.size, f.duration,
+                    coalesce(n.rating, 0), coalesce(n.flag, 0)
+             FROM files f {join} LEFT JOIN notes n ON n.dir = f.dir AND n.name = f.name
+             WHERE {cond} ORDER BY {order}"
         );
         let conn = self.read.lock();
         let mut stmt = conn.prepare_cached(&sql)?;
@@ -345,8 +471,32 @@ impl Db {
                 }
             };
             out.rows.push((r.get(0)?, di, r.get(2)?, r.get::<_, i64>(3)? as u8, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?));
+            out.marks.push(mark(r.get::<_, i64>(9)? as u8, r.get::<_, i64>(10)? as u8));
         }
         Ok(out)
+    }
+}
+
+/// The WHERE clause (over `files f`, `ftext t` and `notes n`) for a folder
+/// and the terms of a search, and the values it binds.
+fn filter_sql(dir: &str, recursive: bool, terms: &[Term]) -> (String, Vec<String>) {
+    let (mut cond, mut args) = dir_condition(dir, recursive, "f.");
+    for term in terms {
+        term.to_sql(&mut cond, &mut args);
+    }
+    (cond, args)
+}
+
+/// Whether any of `terms` reads the `ftext` table.
+fn needs_text(terms: &[Term]) -> bool {
+    terms.iter().any(Term::reads_text)
+}
+
+fn note_from(rating: i64, flag: i64, collections: &str) -> Note {
+    Note {
+        rating: rating.clamp(0, crate::notes::MAX_RATING as i64) as u8,
+        flag: Flag::from_i64(flag),
+        collections: collections.split('\n').filter(|c| !c.is_empty()).map(str::to_string).collect(),
     }
 }
 
@@ -374,8 +524,9 @@ struct Term {
     negate: bool,
     /// A text column to search (`lname`, `prompt`, `negative`, `model`,
     /// `loras`), or one of the fields with rules of their own (`seed`,
-    /// `source`, `date`, and the facets `sampler`, `scheduler`, `steps`,
-    /// `cfg`, `size`). None = anywhere.
+    /// `source`, `date`, the facets `sampler`, `scheduler`, `steps`, `cfg`,
+    /// `size`, and the notes `rating`, `flag`, `collection`). `similar` is
+    /// answered by content search, not here. None = anywhere.
     field: Option<&'static str>,
     /// `field:=text`: the whole value, not part of it.
     exact: bool,
@@ -416,6 +567,12 @@ fn field_alias(s: &str) -> Option<&'static str> {
         "cfg" => "cfg",
         "size" | "res" | "resolution" => "size",
         "date" => "date",
+        "fullprompt" | "wholeprompt" => "fullprompt",
+        "fullneg" | "wholeneg" => "fullneg",
+        "rating" | "rated" | "stars" => "rating",
+        "flag" | "flagged" => "flag",
+        "collection" | "col" | "in" => "collection",
+        "similar" | "like" => "similar",
         _ => return None,
     })
 }
@@ -479,6 +636,61 @@ fn parse_terms(text: &str) -> Vec<Term> {
     terms
 }
 
+/// The SQL for `rating:…`: `4` exactly, `>=3` or `3+` at least, `<3`,
+/// `2..4` from and to, `none` (or `0`) for unrated, `any` for rated, and
+/// any of those joined by `|`.
+fn rating_sql(text: &str) -> String {
+    const R: &str = "coalesce(n.rating, 0)";
+    let one = |part: &str| -> Option<String> {
+        let part = part.trim().to_ascii_lowercase();
+        let num = |s: &str| s.trim().parse::<u8>().ok().filter(|n| *n <= crate::notes::MAX_RATING);
+        Some(match part.as_str() {
+            "none" | "unrated" | "no" => format!("{R} = 0"),
+            "any" | "rated" | "yes" => format!("{R} > 0"),
+            p if p.starts_with(">=") => format!("{R} >= {}", num(&p[2..])?),
+            p if p.starts_with("<=") => format!("{R} <= {}", num(&p[2..])?),
+            p if p.starts_with('>') => format!("{R} > {}", num(&p[1..])?),
+            p if p.starts_with('<') => format!("{R} < {}", num(&p[1..])?),
+            p if p.ends_with('+') => format!("{R} >= {}", num(&p[..p.len() - 1])?),
+            p if p.contains("..") => {
+                let (a, b) = p.split_once("..")?;
+                format!("{R} BETWEEN {} AND {}", num(a)?, num(b)?)
+            }
+            p => format!("{R} = {}", num(p)?),
+        })
+    };
+    let parts: Vec<String> = text.split('|').filter_map(one).collect();
+    if parts.is_empty() {
+        "0".to_string()
+    } else {
+        format!("({})", parts.join(" OR "))
+    }
+}
+
+/// Text as `prompt:=…` compares it: lower-cased, without double quotes
+/// (which a search cannot hold), and with runs of spacing as one space.
+fn same_text(text: &str) -> String {
+    text.to_lowercase().replace('"', "").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Whether `lines` (names one to a line) holds `needle`, already
+/// lower-cased: as a whole name, or inside one.
+fn lines_match(lines: &str, needle: &str, exact: bool) -> bool {
+    lines.split('\n').filter(|l| !l.is_empty()).any(|line| {
+        let line = line.to_lowercase();
+        if exact {
+            line == needle
+        } else {
+            line.contains(needle)
+        }
+    })
+}
+
+/// The picture a search's `similar:` term names, if it has one.
+pub fn similar_target(text: &str) -> Option<String> {
+    parse_terms(text).into_iter().find(|t| t.field == Some("similar") && !t.negate).map(|t| t.text)
+}
+
 /// The columns [`find_score`] reads, as the arguments of `gv_find`.
 const FIND_ALL: &str = "t.lname, t.prompt, t.negative, t.model, t.loras, t.extra";
 
@@ -497,87 +709,107 @@ impl Term {
         (inner.to_string(), ends)
     }
 
-    /// Append this term's predicate. Returns true if it reads the `ftext` table.
-    fn to_sql(&self, cond: &mut String, args: &mut Vec<String>) -> bool {
+    /// The values an exact term accepts: `model:="a|b"` is either.
+    /// Prompts are taken whole, `|` and all, since prompt syntax uses it.
+    fn alternatives(&self) -> Vec<&str> {
+        if !self.exact || matches!(self.field, Some("prompt" | "negative" | "fullprompt" | "fullneg")) {
+            return vec![self.text.as_str()];
+        }
+        let parts: Vec<&str> = self.text.split('|').map(str::trim).filter(|p| !p.is_empty()).collect();
+        if parts.is_empty() {
+            vec![self.text.as_str()]
+        } else {
+            parts
+        }
+    }
+
+    /// Whether this term's predicate reads the `ftext` table.
+    fn reads_text(&self) -> bool {
+        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar"))
+    }
+
+    /// Append this term's predicate.
+    fn to_sql(&self, cond: &mut String, args: &mut Vec<String>) {
         let not = if self.negate { "NOT " } else { "" };
         let mut bind = |value: String| {
             args.push(value);
             args.len()
         };
-        // One of the image's values under `kind`: all of it, or part of it.
-        let mut facet = |kind: &str, exact: bool| {
-            let n = bind(facet_value(kind, &self.text).to_lowercase());
-            format!(" AND {not}gv_facet(t.facets, '{kind}', ?{n}, {})", exact as u8)
-        };
-        match (self.field, self.exact) {
-            (Some("seed"), true) => {
-                let n = bind(self.text.clone());
-                cond.push_str(&format!(" AND {not}(f.seed = ?{n})"));
-                false
-            }
+        // Either of several predicates, one per alternative.
+        let any = |parts: Vec<String>| if parts.len() == 1 { parts.into_iter().next().unwrap_or_default() } else { format!("({})", parts.join(" OR ")) };
+        let pred = match (self.field, self.exact) {
+            (Some("similar"), _) => return,
+            (Some("seed"), true) => any(self.alternatives().into_iter().map(|v| format!("f.seed = ?{}", bind(v.to_string()))).collect()),
             (Some("seed"), false) => {
                 // Seeds are matched from the start: seed:123 finds 1234567.
                 let n = bind(self.text.clone());
-                cond.push_str(&format!(" AND {not}(substr(f.seed, 1, length(?{n})) = ?{n})"));
-                false
+                format!("substr(f.seed, 1, length(?{n})) = ?{n}")
             }
-            (Some("source"), _) => {
-                let n = bind(self.text.to_lowercase());
-                cond.push_str(&format!(" AND {not}(f.source = ?{n})"));
-                false
-            }
+            (Some("source"), _) => any(self.alternatives().into_iter().map(|v| format!("f.source = ?{}", bind(v.to_lowercase()))).collect()),
             (Some("date"), _) => {
                 // Numbers we worked out ourselves, so they go in as they are.
                 match dates::parse_range(&self.text) {
-                    Some((from, to)) => cond.push_str(&format!(" AND {not}(f.mtime >= {from} AND f.mtime < {to})")),
-                    None => cond.push_str(&format!(" AND {not}(0)")),
+                    Some((from, to)) => format!("(f.mtime >= {from} AND f.mtime < {to})"),
+                    None => "0".to_string(),
                 }
-                false
             }
-            (Some("lname"), true) => {
-                let n = bind(self.text.to_lowercase());
-                cond.push_str(&format!(" AND {not}(t.lname = ?{n})"));
-                true
+            (Some("rating"), _) => rating_sql(&self.text),
+            (Some("flag"), _) => {
+                let flags: Vec<String> = self
+                    .text
+                    .split('|')
+                    .filter_map(Flag::parse)
+                    .map(|flag| format!("coalesce(n.flag, 0) = {}", flag as u8))
+                    .collect();
+                if flags.is_empty() {
+                    "0".to_string()
+                } else {
+                    any(flags)
+                }
+            }
+            (Some("collection"), exact) => {
+                let parts = if exact { self.alternatives() } else { vec![self.text.as_str()] };
+                any(parts.into_iter().map(|v| format!("gv_lines(coalesce(n.collections, ''), ?{}, {})", bind(v.to_lowercase()), exact as u8)).collect())
+            }
+            (Some("lname"), true) => any(self.alternatives().into_iter().map(|v| format!("t.lname = ?{}", bind(v.to_lowercase()))).collect()),
+            (Some(field @ ("fullprompt" | "fullneg")), _) => {
+                // The whole prompt, give or take spacing and quotes.
+                let col = if field == "fullprompt" { "prompt" } else { "negative" };
+                format!("gv_same(t.{col}, ?{})", bind(same_text(&self.text)))
             }
             (Some(col @ ("prompt" | "negative")), _) => {
                 // As whole words: prompt:fox leaves foxglove out.
                 let (words, ends) = self.words();
                 let n = bind(words);
-                cond.push_str(&format!(" AND {not}gv_word(t.{col}, ?{n}, {})", ends.flags()));
-                true
+                format!("gv_word(t.{col}, ?{n}, {})", ends.flags())
             }
-            (Some("model"), true) => {
-                cond.push_str(&facet("model", true));
-                true
-            }
-            (Some("loras"), true) => {
-                cond.push_str(&facet("lora", true));
-                true
+            (Some(field @ ("model" | "loras")), true) => {
+                let kind = if field == "model" { "model" } else { "lora" };
+                any(self.alternatives().into_iter().map(|v| format!("gv_facet(t.facets, '{kind}', ?{}, 1)", bind(facet_value(kind, v).to_lowercase()))).collect())
             }
             (Some(kind @ ("sampler" | "scheduler" | "size")), exact) => {
-                cond.push_str(&facet(kind, exact));
-                true
+                let parts = if exact { self.alternatives() } else { vec![self.text.as_str()] };
+                any(parts.into_iter().map(|v| format!("gv_facet(t.facets, '{kind}', ?{}, {})", bind(facet_value(kind, v).to_lowercase()), exact as u8)).collect())
             }
             // Numbers have no "part of": steps:30 is not steps 130.
             (Some(kind @ ("steps" | "cfg")), _) => {
-                cond.push_str(&facet(kind, true));
-                true
+                let parts: Vec<&str> = self.text.split('|').map(str::trim).filter(|p| !p.is_empty()).collect();
+                any(parts.into_iter().map(|v| format!("gv_facet(t.facets, '{kind}', ?{}, 1)", bind(facet_value(kind, v).to_lowercase()))).collect())
             }
             (None, _) => {
                 // Anywhere, as words. `blob` is everything in one string, so
                 // the images that cannot match cost one scan of it.
                 let (words, ends) = self.words();
                 let n = bind(words);
-                cond.push_str(&format!(" AND {not}(instr(t.blob, ?{n}) > 0 AND gv_find({FIND_ALL}, ?{n}, {}) > 0)", ends.flags()));
-                true
+                format!("(instr(t.blob, ?{n}) > 0 AND gv_find({FIND_ALL}, ?{n}, {}) > 0)", ends.flags())
             }
             // A named field holding names (file, model, LoRA): any part.
             (Some(col), _) => {
                 let n = bind(self.text.to_lowercase());
-                cond.push_str(&format!(" AND {not}(instr(t.{col}, ?{n}) > 0)"));
-                true
+                format!("(instr(t.{col}, ?{n}) > 0)")
             }
-        }
+        };
+        cond.push_str(&format!(" AND {not}({pred})"));
     }
 
     /// An SQL expression for how well an image matches this term, for the
@@ -722,6 +954,16 @@ fn register_functions(conn: &Connection) -> DbResult<()> {
         let exact = ctx.get_raw(3).as_i64().unwrap_or(0) != 0;
         Ok(facet_matches(facets, kind, needle, exact))
     })?;
+    conn.create_scalar_function("gv_same", 2, flags, |ctx| {
+        let text = ctx.get_raw(0).as_str().unwrap_or("");
+        let needle = ctx.get_raw(1).as_str().unwrap_or("");
+        Ok(!needle.is_empty() && same_text(text) == needle)
+    })?;
+    conn.create_scalar_function("gv_lines", 3, flags, |ctx| {
+        let lines = ctx.get_raw(0).as_str().unwrap_or("");
+        let needle = ctx.get_raw(1).as_str().unwrap_or("");
+        Ok(lines_match(lines, needle, ctx.get_raw(2).as_i64().unwrap_or(0) != 0))
+    })?;
     conn.create_scalar_function("gv_word", 3, flags, |ctx| {
         let text = ctx.get_raw(0).as_str().unwrap_or("");
         let needle = ctx.get_raw(1).as_str().unwrap_or("");
@@ -742,8 +984,17 @@ const USAGE_KINDS: [&str; 9] = ["model", "lora", "aux", "sampler", "scheduler", 
 /// How many values of a kind are reported, most used first.
 const USAGE_TOP: usize = 100;
 const USAGE_WORDS: usize = 60;
+const USAGE_PROMPTS: usize = 50;
 /// How finely each value's use is spread over the folder's time span.
 pub const TREND_SLOTS: usize = 24;
+
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct Sample {
+    pub path: String,
+    pub mtime: i64,
+    pub size: i64,
+    pub rating: u8,
+}
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct UsageItem {
@@ -756,11 +1007,29 @@ pub struct UsageItem {
     pub role: String,
     /// The count again, spread over the folder's time span, oldest first.
     pub trend: Vec<u32>,
+    /// How many of its images are rated, and their stars added up.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub rated: u32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stars: u32,
+    /// How many of its images are flagged keep, and reject.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub keeps: u32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub rejects: u32,
+    /// Its best rated images, newest first among equals (models and LoRAs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<Sample>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct UsageGroup {
-    /// model | lora | aux | sampler | scheduler | steps | cfg | size | source | word
+    /// model | lora | aux | sampler | scheduler | steps | cfg | size | source
+    /// | word | prompt | rating | flag | collection
     pub kind: &'static str,
     /// How many different values there are; `items` holds the most used.
     pub distinct: usize,
@@ -788,22 +1057,60 @@ pub struct Usage {
     pub timeline: Vec<TimeBucket>,
 }
 
+/// How many sample images a model or LoRA keeps.
+const SAMPLES: usize = 3;
+
+/// One image, as a tally sees it.
+struct Seen<'a> {
+    slot: usize,
+    rating: u8,
+    flag: Flag,
+    sample: Option<&'a dyn Fn() -> Sample>,
+}
+
 struct Tally {
     value: String,
     role: String,
     count: u32,
     trend: [u32; TREND_SLOTS],
+    rated: u32,
+    stars: u32,
+    keeps: u32,
+    rejects: u32,
+    samples: Vec<Sample>,
 }
 
-fn tally(map: &mut HashMap<String, Tally>, key: &str, value: &str, role: &str, slot: usize) {
-    if let Some(t) = map.get_mut(key) {
-        t.count += 1;
-        t.trend[slot] += 1;
-        return;
+fn tally(map: &mut HashMap<String, Tally>, key: &str, value: &str, role: &str, seen: &Seen) {
+    let t = map.entry(key.to_string()).or_insert_with(|| Tally {
+        value: value.to_string(),
+        role: role.to_string(),
+        count: 0,
+        trend: [0; TREND_SLOTS],
+        rated: 0,
+        stars: 0,
+        keeps: 0,
+        rejects: 0,
+        samples: Vec::new(),
+    });
+    t.count += 1;
+    t.trend[seen.slot] += 1;
+    if seen.rating > 0 {
+        t.rated += 1;
+        t.stars += seen.rating as u32;
     }
-    let mut trend = [0; TREND_SLOTS];
-    trend[slot] = 1;
-    map.insert(key.to_string(), Tally { value: value.to_string(), role: role.to_string(), count: 1, trend });
+    match seen.flag {
+        Flag::Keep => t.keeps += 1,
+        Flag::Reject => t.rejects += 1,
+        Flag::None => {}
+    }
+    // Keep the best few: higher rated, then newer (rows come newest first).
+    if let Some(make) = seen.sample {
+        if seen.flag != Flag::Reject && (t.samples.len() < SAMPLES || t.samples.iter().any(|s| s.rating < seen.rating)) {
+            t.samples.push(make());
+            t.samples.sort_by(|a, b| b.rating.cmp(&a.rating).then(b.mtime.cmp(&a.mtime)));
+            t.samples.truncate(SAMPLES);
+        }
+    }
 }
 
 fn ranked(kind: &'static str, map: HashMap<String, Tally>, top: usize) -> UsageGroup {
@@ -811,7 +1118,20 @@ fn ranked(kind: &'static str, map: HashMap<String, Tally>, top: usize) -> UsageG
     let mut all: Vec<Tally> = map.into_values().collect();
     all.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
     all.truncate(top);
-    let items = all.into_iter().map(|t| UsageItem { value: t.value, count: t.count, role: t.role, trend: t.trend.to_vec() }).collect();
+    let items = all
+        .into_iter()
+        .map(|t| UsageItem {
+            value: t.value,
+            count: t.count,
+            role: t.role,
+            trend: t.trend.to_vec(),
+            rated: t.rated,
+            stars: t.stars,
+            keeps: t.keeps,
+            rejects: t.rejects,
+            samples: t.samples,
+        })
+        .collect();
     UsageGroup { kind, distinct, items }
 }
 
@@ -911,13 +1231,16 @@ fn timeline(days: &BTreeMap<dates::Day, u32>) -> (&'static str, Vec<TimeBucket>)
 }
 
 impl Db {
-    /// Count what the images under `dir` were made with. One pass over the
-    /// same rows a search reads; ten thousand images take a few milliseconds.
-    pub fn usage(&self, dir: &str, recursive: bool) -> DbResult<Usage> {
-        let (cond, args) = dir_condition(dir, recursive, "f.");
+    /// Count what the images under `dir` that match `text` were made with,
+    /// and what has been said about them. One pass over the same rows a
+    /// search reads; ten thousand images take a few milliseconds.
+    pub fn usage(&self, dir: &str, recursive: bool, text: &str) -> DbResult<Usage> {
+        let terms = parse_terms(text);
+        let (cond, args) = filter_sql(dir, recursive, &terms);
         let conn = self.read.lock();
+        let from = "FROM files f JOIN ftext t ON t.id = f.id LEFT JOIN notes n ON n.dir = f.dir AND n.name = f.name";
         let (first, last): (Option<i64>, Option<i64>) = conn.query_row(
-            &format!("SELECT min(f.mtime), max(f.mtime) FROM files f WHERE {cond}"),
+            &format!("SELECT min(f.mtime), max(f.mtime) {from} WHERE {cond}"),
             params_from_iter(args.iter()),
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
@@ -928,14 +1251,28 @@ impl Db {
 
         let mut kinds: Vec<HashMap<String, Tally>> = USAGE_KINDS.iter().map(|_| HashMap::new()).collect();
         let mut words: HashMap<String, Tally> = HashMap::new();
+        let mut prompts: HashMap<String, Tally> = HashMap::new();
+        let mut ratings: HashMap<String, Tally> = HashMap::new();
+        let mut flags: HashMap<String, Tally> = HashMap::new();
+        let mut collections: HashMap<String, Tally> = HashMap::new();
         let mut days: BTreeMap<dates::Day, u32> = BTreeMap::new();
 
-        let sql = format!("SELECT f.mtime, f.source, t.facets, t.prompt FROM files f JOIN ftext t ON t.id = f.id WHERE {cond}");
+        let sql = format!(
+            "SELECT f.mtime, f.source, t.facets, t.prompt, f.dir, f.name, f.size,
+                    coalesce(n.rating, 0), coalesce(n.flag, 0), coalesce(n.collections, '')
+             {from} WHERE {cond} ORDER BY f.mtime DESC"
+        );
         let mut stmt = conn.prepare_cached(&sql)?;
         let mut rows = stmt.query(params_from_iter(args.iter()))?;
         while let Some(r) = rows.next()? {
             let mtime: i64 = r.get(0)?;
             let at = slot(mtime).min(TREND_SLOTS - 1);
+            let rating = r.get::<_, i64>(7)?.clamp(0, 5) as u8;
+            let flag = Flag::from_i64(r.get(8)?);
+            let (dir, name, size) = (r.get_ref(4)?.as_str()?, r.get_ref(5)?.as_str()?, r.get::<_, i64>(6)?);
+            let make = || Sample { path: join_path(dir, name), mtime, size, rating };
+            let plain = Seen { slot: at, rating, flag, sample: None };
+            let with_sample = Seen { slot: at, rating, flag, sample: Some(&make) };
             usage.total += 1;
             if !r.get_ref(1)?.as_str()?.is_empty() {
                 usage.generated += 1;
@@ -945,17 +1282,71 @@ impl Db {
                 let mut parts = line.split('\t');
                 let (Some(kind), Some(key), Some(value)) = (parts.next(), parts.next(), parts.next()) else { continue };
                 let Some(k) = USAGE_KINDS.iter().position(|x| *x == kind) else { continue };
-                tally(&mut kinds[k], key, value, parts.next().unwrap_or(""), at);
+                let seen = if matches!(kind, "model" | "lora" | "aux") { &with_sample } else { &plain };
+                tally(&mut kinds[k], key, value, parts.next().unwrap_or(""), seen);
             }
-            for word in prompt_words(r.get_ref(3)?.as_str()?) {
-                tally(&mut words, word, word, "", at);
+            let prompt = r.get_ref(3)?.as_str()?;
+            for word in prompt_words(prompt) {
+                tally(&mut words, word, word, "", &plain);
+            }
+            let whole = same_text(prompt);
+            if !whole.is_empty() {
+                tally(&mut prompts, &whole, &whole, "", &plain);
+            }
+            tally(&mut ratings, &rating.to_string(), &rating.to_string(), "", &plain);
+            if flag != Flag::None {
+                tally(&mut flags, flag.name(), flag.name(), "", &plain);
+            }
+            for name in r.get_ref(9)?.as_str()?.split('\n').filter(|n| !n.is_empty()) {
+                tally(&mut collections, &name.to_lowercase(), name, "", &plain);
             }
         }
 
         usage.groups = USAGE_KINDS.iter().zip(kinds).map(|(kind, map)| ranked(kind, map, USAGE_TOP)).collect();
         usage.groups.push(ranked("word", words, USAGE_WORDS));
+        usage.groups.push(ranked("prompt", prompts, USAGE_PROMPTS));
+        let mut stars = ranked("rating", ratings, 6);
+        // Five stars down to none, not most common first.
+        stars.items.sort_by(|a, b| b.value.cmp(&a.value));
+        usage.groups.push(stars);
+        usage.groups.push(ranked("flag", flags, 2));
+        usage.groups.push(ranked("collection", collections, USAGE_TOP));
         (usage.unit, usage.timeline) = timeline(&days);
         Ok(usage)
+    }
+
+    /// The words of the prompts under `dir` that turn up in at least `min`
+    /// of them, most common first: the folder's own vocabulary, which a
+    /// spelling check should not flag.
+    pub fn vocabulary(&self, dir: &str, recursive: bool, min: u32, top: usize) -> DbResult<Vec<String>> {
+        let (cond, args) = dir_condition(dir, recursive, "f.");
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare_cached(&format!("SELECT t.prompt, t.negative FROM files f JOIN ftext t ON t.id = f.id WHERE {cond}"))?;
+        let mut rows = stmt.query(params_from_iter(args.iter()))?;
+        let mut counts: HashMap<String, u32> = HashMap::new();
+        while let Some(r) = rows.next()? {
+            for col in [0, 1] {
+                let text = r.get_ref(col)?.as_str()?;
+                let mut seen: Vec<&str> = text.split(|c: char| !is_word_char(c) && c != '\'').filter(|w| w.chars().count() >= 2).collect();
+                seen.sort_unstable();
+                seen.dedup();
+                for w in seen {
+                    *counts.entry(w.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut out: Vec<(String, u32)> = counts.into_iter().filter(|(_, n)| *n >= min).collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out.truncate(top);
+        Ok(out.into_iter().map(|(w, _)| w).collect())
+    }
+}
+
+fn join_path(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
     }
 }
 
@@ -1271,7 +1662,7 @@ mod tests {
     #[test]
     fn usage_counts() {
         let (_tmp, db) = library();
-        let usage = db.usage("/out", true).unwrap();
+        let usage = db.usage("/out", true, "").unwrap();
         assert_eq!((usage.total, usage.generated), (4, 3));
 
         let group = |kind: &str| usage.groups.iter().find(|g| g.kind == kind).unwrap_or_else(|| panic!("no {kind} group"));
@@ -1319,7 +1710,7 @@ mod tests {
         }
 
         // Counting a facet and filtering by it agree.
-        for (kind, field) in [("model", "model"), ("lora", "lora"), ("steps", "steps"), ("cfg", "cfg"), ("size", "size"), ("word", "prompt")] {
+        for (kind, field) in [("model", "model"), ("lora", "lora"), ("steps", "steps"), ("cfg", "cfg"), ("size", "size"), ("word", "prompt"), ("prompt", "fullprompt")] {
             for item in &group(kind).items {
                 let found = names(&db, "/out", true, &format!("{field}:=\"{}\"", item.value)).len() as u32;
                 assert_eq!(found, item.count, "{field}:={}", item.value);
@@ -1327,8 +1718,8 @@ mod tests {
         }
 
         // Scope follows the folder.
-        assert_eq!(db.usage("/elsewhere", true).unwrap().total, 0);
-        assert!(db.usage("/elsewhere", true).unwrap().timeline.is_empty());
+        assert_eq!(db.usage("/elsewhere", true, "").unwrap().total, 0);
+        assert!(db.usage("/elsewhere", true, "").unwrap().timeline.is_empty());
     }
 
     #[test]
@@ -1386,6 +1777,7 @@ mod tests {
         let r = QueryResult {
             dirs: vec!["/a".into(), "/a/bé".into()],
             rows: vec![(7, 0, "x.png".into(), 0, 640, 480, 1_700_000_000_123, 99, 0), (-2, 1, "ü.mp4".into(), 1, 1920, 1080, 5, 1 << 33, 2500)],
+            marks: vec![0, mark(4, 1)],
         };
         let b = r.pack();
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) as usize;
@@ -1400,8 +1792,75 @@ mod tests {
         let (off, len) = (u32_at(row + 36), u16::from_le_bytes([b[row + 40], b[row + 41]]) as usize);
         assert_eq!(std::str::from_utf8(&b[strings + off..strings + off + len]).unwrap(), "ü.mp4");
         assert_eq!((b[row + 42], u32_at(row + 44)), (1, 1));
+        assert_eq!((b[16 + 43], b[row + 43]), (0, 4 | 1 << 3));
         let d = 16 + 2 * 48 + 8; // second dir
         assert_eq!(std::str::from_utf8(&b[strings + u32_at(d)..strings + u32_at(d) + u32_at(d + 4)]).unwrap(), "/a/bé");
+    }
+
+    #[test]
+    fn notes_prompts_and_alternatives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path()).unwrap();
+        db.upsert(&[
+            rec("/out", "a.png", 1, "A red   fox, in the \"snow\"", "flux1-dev.safetensors", "detail_xl"),
+            rec("/out", "b.png", 2, "a red fox, in the snow, at night", "sdxl_base.safetensors", "film_grain"),
+            rec("/out", "c.png", 3, "a heron", "other.safetensors", ""),
+            rec("/out/sub", "d.png", 4, "a heron", "flux1-dev.safetensors", ""),
+        ])
+        .unwrap();
+        let note = |rating, flag, collections: &[&str]| Note { rating, flag, collections: collections.iter().map(|c| c.to_string()).collect() };
+        db.replace_notes("/out", &[("a.png".into(), note(5, Flag::Keep, &["Night city", "Foxes"])), ("b.png".into(), note(3, Flag::None, &["foxes"])), ("c.png".into(), note(0, Flag::Reject, &[]))]).unwrap();
+        db.replace_notes("/out/sub", &[("d.png".into(), note(4, Flag::None, &["Night City"]))]).unwrap();
+
+        assert_eq!(names(&db, "/out", true, "rating:>=4"), ["a.png", "d.png"]);
+        assert_eq!(names(&db, "/out", true, "rating:3+"), ["a.png", "b.png", "d.png"]);
+        assert_eq!(names(&db, "/out", true, "rating:none"), ["c.png"]);
+        assert_eq!(names(&db, "/out", true, "rating:3|5"), ["a.png", "b.png"]);
+        assert_eq!(names(&db, "/out", true, "rating:2..4"), ["b.png", "d.png"]);
+        assert_eq!(names(&db, "/out", true, "rating:ten"), Vec::<String>::new());
+        assert_eq!(names(&db, "/out", true, "flag:keep"), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "flag:none"), ["b.png", "d.png"]);
+        assert_eq!(names(&db, "/out", true, "-flag:reject fox"), ["a.png", "b.png"]);
+        assert_eq!(names(&db, "/out", true, r#"collection:="night city""#), ["a.png", "d.png"]);
+        assert_eq!(names(&db, "/out", true, "collection:fox"), ["a.png", "b.png"]);
+        assert_eq!(names(&db, "/out", true, r#"collection:="Night city|foxes""#), ["a.png", "b.png", "d.png"]);
+        // The whole prompt, give or take case, spacing and quotes.
+        assert_eq!(names(&db, "/out", true, r#"fullprompt:="a red fox, in the snow""#), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, r#"fullprompt:"A RED FOX, in the snow""#), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "fullprompt:=fox"), Vec::<String>::new());
+        assert_eq!(names(&db, "/out", true, r#"-fullprompt:="a heron""#), ["a.png", "b.png"]);
+        // Either of several whole values.
+        assert_eq!(names(&db, "/out", true, r#"model:="sdxl_base.safetensors|other.safetensors""#), ["b.png", "c.png"]);
+        assert_eq!(names(&db, "/out", true, "lora:=detail_xl|film_grain"), ["a.png", "b.png"]);
+        assert_eq!(names(&db, "/out", true, "seed:=1|12345"), ["a.png", "b.png", "c.png", "d.png"]);
+        // Best rated first, kept before plain before rejected.
+        let q = Query { dir: "/out".into(), recursive: true, sort: "rating".into(), ..Default::default() };
+        let rated = db.query(&q).unwrap();
+        assert_eq!(rated.rows.iter().map(|r| r.2.as_str()).collect::<Vec<_>>(), ["a.png", "d.png", "b.png", "c.png"]);
+        assert_eq!(rated.marks, [mark(5, 1), mark(4, 0), mark(3, 0), mark(0, 2)]);
+        // `similar:` is left to content search.
+        assert_eq!(names(&db, "/out", false, r#"similar:"/out/a.png""#).len(), 3);
+        assert_eq!(similar_target(r#"fox similar:"/out/a b.png""#).as_deref(), Some("/out/a b.png"));
+
+        let usage = db.usage("/out", true, "").unwrap();
+        let group = |kind: &str| usage.groups.iter().find(|g| g.kind == kind).unwrap();
+        let flux = group("model").items.iter().find(|i| i.value == "flux1-dev.safetensors").unwrap();
+        assert_eq!((flux.count, flux.rated, flux.stars, flux.keeps), (2, 2, 9, 1));
+        assert_eq!(flux.samples.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(), ["/out/a.png", "/out/sub/d.png"]);
+        // Rejected pictures are never samples.
+        assert!(group("model").items.iter().find(|i| i.value == "other.safetensors").unwrap().samples.is_empty());
+        let stars: Vec<(&str, u32)> = group("rating").items.iter().map(|i| (i.value.as_str(), i.count)).collect();
+        assert_eq!(stars, [("5", 1), ("4", 1), ("3", 1), ("0", 1)]);
+        let cols: Vec<(&str, u32)> = group("collection").items.iter().map(|i| (i.value.as_str(), i.count)).collect();
+        // As first met, newest first.
+        assert_eq!(cols, [("Night City", 2), ("foxes", 2)]);
+        assert_eq!(group("prompt").items[0].value, "a heron");
+        assert_eq!(group("flag").items.len(), 2);
+        // Counted within a search.
+        let narrowed = db.usage("/out", true, "fox").unwrap();
+        assert_eq!(narrowed.total, 2);
+        assert_eq!(db.collection_names().unwrap().len(), 2);
+        assert!(db.vocabulary("/out", true, 2, 100).unwrap().contains(&"heron".to_string()));
     }
 
     #[test]
