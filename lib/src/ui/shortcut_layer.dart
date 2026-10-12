@@ -189,6 +189,11 @@ class ShortcutLayer extends StatelessWidget {
     } else if (key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.keyA) {
       state.move(-1);
+    } else if (focus && key == LogicalKeyboardKey.arrowUp) {
+      // In the focus view up and down zoom; held, they keep going.
+      state.zoomFocus(1);
+    } else if (focus && key == LogicalKeyboardKey.arrowDown) {
+      state.zoomFocus(-1);
     } else if (key == LogicalKeyboardKey.arrowDown ||
         key == LogicalKeyboardKey.keyS) {
       state.move(columns);
