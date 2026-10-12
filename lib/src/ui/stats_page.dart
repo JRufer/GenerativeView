@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../theme.dart';
+import 'notes_widgets.dart' show starColor;
+import 'thumb_image.dart';
 
 /// Open the usage page over the grid.
 ///
@@ -52,6 +54,9 @@ class StatsPage extends StatefulWidget {
 class _StatsPageState extends State<StatsPage> {
   UsageStats? _stats;
   Object? _error;
+
+  /// Most used, or best rated first.
+  bool _rated = false;
 
   @override
   void initState() {
@@ -123,7 +128,7 @@ class _StatsPageState extends State<StatsPage> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      Flexible(
+                      Expanded(
                         child: Text(
                           name,
                           maxLines: 1,
@@ -134,6 +139,18 @@ class _StatsPageState extends State<StatsPage> {
                           ),
                         ),
                       ),
+                      SegmentedButton<bool>(
+                        key: const ValueKey<String>('usage-mode'),
+                        showSelectedIcon: false,
+                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                        segments: const [
+                          ButtonSegment(value: false, label: Text('Most used'), icon: Icon(Icons.bar_chart, size: 16)),
+                          ButtonSegment(value: true, label: Text('Best rated'), icon: Icon(Icons.star_outline_rounded, size: 16)),
+                        ],
+                        selected: {_rated},
+                        onSelectionChanged: (s) => setState(() => _rated = s.first),
+                      ),
+                      const SizedBox(width: 4),
                     ],
                   ),
                 ),
@@ -155,6 +172,7 @@ class _StatsPageState extends State<StatsPage> {
     if (stats.total == 0) {
       return const _Message('There are no images in this folder to count.');
     }
+    if (_rated) return _Leaderboard(state: widget.state, stats: stats, onShow: _show);
     final groups = [
       for (final group in stats.groups)
         if (group.items.isNotEmpty) group,
@@ -591,4 +609,164 @@ class _TrendPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TrendPainter old) => old.values != values;
+}
+
+/// Which models and LoRAs make the pictures rated best: by their average
+/// stars, with how many are rated and kept, and their best few pictures.
+class _Leaderboard extends StatelessWidget {
+  const _Leaderboard({required this.state, required this.stats, required this.onShow});
+  final AppState state;
+  final UsageStats stats;
+  final ValueChanged<String> onShow;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = [
+      for (final g in stats.groups)
+        if (const {'model', 'lora', 'aux'}.contains(g.kind)) g,
+    ];
+    final ranked = [
+      for (final g in groups)
+        (
+          g,
+          [
+            for (final i in g.items)
+              if (i.rated > 0) i,
+          ]..sort((a, b) {
+              final byAverage = b.averageRating.compareTo(a.averageRating);
+              return byAverage != 0 ? byAverage : b.rated.compareTo(a.rated);
+            }),
+        ),
+    ].where((e) => e.$2.isNotEmpty).toList();
+    if (ranked.isEmpty) {
+      return const _Message(
+        'Nothing here is rated yet.\nRate pictures with 1 to 5 (or the stars in the metadata panel) '
+        'to see which models and LoRAs make your best ones.',
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, box) {
+        final columns = box.maxWidth >= 1100 ? 2 : 1;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
+            const Text(
+              'Ranked by the average rating of their rated pictures. Tap one to see its pictures.',
+              style: TextStyle(fontSize: 12, color: Palette.faint),
+            ),
+            const SizedBox(height: 14),
+            _Columns(
+              count: columns,
+              weights: [for (final (_, items) in ranked) 2 + math.min(items.length, _shortList) * 2],
+              cards: [
+                for (final (group, items) in ranked)
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Palette.panel,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Palette.line),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(group.title.toUpperCase(), style: _heading),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final (rank, item) in items.take(_shortList).indexed)
+                          _RankedRow(
+                            state: state,
+                            rank: rank + 1,
+                            label: group.label(item),
+                            item: item,
+                            onTap: () => onShow(group.queryFor(item)),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _RankedRow extends StatelessWidget {
+  const _RankedRow({required this.state, required this.rank, required this.label, required this.item, required this.onTap});
+  final AppState state;
+  final int rank;
+  final String label;
+  final UsageItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = [
+      '${item.rated} of ${item.count} rated',
+      if (item.keeps > 0) '${item.keeps} kept',
+      if (item.rejects > 0) '${item.rejects} rejected',
+    ].join('  ·  ');
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        hoverColor: Palette.hover,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 22,
+                child: Text('$rank', style: const TextStyle(fontSize: 12.5, color: Palette.faint)),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Palette.text)),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        const Icon(Icons.star_rounded, size: 14, color: starColor),
+                        const SizedBox(width: 2),
+                        Text(
+                          item.averageRating.toStringAsFixed(1),
+                          style: const TextStyle(fontSize: 12.5, color: Palette.text, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              for (final sample in item.samples)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: ColoredBox(
+                        color: Palette.tile,
+                        child: ThumbImage(cache: state.thumbs, item: sample.item, tier: 0, fit: BoxFit.cover),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

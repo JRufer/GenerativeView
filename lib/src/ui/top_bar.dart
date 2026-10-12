@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import 'filter_sheet.dart';
+import 'remix_dialog.dart';
+import 'shortcuts_overlay.dart';
 import 'stats_page.dart';
 
 const double topBarHeight = 48;
@@ -86,6 +89,7 @@ class TopBar extends StatelessWidget {
                   state: state,
                   wide: wide,
                   tools: [
+                    _FilterButton(state: state),
                     _SortMenu(state: state, withStats: !wide),
                     _BarButton(
                       icon: Icons.account_tree_outlined,
@@ -127,6 +131,7 @@ class TopBar extends StatelessWidget {
                         onTap: () => openStats(context, state),
                       ),
                     info,
+                    _MoreMenu(state: state),
                   ],
                 ),
               ),
@@ -214,7 +219,7 @@ class _TitleSearchAndTools extends StatelessWidget {
 
   /// How wide [tools] are, which has to be known before they are laid out.
   double get _toolsWidth =>
-      _barButton * 4 +
+      _barButton * 6 +
       (wide ? _sliderGap + _sliderIcon + _sliderWidth : 0) +
       (wide && state.folder != null ? _barButton : 0);
 
@@ -854,6 +859,7 @@ class _SortMenu extends StatelessWidget {
     'name': 'Name A to Z',
     'name_desc': 'Name Z to A',
     'size': 'Largest first',
+    'rating': 'Best rated first',
   };
 
   @override
@@ -924,6 +930,100 @@ class _SortMenu extends StatelessWidget {
         width: 36,
         height: 36,
         child: Icon(Icons.sort, size: 19, color: Palette.muted),
+      ),
+    );
+  }
+}
+
+/// Opens the filter panel; lit, with a count, while filters are on.
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final filters = FilterSet.parse(state.query);
+    final on = !filters.isEmpty;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        _BarButton(
+          icon: Icons.tune,
+          tooltip: 'Filters (F)',
+          active: on,
+          onTap: () {
+            if (state.folder != null) openFilters(context, state);
+          },
+        ),
+        if (on)
+          Positioned(
+            right: 3,
+            top: 3,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
+                decoration: BoxDecoration(color: Palette.accent, borderRadius: BorderRadius.circular(8)),
+                child: Text(
+                  '${filters.count}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 10, height: 1.5, fontWeight: FontWeight.w700, color: Color(0xFF0B1020)),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The rest: following new pictures, where the generation servers are,
+/// and the keyboard shortcuts.
+class _MoreMenu extends StatelessWidget {
+  const _MoreMenu({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    PopupMenuItem<String> item(String value, IconData icon, String label, {bool? checked}) => PopupMenuItem<String>(
+      value: value,
+      height: 40,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 28,
+            child: checked == null
+                ? Icon(icon, size: 17, color: Palette.muted)
+                : Icon(checked ? Icons.check_box : Icons.check_box_outline_blank, size: 17, color: checked ? Palette.accent : Palette.muted),
+          ),
+          Text(label),
+        ],
+      ),
+    );
+    return PopupMenuButton<String>(
+      key: const ValueKey<String>('more-menu'),
+      tooltip: 'More',
+      position: PopupMenuPosition.under,
+      onSelected: (value) {
+        switch (value) {
+          case 'follow':
+            state.toggleFollowNew();
+          case 'servers':
+            openBackendSettings(context, state);
+          case 'keys':
+            showShortcuts(context);
+        }
+      },
+      itemBuilder: (context) => [
+        item('follow', Icons.fiber_new, 'Follow new pictures (N)', checked: state.followNew),
+        const PopupMenuDivider(height: 8),
+        item('servers', Icons.dns_outlined, 'Generation servers…'),
+        item('keys', Icons.keyboard_outlined, 'Keyboard shortcuts (?)'),
+      ],
+      child: SizedBox(
+        width: _barButton,
+        height: _barButton,
+        child: Icon(Icons.more_vert, size: 19, color: state.followNew ? Palette.accent : Palette.muted),
       ),
     );
   }

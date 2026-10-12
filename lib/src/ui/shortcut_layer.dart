@@ -2,7 +2,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app_state.dart';
+import '../core/models.dart';
+import 'filter_sheet.dart';
 import 'image_menu.dart';
+import 'notes_widgets.dart';
+import 'remix_dialog.dart';
+import 'shortcuts_overlay.dart';
+import 'upscale_dialog.dart';
+
+/// The app's navigator, so shortcuts (which sit above it) can open panels.
+final GlobalKey<NavigatorState> appNavigator = GlobalKey<NavigatorState>(debugLabel: 'app');
+
+/// A context under the navigator, for opening panels from a shortcut.
+BuildContext? get _panelContext => appNavigator.currentState?.overlay?.context;
+
+const Map<LogicalKeyboardKey, int> _digits = {
+  LogicalKeyboardKey.digit0: 0,
+  LogicalKeyboardKey.digit1: 1,
+  LogicalKeyboardKey.digit2: 2,
+  LogicalKeyboardKey.digit3: 3,
+  LogicalKeyboardKey.digit4: 4,
+  LogicalKeyboardKey.digit5: 5,
+  LogicalKeyboardKey.numpad0: 0,
+  LogicalKeyboardKey.numpad1: 1,
+  LogicalKeyboardKey.numpad2: 2,
+  LogicalKeyboardKey.numpad3: 3,
+  LogicalKeyboardKey.numpad4: 4,
+  LogicalKeyboardKey.numpad5: 5,
+};
 
 /// Counts routes above the home page, so shortcuts can stand down while a
 /// menu or dialog is open.
@@ -74,6 +101,14 @@ class ShortcutLayer extends StatelessWidget {
       return KeyEventResult.ignored;
     }
 
+    // `?` (Shift and /) or F1: the list of shortcuts.
+    if (key == LogicalKeyboardKey.f1 ||
+        key == LogicalKeyboardKey.question ||
+        (key == LogicalKeyboardKey.slash && keyboard.isShiftPressed)) {
+      final panel = _panelContext;
+      if (panel != null) showShortcuts(panel);
+      return KeyEventResult.handled;
+    }
     if ((ctrl && key == LogicalKeyboardKey.keyF) ||
         key == LogicalKeyboardKey.slash) {
       if (state.mode != ViewMode.grid) return KeyEventResult.ignored;
@@ -111,6 +146,10 @@ class ShortcutLayer extends StatelessWidget {
     }
     if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed) {
       return KeyEventResult.ignored;
+    }
+    if (event is! KeyRepeatEvent) {
+      final handled = _pictureKey(key, keyboard.isShiftPressed);
+      if (handled) return KeyEventResult.handled;
     }
 
     if (key == LogicalKeyboardKey.keyI ||
@@ -179,6 +218,54 @@ class ShortcutLayer extends StatelessWidget {
       return KeyEventResult.ignored;
     }
     return KeyEventResult.handled;
+  }
+
+  /// The keys that act on the selected picture, and those that open
+  /// panels. True if [key] was one of them.
+  bool _pictureKey(LogicalKeyboardKey key, bool shift) {
+    final panel = _panelContext;
+    final item = state.selected;
+    final stars = _digits[key];
+    if (stars != null) {
+      if (item != null) state.rateSelected(stars, toggle: stars > 0);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyF) {
+      if (panel != null && state.folder != null) openFilters(panel, state);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyN) {
+      state.toggleFollowNew();
+      return true;
+    }
+    if (item == null) {
+      return const {
+        LogicalKeyboardKey.keyP,
+        LogicalKeyboardKey.keyX,
+        LogicalKeyboardKey.keyU,
+        LogicalKeyboardKey.keyB,
+        LogicalKeyboardKey.keyL,
+        LogicalKeyboardKey.keyR,
+      }.contains(key);
+    }
+    if (key == LogicalKeyboardKey.keyP) {
+      state.flagSelected(Flag.keep);
+    } else if (key == LogicalKeyboardKey.keyX) {
+      state.flagSelected(Flag.reject);
+    } else if (key == LogicalKeyboardKey.keyU && shift) {
+      if (panel != null) openUpscale(panel, state, item);
+    } else if (key == LogicalKeyboardKey.keyU) {
+      state.changeNotes(flag: Flag.none);
+    } else if (key == LogicalKeyboardKey.keyB) {
+      if (panel != null) showCollectionPicker(panel, state, [item]);
+    } else if (key == LogicalKeyboardKey.keyL) {
+      state.findSimilar(item);
+    } else if (key == LogicalKeyboardKey.keyR) {
+      if (panel != null) openRemix(panel, state, item);
+    } else {
+      return false;
+    }
+    return true;
   }
 
   @override

@@ -3,6 +3,8 @@ package com.jrufer.generativeview
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import io.flutter.embedding.android.FlutterActivity
@@ -26,6 +28,7 @@ class MainActivity : FlutterActivity() {
                     "videoFrame" -> videoFrame(call, result)
                     "copyFile" -> result.success(copyFile(call.argument<String>("path")))
                     "readCopiedFile" -> readCopiedFile(result)
+                    "openUrl" -> result.success(openUrl(call.argument<String>("url")))
                     else -> result.notImplemented()
                 }
             }
@@ -71,6 +74,17 @@ class MainActivity : FlutterActivity() {
     // "Copy image": the clipboard gets an address for the file itself (see
     // CopiedFileProvider), not a re-encoded picture, so whatever it is pasted
     // into receives the original bytes, generation data included.
+    /** Open a web page in the user's browser. */
+    private fun openUrl(url: String?): Boolean {
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) return false
+        return try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun copyFile(path: String?): Boolean {
         val file = path?.let { File(it) } ?: return false
         if (!file.isFile || CopiedFileProvider.typeOf(file) == null) return false

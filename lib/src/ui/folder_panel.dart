@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/models.dart' show exactTerm;
 import '../theme.dart';
 import 'context_menu.dart';
 
@@ -186,6 +187,7 @@ class _FolderPanelState extends State<FolderPanel> {
           ),
         ),
         _PinnedFolders(state: state, onOpen: _pick, onMenu: _menu),
+        _Collections(state: state, onPicked: widget.onPicked),
         Expanded(
           child: rows.isEmpty
               ? const Padding(
@@ -428,6 +430,121 @@ class _FolderRow extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The collections pictures have been put in, wherever they are. Tapping
+/// one shows its pictures in the current folder (and below it).
+class _Collections extends StatefulWidget {
+  const _Collections({required this.state, this.onPicked});
+  final AppState state;
+  final VoidCallback? onPicked;
+
+  @override
+  State<_Collections> createState() => _CollectionsState();
+}
+
+class _CollectionsState extends State<_Collections> {
+  List<(String, int)> _names = const [];
+  bool _open = true;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.state.notesTick.addListener(_load);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    widget.state.notesTick.removeListener(_load);
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final names = await widget.state.collections();
+    if (mounted) setState(() => _names = names);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_names.isEmpty) return const SizedBox.shrink();
+    final current = widget.state.query.trim();
+    return ExcludeFocus(
+      key: const ValueKey<String>('collections'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: () => setState(() => _open = !_open),
+              hoverColor: Palette.hover,
+              child: SizedBox(
+                height: 28,
+                child: Row(
+                  children: [
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      width: 26,
+                      child: Icon(_open ? Icons.expand_more : Icons.chevron_right, size: 18, color: Palette.faint),
+                    ),
+                    const Expanded(
+                      child: Text(
+                        'COLLECTIONS',
+                        style: TextStyle(fontSize: 10.5, letterSpacing: 0.9, fontWeight: FontWeight.w600, color: Palette.faint),
+                      ),
+                    ),
+                    Text('${_names.length}', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                    const SizedBox(width: 12),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_open)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: _rowHeight * 5.5),
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemExtent: _rowHeight,
+                itemCount: _names.length,
+                itemBuilder: (context, index) {
+                  final (name, count) = _names[index];
+                  final query = exactTerm('collection', name);
+                  final on = current == query;
+                  return Material(
+                    color: on ? Palette.accent.withValues(alpha: 0.16) : Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        widget.state.applyFilter(on ? '' : query);
+                        widget.onPicked?.call();
+                      },
+                      hoverColor: Palette.hover,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 30, right: 12),
+                        child: Row(
+                          children: [
+                            Icon(Icons.collections_bookmark_outlined, size: 16, color: on ? Palette.accent : Palette.muted),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFFCFCFD6))),
+                            ),
+                            Text('$count', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          const Divider(height: 9),
+        ],
       ),
     );
   }

@@ -5,6 +5,9 @@ import '../core/models.dart';
 import '../platform.dart';
 import 'context_menu.dart';
 import 'meta_panel.dart';
+import 'notes_widgets.dart';
+import 'remix_dialog.dart';
+import 'upscale_dialog.dart';
 
 /// The menu a right click or a press-and-hold on an image brings up.
 Future<void> showImageMenu(
@@ -21,9 +24,35 @@ Future<void> showImageMenu(
     ),
     const MenuEntry('prompt', 'Copy prompt', Icons.notes),
     const MenuEntry('path', 'Copy file path', Icons.link),
+    const MenuEntry('similar', 'More like this (L)', Icons.image_search),
+    const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
+    if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
+    const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+    MenuEntry(
+      'keep',
+      item.flag == Flag.keep ? 'Clear the keep flag (P)' : 'Keep (P)',
+      Icons.check_circle_outline,
+    ),
+    MenuEntry(
+      'reject',
+      item.flag == Flag.reject ? 'Clear the reject flag (X)' : 'Reject (X)',
+      Icons.cancel_outlined,
+    ),
   ]);
   if (choice == null || !context.mounted) return;
   switch (choice) {
+    case 'similar':
+      state.findSimilar(item);
+    case 'remix':
+      await openRemix(context, state, item);
+    case 'upscale':
+      await openUpscale(context, state, item);
+    case 'collection':
+      await showCollectionPicker(context, state, [item]);
+    case 'keep':
+      await state.changeNotes(targets: [item], flag: item.flag == Flag.keep ? Flag.none : Flag.keep);
+    case 'reject':
+      await state.changeNotes(targets: [item], flag: item.flag == Flag.reject ? Flag.none : Flag.reject);
     case 'file':
       await copyImage(context, item);
     case 'prompt':

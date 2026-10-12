@@ -122,6 +122,11 @@ class AppState extends ChangeNotifier {
 
   late final StreamSubscription<Map<String, dynamic>> _events;
 
+  /// Short messages for the user ("Saved fox_up4x.png"), shown as toasts by
+  /// the home page.
+  final StreamController<String> _notices = StreamController.broadcast();
+  Stream<String> get notices => _notices.stream;
+
   // ---------------------------------------------------------------- view
 
   String? folder;
@@ -169,6 +174,47 @@ class AppState extends ChangeNotifier {
   int gridRowsPerPage = 1;
 
   final ValueNotifier<ScanStatus> scan = ValueNotifier(ScanStatus.idle);
+
+  /// Why the last search found nothing, when it is not that nothing
+  /// matched: a look-alike search without its model, say.
+  String? queryError;
+
+  // ---------------------------------------------------------------- live
+
+  /// Pictures that arrived while the folder was open, by id: marked on the
+  /// grid until they are looked at.
+  final Set<int> fresh = {};
+
+  /// Jump to each new picture as it arrives, so the app can sit on a second
+  /// screen while images are being generated.
+  bool followNew = false;
+
+  /// When the folder was opened, ms since the epoch: pictures older than
+  /// that which turn up later were indexed, not made.
+  int _openedAt = 0;
+  Set<int>? _knownIds;
+  String _knownKey = '';
+
+  // ---------------------------------------------------------------- notes
+
+  /// Bumped whenever ratings, flags or collections change, so what shows
+  /// them reads them again.
+  final ValueNotifier<int> notesTick = ValueNotifier(0);
+
+  // ---------------------------------------------------------------- generation
+
+  /// Where the user's generation servers are: comfyui, invokeai, forge.
+  Map<String, String> backendUrls = const {};
+
+  /// Words the spelling check should accept, added by the user.
+  List<String> userWords = const [];
+
+  /// Upscales running or just finished.
+  final ValueNotifier<List<UpscaleJob>> upscales = ValueNotifier(const []);
+
+  /// Set while an upscale model is being downloaded.
+  final ValueNotifier<DownloadProgress?> upscaleDownload = ValueNotifier(null);
+  ModelDownload? _upscaleDownload;
 
   // ---------------------------------------------------------------- search box
 
@@ -285,6 +331,16 @@ class AppState extends ChangeNotifier {
     pinnedFolders = [
       for (final entry in _savedList(saved['pinned_folders']))
         if (entry is String && entry.isNotEmpty) entry,
+    ];
+    followNew = flag('follow_new', followNew);
+    backendUrls = {
+      for (final kind in backendKinds)
+        if ((saved['backend_$kind'] as String? ?? '').isNotEmpty)
+          kind: saved['backend_$kind'] as String,
+    };
+    userWords = [
+      for (final w in _savedList(saved['user_words']))
+        if (w is String && w.isNotEmpty) w,
     ];
 
     await loadPlaces();
@@ -414,6 +470,9 @@ class AppState extends ChangeNotifier {
     folder = dir;
     items = ItemList.empty;
     loaded = false;
+    fresh.clear();
+    _knownIds = null;
+    _openedAt = DateTime.now().millisecondsSinceEpoch;
     selectedIndex = -1;
     _selectedId = null;
     mode = ViewMode.grid;
@@ -542,7 +601,7 @@ class AppState extends ChangeNotifier {
     }
     if (_disposed || dir != folder) return;
     content.value = status;
-    if (status.installed && contentSearch) {
+    if (status.installed && (contentSearch || lookingAlike)) {
       _fire(core.call('content_index', {'dir': dir, 'recursive': recursive}));
     }
   }
@@ -550,7 +609,7 @@ class AppState extends ChangeNotifier {
   /// Something about the folder's pictures changed: look again, but not on
   /// every single event of a burst.
   void _contentSoon() {
-    if (!contentSearch || !content.value.installed) return;
+    if (!(contentSearch || lookingAlike) || !content.value.installed) return;
     _contentTimer?.cancel();
     _contentTimer = Timer(const Duration(milliseconds: 1200), refreshContent);
   }
@@ -581,7 +640,7 @@ class AppState extends ChangeNotifier {
         );
     }
     // More pictures looked at can mean better answers to what is typed.
-    if (contentSearch && query.trim().isNotEmpty && done > 0) {
+    if ((contentSearch || lookingAlike) && searching && done > 0) {
       _reloadTimer ??= Timer(const Duration(milliseconds: 900), () {
         _reloadTimer = null;
         _reload();
@@ -700,6 +759,7 @@ class AppState extends ChangeNotifier {
   // ================================================================ items
 
   void _onEvent(Map<String, dynamic> e) {
+    if (e['t'] == 'upscale') return _onUpscaleEvent(e);
     if (e['root'] != folder) return;
     switch (e['t']) {
       case 'content':
@@ -763,15 +823,18 @@ class AppState extends ChangeNotifier {
       );
     } catch (e) {
       if (ticket != _queryTicket || _disposed) return;
-      if (!describing) {
+      if (!describing && !lookingAlike) {
         scan.value = ScanStatus(error: '$e');
         return;
       }
       // No model yet, most likely; the banner over the grid says what to do.
       list = ItemList.empty;
+      queryError = '$e';
     }
     if (ticket != _queryTicket || _disposed) return;
+    if (list.isNotEmpty) queryError = null;
     final previousIndex = selectedIndex;
+    _noticeArrivals(list);
     items = list;
     loaded = true;
     final id = _selectedId;
@@ -787,12 +850,80 @@ class AppState extends ChangeNotifier {
     } else {
       selectedIndex = -1;
     }
+    if (_follow != null) {
+      final index = list.indexOfId(_follow!);
+      _follow = null;
+      if (index >= 0) {
+        selectedIndex = index;
+        _selectedId = list.idAt(index);
+        fresh.remove(_selectedId);
+        revealTick++;
+      }
+    }
     if (mode == ViewMode.focus && list.isEmpty) mode = ViewMode.grid;
     if (_revealAfterReload) {
       _revealAfterReload = false;
       if (selectedIndex >= 0) revealTick++;
     }
     notifyListeners();
+  }
+
+  int? _follow;
+
+  /// Mark what is new in [list] since the last answer to the same search,
+  /// and, when following, pick the newest of it.
+  void _noticeArrivals(ItemList list) {
+    final key = '$folder|$recursive|$query|$contentSearch';
+    final known = _knownIds;
+    final ids = list.ids.toSet();
+    if (known != null && key == _knownKey) {
+      int? newest;
+      int newestTime = -1;
+      for (var i = 0; i < list.length; i++) {
+        final id = list.idAt(i);
+        if (known.contains(id)) continue;
+        final item = list[i];
+        // Older than the folder's opening: found, not just made.
+        if (item.mtime < _openedAt - 5000) continue;
+        fresh.add(id);
+        if (item.mtime > newestTime) {
+          newestTime = item.mtime;
+          newest = id;
+        }
+      }
+      if (followNew && newest != null) _follow = newest;
+    }
+    fresh.retainWhere(ids.contains);
+    _knownIds = ids;
+    _knownKey = key;
+  }
+
+  void toggleFollowNew() {
+    followNew = !followNew;
+    _save('follow_new', '$followNew');
+    notifyListeners();
+  }
+
+  /// Forget which pictures are new.
+  void clearFresh() {
+    if (fresh.isEmpty) return;
+    fresh.clear();
+    notifyListeners();
+  }
+
+  /// Show the newest of the new pictures.
+  void showNewest() {
+    var best = -1;
+    var bestTime = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (!fresh.contains(items.idAt(i))) continue;
+      final t = items[i].mtime;
+      if (t > bestTime) {
+        bestTime = t;
+        best = i;
+      }
+    }
+    if (best >= 0) select(best, reveal: true);
   }
 
   // ================================================================ selection
@@ -802,6 +933,7 @@ class AppState extends ChangeNotifier {
     if (index == selectedIndex && !reveal) return;
     selectedIndex = index;
     _selectedId = items.idAt(index);
+    fresh.remove(_selectedId);
     if (reveal) revealTick++;
     notifyListeners();
   }
@@ -919,15 +1051,223 @@ class AppState extends ChangeNotifier {
     return info;
   }
 
-  /// What the current folder's images were made with, and how often.
-  Future<UsageStats> usage() async {
+  /// What the current folder's images were made with, and how often; only
+  /// those that match [text], if given.
+  Future<UsageStats> usage({String text = ''}) async {
     final dir = folder;
     if (dir == null) return UsageStats.empty;
     final json = await core.call('usage', {
       'dir': dir,
       'recursive': recursive,
+      'text': text,
     });
     return UsageStats.fromJson(json as Map<String, dynamic>);
+  }
+
+  // ================================================================ notes
+
+  /// What has been said about [item]: its stars, flag and collections.
+  Future<Note> notes(MediaItem item) async =>
+      Note.fromJson(await core.call('notes_get', {'path': item.path}));
+
+  /// Change the notes of [targets] (the selection, if left out). The notes
+  /// are written to a file in each picture's folder, so they go wherever
+  /// the folder goes.
+  Future<void> changeNotes({
+    List<MediaItem>? targets,
+    int? rating,
+    Flag? flag,
+    List<String> add = const [],
+    List<String> remove = const [],
+  }) async {
+    final list = targets ?? [?selected];
+    if (list.isEmpty) return;
+    try {
+      await core.call('notes_set', {
+        'paths': [for (final item in list) item.path],
+        'rating': ?rating,
+        'flag': ?flag?.word,
+        if (add.isNotEmpty) 'add': add,
+        if (remove.isNotEmpty) 'remove': remove,
+      });
+    } catch (e) {
+      _notices.add('Could not save: $e');
+      return;
+    }
+    notesTick.value++;
+    await _reload();
+  }
+
+  /// Give the selected picture [stars]; the same number again clears it.
+  Future<void> rateSelected(int stars, {bool toggle = false}) async {
+    final item = selected;
+    if (item == null) return;
+    final value = toggle && item.rating == stars ? 0 : stars;
+    await changeNotes(rating: value);
+  }
+
+  /// Flag the selected picture; the same flag again clears it.
+  Future<void> flagSelected(Flag flag) async {
+    final item = selected;
+    if (item == null) return;
+    await changeNotes(flag: item.flag == flag ? Flag.none : flag);
+  }
+
+  /// Every collection known, with how many pictures are in each.
+  Future<List<(String, int)>> collections() async {
+    try {
+      final raw = await core.call('collections') as List;
+      return [
+        for (final c in raw)
+          if (c is Map) (c['name'] as String, (c['count'] as num).toInt()),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // ================================================================ look-alikes
+
+  /// Whether the search is for pictures that look like one.
+  bool get lookingAlike => query.contains('similar:');
+
+  /// Show the pictures that look like [item], most alike first.
+  void findSimilar(MediaItem item) {
+    applyFilter('similar:"${item.path.replaceAll('"', '')}"');
+    unawaited(refreshContent());
+  }
+
+  // ================================================================ spelling
+
+  /// Words of this folder's prompts that turn up more than once: its own
+  /// vocabulary, which the spelling check accepts.
+  Future<List<String>> vocabulary() async {
+    final dir = folder;
+    if (dir == null) return const [];
+    try {
+      final raw = await core.call('vocabulary', {
+        'dir': dir,
+        'recursive': recursive,
+      });
+      return [for (final w in raw as List) w as String];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void addUserWord(String word) {
+    final w = word.toLowerCase();
+    if (w.isEmpty || userWords.contains(w)) return;
+    userWords = [...userWords, w];
+    _save('user_words', jsonEncode(userWords));
+  }
+
+  // ================================================================ backends
+
+  static const List<String> backendKinds = ['comfyui', 'invokeai', 'forge'];
+
+  void setBackendUrl(String kind, String url) {
+    final clean = url.trim().replaceFirst(RegExp(r'/+$'), '');
+    backendUrls = {...backendUrls, kind: clean}..removeWhere((_, v) => v.isEmpty);
+    _save('backend_$kind', clean);
+    notifyListeners();
+  }
+
+  // ================================================================ upscale
+
+  /// The upscale models, whether each is here, and where they come from.
+  Future<UpscaleModels> upscaleModels() async =>
+      UpscaleModels.fromJson(await core.call('upscale_models') as Map<String, dynamic>);
+
+  /// Fetch an upscale model (a few MB from the Real-ESRGAN releases).
+  Future<bool> downloadUpscaleModel(UpscaleModels models, UpscaleModel model) async {
+    if (_upscaleDownload != null) return false;
+    final job = ModelDownload(
+      source: models.source,
+      directory: models.dir,
+      files: [ModelFile(model.file, model.bytes)],
+      onProgress: (received, total) {
+        if (!_disposed) upscaleDownload.value = DownloadProgress(received, total);
+      },
+    );
+    _upscaleDownload = job;
+    upscaleDownload.value = DownloadProgress(0, job.total);
+    try {
+      await job.run();
+      return true;
+    } on DownloadCancelled {
+      return false;
+    } catch (e) {
+      _notices.add('$e');
+      return false;
+    } finally {
+      _upscaleDownload = null;
+      if (!_disposed) upscaleDownload.value = null;
+    }
+  }
+
+  void cancelUpscaleDownload() => _upscaleDownload?.cancel();
+
+  /// Upscale [item] in the background; how it goes shows in [upscales].
+  Future<void> startUpscale(
+    MediaItem item, {
+    required String model,
+    required int factor,
+    required bool keepMetadata,
+  }) async {
+    try {
+      final reply = await core.call('upscale', {
+        'path': item.path,
+        'model': model,
+        'factor': factor,
+        'metadata': keepMetadata ? 'copy' : 'strip',
+      });
+      final job = ((reply as Map)['job'] as num).toInt();
+      upscales.value = [
+        ...upscales.value,
+        UpscaleJob(job, item.name, factor: factor),
+      ];
+    } catch (e) {
+      _notices.add('Could not start the upscale: $e');
+    }
+  }
+
+  void cancelUpscale(int job) {
+    _fire(core.call('upscale_cancel', {'job': job}));
+  }
+
+  void _onUpscaleEvent(Map<String, dynamic> e) {
+    final job = (e['job'] as num?)?.toInt();
+    final state = e['state'] as String? ?? '';
+    final list = [...upscales.value];
+    final at = list.indexWhere((j) => j.id == job);
+    if (at < 0) return;
+    final current = list[at];
+    switch (state) {
+      case 'running':
+        list[at] = current.copyWith(
+          done: (e['done'] as num?)?.toInt() ?? 0,
+          total: (e['total'] as num?)?.toInt() ?? 0,
+        );
+      case 'done':
+        list.removeAt(at);
+        final path = e['path'] as String? ?? '';
+        _notices.add('Saved ${path.split('/').last}');
+        _rescanSoon();
+      case 'cancelled':
+        list.removeAt(at);
+      default:
+        list.removeAt(at);
+        _notices.add('Upscale failed: ${e['error'] ?? 'unknown error'}');
+    }
+    upscales.value = list;
+  }
+
+  /// The watcher normally sees new files; on storage where it cannot, look.
+  void _rescanSoon() {
+    Timer(const Duration(milliseconds: 800), () {
+      if (!_disposed && folder != null) rescan();
+    });
   }
 
   @override
@@ -940,6 +1280,11 @@ class AppState extends ChangeNotifier {
     _download?.cancel();
     content.dispose();
     download.dispose();
+    _upscaleDownload?.cancel();
+    upscaleDownload.dispose();
+    upscales.dispose();
+    notesTick.dispose();
+    _notices.close();
     for (final t in _saveTimers.values) {
       t.cancel();
     }
@@ -948,4 +1293,65 @@ class AppState extends ChangeNotifier {
     searchFocus.dispose();
     super.dispose();
   }
+}
+
+/// An upscale under way.
+@immutable
+class UpscaleJob {
+  const UpscaleJob(this.id, this.name, {required this.factor, this.done = 0, this.total = 0});
+  final int id;
+
+  /// The original's file name.
+  final String name;
+  final int factor;
+
+  /// Tiles done, of how many.
+  final int done;
+  final int total;
+
+  double? get progress => total > 0 ? done / total : null;
+
+  UpscaleJob copyWith({int? done, int? total}) =>
+      UpscaleJob(id, name, factor: factor, done: done ?? this.done, total: total ?? this.total);
+}
+
+class UpscaleModel {
+  const UpscaleModel({
+    required this.id,
+    required this.name,
+    required this.detail,
+    required this.file,
+    required this.bytes,
+    required this.installed,
+  });
+  final String id;
+  final String name;
+  final String detail;
+  final String file;
+  final int bytes;
+  final bool installed;
+}
+
+class UpscaleModels {
+  const UpscaleModels(this.dir, this.source, this.models);
+  final String dir;
+  final String source;
+  final List<UpscaleModel> models;
+
+  factory UpscaleModels.fromJson(Map<String, dynamic> j) => UpscaleModels(
+    j['dir'] as String? ?? '',
+    j['source'] as String? ?? '',
+    [
+      for (final m in (j['models'] as List? ?? const []))
+        if (m is Map)
+          UpscaleModel(
+            id: m['id'] as String? ?? '',
+            name: m['name'] as String? ?? '',
+            detail: m['detail'] as String? ?? '',
+            file: m['file'] as String? ?? '',
+            bytes: (m['bytes'] as num?)?.toInt() ?? 0,
+            installed: m['installed'] == true,
+          ),
+    ],
+  );
 }

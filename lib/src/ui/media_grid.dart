@@ -10,6 +10,7 @@ import '../core/models.dart';
 import '../core/thumb_cache.dart';
 import '../theme.dart';
 import 'image_menu.dart';
+import 'notes_widgets.dart';
 import 'thumb_image.dart';
 
 const double _gap = 3;
@@ -221,17 +222,24 @@ class _MediaGridState extends State<MediaGrid> {
               detail: '',
             );
           }
-          if (state.query.trim().isNotEmpty && state.contentSearch) {
+          if (state.query.trim().isNotEmpty && (state.contentSearch || state.lookingAlike)) {
             // Described, not searched for: what is missing depends on how
             // far content search has got.
             return ValueListenableBuilder<ContentStatus>(
               valueListenable: state.content,
               builder: (context, status, _) {
                 if (!status.installed) {
-                  return const _Hint(
+                  return _Hint(
                     icon: Icons.image_search,
-                    title: 'Content search is not set up yet',
-                    detail: 'It needs its model first. See above.',
+                    title: state.lookingAlike ? '“More like this” is not set up yet' : 'Content search is not set up yet',
+                    detail: 'It needs the content search model first. See above.',
+                  );
+                }
+                if (state.lookingAlike && state.queryError != null && !status.indexing) {
+                  return _Hint(
+                    icon: Icons.image_search,
+                    title: 'Could not find look-alikes',
+                    detail: state.queryError!,
                   );
                 }
                 if (status.indexing || status.embedded == 0) {
@@ -296,7 +304,7 @@ class _MediaGridState extends State<MediaGrid> {
         final dpr = MediaQuery.devicePixelRatioOf(context);
         final tier = ThumbCache.tierFor(tile * dpr);
 
-        return Listener(
+        final grid = Listener(
           onPointerDown: _pointerDown,
           onPointerMove: _pointerMove,
           onPointerUp: _pointerUp,
@@ -323,6 +331,8 @@ class _MediaGridState extends State<MediaGrid> {
                 return _Tile(
                   key: ValueKey<int>(item.id),
                   item: item,
+                  fresh: state.fresh.contains(item.id),
+                  compact: tile < 130,
                   tier: tier,
                   cache: state.thumbs,
                   fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
@@ -334,7 +344,72 @@ class _MediaGridState extends State<MediaGrid> {
             ),
           ),
         );
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            grid,
+            if (state.fresh.isNotEmpty)
+              Positioned(
+                top: 10,
+                left: 0,
+                right: 0,
+                child: Center(child: _NewPill(state: state)),
+              ),
+          ],
+        );
       },
+    );
+  }
+}
+
+/// "3 new": pictures arrived while the folder was open. Tap to go to the
+/// newest; the cross forgets them.
+class _NewPill extends StatelessWidget {
+  const _NewPill({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = state.fresh.length;
+    return Material(
+      key: const ValueKey<String>('new-pill'),
+      color: Palette.accent,
+      elevation: 4,
+      shape: const StadiumBorder(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: state.showNewest,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.fiber_new, size: 18, color: Color(0xFF0B1020)),
+                  const SizedBox(width: 6),
+                  Text(
+                    n == 1 ? '1 new picture' : '$n new pictures',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0B1020)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Tooltip(
+            message: 'Mark as seen',
+            child: InkResponse(
+              radius: 16,
+              onTap: state.clearFresh,
+              child: const Padding(
+                padding: EdgeInsets.fromLTRB(4, 8, 12, 8),
+                child: Icon(Icons.close, size: 16, color: Color(0xFF0B1020)),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -343,6 +418,8 @@ class _Tile extends StatelessWidget {
   const _Tile({
     super.key,
     required this.item,
+    required this.fresh,
+    required this.compact,
     required this.tier,
     required this.cache,
     required this.fit,
@@ -354,6 +431,12 @@ class _Tile extends StatelessWidget {
   final MediaItem item;
   final int tier;
   final ThumbCache cache;
+
+  /// Arrived while the folder was open, and not looked at yet.
+  final bool fresh;
+
+  /// Small enough that the marks are kept short.
+  final bool compact;
 
   /// cover = cropped to fill the square, contain = the whole image.
   final BoxFit fit;
@@ -379,6 +462,8 @@ class _Tile extends StatelessWidget {
           decoration: BoxDecoration(
             border: selected
                 ? Border.all(color: Palette.accent, width: 2)
+                : fresh
+                ? Border.all(color: Palette.accent.withValues(alpha: 0.7), width: 1.5)
                 : null,
             borderRadius: BorderRadius.circular(3),
           ),
@@ -389,13 +474,44 @@ class _Tile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  ThumbImage(cache: cache, item: item, tier: tier, fit: fit),
+                  // Rejected pictures fade back, so the keepers stand out.
+                  Opacity(
+                    opacity: item.flag == Flag.reject ? 0.4 : 1,
+                    child: ThumbImage(cache: cache, item: item, tier: tier, fit: fit),
+                  ),
                   if (item.isVideo) _VideoBadge(durationMs: item.durationMs),
+                  if (item.rating > 0 || item.flag != Flag.none)
+                    TileMarks(rating: item.rating, flag: item.flag, compact: compact),
+                  if (fresh)
+                    const Align(
+                      alignment: Alignment.topLeft,
+                      child: Padding(
+                        padding: EdgeInsets.all(6),
+                        child: _FreshDot(),
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _FreshDot extends StatelessWidget {
+  const _FreshDot();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: Palette.accent,
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xCC000000), width: 1.5),
       ),
     );
   }
