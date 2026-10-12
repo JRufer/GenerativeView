@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../app_state.dart';
@@ -381,7 +382,7 @@ class _MetaPanelState extends State<MetaPanel> {
               controller: _scroll,
               // A few screens of text at most: build it all, so nothing
               // below the fold is missing when looked for.
-              cacheExtent: 4000,
+              scrollCacheExtent: const ScrollCacheExtent.viewport(8),
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
               children: sideBySide
                   ? [

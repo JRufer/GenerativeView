@@ -795,10 +795,10 @@ void main() {
     expect(state.leftOpen, isFalse);
     expect(state.rightOpen, isTrue);
     expect(find.byType(MetaPanel), findsOneWidget);
-    // Too narrow for two columns.
+    // Too narrow for two columns (the seed is further down, out of sight).
     expect(
-      tester.getCenter(find.text(seed)).dy,
-      greaterThan(tester.getCenter(find.text(lighthouse)).dy),
+      tester.getCenter(find.text(seed, skipOffstage: false)).dy,
+      greaterThan(tester.getCenter(find.text(lighthouse, skipOffstage: false)).dy),
     );
     await screenshot(tester, boundary, '11-portrait-narrow');
 

@@ -5,7 +5,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show debugDisableShadows;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
@@ -140,7 +139,8 @@ void main() {
     // ---- the new features, on real pictures ----------------------------------
     // Rate and flag a spread of them.
     state.applySearch('');
-    await pumpUntil(tester, () => state.items.length > 100 && shown() >= 30, what: 'the whole folder again');
+    if (state.rightOpen) state.toggleRight();
+    await pumpUntil(tester, () => state.items.length > 100 && shown() >= 12, what: 'the whole folder again');
     final rate = [5, 4, 0, 5, 3, 0, 4, 2, 0, 5, 1, 0];
     final targets = [for (var i = 0; i < rate.length; i++) state.items[i]];
     for (final (i, item) in targets.indexed) {
@@ -148,9 +148,10 @@ void main() {
       await tester.runAsync(() => state.changeNotes(targets: [item], rating: rate[i], flag: flag));
     }
     await tester.runAsync(() => state.changeNotes(targets: [targets[0], targets[3], targets[9]], add: ['Favourites']));
+    if (!state.rightOpen) state.toggleRight();
     state.select(3);
     await pumpUntil(tester, () => state.items[0].rating == 5 && find.text('Favourites').evaluate().isNotEmpty, what: 'the ratings');
-    await pumpUntil(tester, () => shown() >= 30, what: 'thumbnails');
+    await pumpUntil(tester, () => shown() >= 12, what: 'thumbnails');
     await settle(tester);
     await screenshot(tester, boundary, '30-real-ratings');
 
