@@ -313,7 +313,7 @@ void _requirePrompt(int found, Remix remix) {
   }
 }
 
-Future<String> _comfy(HttpClient client, String base, Remix remix) async {
+Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
   final raw = rawBlock(remix.info, 'prompt');
   if (raw == null) throw BackendException(backendSupport(remix.info)['comfyui']!);
   final random = math.Random();
@@ -405,7 +405,7 @@ String _comfyError(Map<dynamic, dynamic> status) {
   return 'ComfyUI could not run the workflow.';
 }
 
-Future<String> _invoke(HttpClient client, String base, Remix remix) async {
+Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   final raw = rawBlock(remix.info, 'invokeai_graph');
   if (raw == null) throw BackendException(backendSupport(remix.info)['invokeai']!);
   final random = math.Random();
@@ -498,7 +498,7 @@ Stream<RemixImage> _invokeResults(String base, List<int> ids) async* {
   }
 }
 
-Future<String> _forge(HttpClient client, String base, Remix remix) async {
+Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
   final info = remix.info;
   double? number(List<String> names) => double.tryParse(param(info, names) ?? '');
   final sampler = param(info, ['sampler', 'sampler_name']);
