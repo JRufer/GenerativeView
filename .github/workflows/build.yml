@@ -208,8 +208,13 @@ jobs:
           cargo install cargo-ndk --locked
           tool/build-android-core.sh x86_64
           flutter pub get
-      - name: Enable KVM
+      - name: Enable KVM and the emulator's libraries
         run: |
+          # The runner image no longer carries PulseAudio, which the emulator
+          # binary links against even with -noaudio; without it the emulator
+          # dies on launch and the boot times out.
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
