@@ -33,13 +33,21 @@ Future<void> openRemix(BuildContext context, AppState state, MediaItem item) asy
     title: 'Remix ${item.name}',
     icon: Icons.auto_fix_high,
     width: 760,
-    builder: (context) => RemixPanel(state: state, info: info),
+    builder: (context) => RemixPanel(state: state, item: item, info: info),
   );
 }
 
 class RemixPanel extends StatefulWidget {
-  const RemixPanel({super.key, required this.state, required this.info});
+  const RemixPanel({
+    super.key,
+    required this.state,
+    required this.item,
+    required this.info,
+  });
   final AppState state;
+
+  /// The picture being remixed: the new ones are saved beside it.
+  final MediaItem item;
   final GenInfo info;
 
   @override
@@ -115,7 +123,7 @@ class _RemixPanelState extends State<RemixPanel> {
       _error = null;
     });
     try {
-      final message = await sendRemix(
+      final ticket = await sendRemix(
         kind,
         widget.state.backendUrls[kind]!,
         Remix(
@@ -129,8 +137,14 @@ class _RemixPanelState extends State<RemixPanel> {
           height: int.tryParse(_height.text) ?? 1024,
         ),
       );
+      // Waited for in the background, panel or no panel.
+      widget.state.collectRemix(widget.item, ticket.results);
       if (!mounted) return;
-      toast(context, message);
+      toast(
+        context,
+        '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
+        'saved beside the original when done.',
+      );
       Navigator.of(context).maybePop();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
