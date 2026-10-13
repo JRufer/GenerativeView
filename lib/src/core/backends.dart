@@ -6,7 +6,10 @@
 /// workflow graph (the `prompt` block ComfyUI saves) with the prompt, seed
 /// and size changed in place; InvokeAI gets its own saved graph the same
 /// way; Forge and A1111 get the settings as plain values, which works for a
-/// picture from any of them.
+/// picture from any of them. A picture from another program can still go to
+/// ComfyUI or InvokeAI: a plain text-to-image graph is built from its
+/// settings (see recipe_graphs.dart), with the model and LoRAs matched by
+/// name against what that server has installed.
 ///
 /// Whatever is queued is then waited for: ComfyUI and InvokeAI are asked
 /// every couple of seconds whether the job is done, and Forge sends the
@@ -21,6 +24,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'models.dart';
+import 'recipe_graphs.dart';
 
 /// What to make: the picture's recipe with the user's changes.
 class Remix {
@@ -122,24 +126,30 @@ const Map<String, String> backendDefaults = {
 /// The raw text block a picture saved under [key], if any.
 String? rawBlock(GenInfo info, String key) {
   for (final r in info.raw) {
-    if (r.key == key) return r.value;
+    if (r.key.toLowerCase() == key) return r.value;
   }
   return null;
 }
 
+/// Whether [info] carries [kind]'s own graph, to be sent back as it is
+/// (changed in place) rather than one built from its settings.
+bool carriesGraph(String kind, GenInfo info) => switch (kind) {
+      'comfyui' => rawBlock(info, 'prompt')?.trimLeft().startsWith('{') ?? false,
+      'invokeai' => rawBlock(info, 'invokeai_graph') != null,
+      _ => false,
+    };
+
 /// Which backends can take [info], and why not where one cannot.
+///
+/// ComfyUI and InvokeAI take their own graph when the picture carries one,
+/// and otherwise a graph built from its settings, so all three take any
+/// picture with generation data.
 Map<String, String?> backendSupport(GenInfo info) {
-  final comfy = rawBlock(info, 'prompt');
-  final hasComfy = comfy != null && comfy.trimLeft().startsWith('{');
-  final hasInvoke = rawBlock(info, 'invokeai_graph') != null;
+  const none = 'This picture has no generation data to remix.';
   return {
-    'comfyui': hasComfy
-        ? null
-        : 'This picture does not carry a ComfyUI workflow.',
-    'invokeai': hasInvoke
-        ? null
-        : 'This picture does not carry an InvokeAI graph.',
-    'forge': info.hasGeneration ? null : 'This picture has no generation data.',
+    'comfyui': carriesGraph('comfyui', info) || info.hasGeneration ? null : none,
+    'invokeai': carriesGraph('invokeai', info) || info.hasGeneration ? null : none,
+    'forge': info.hasGeneration ? null : none,
   };
 }
 
@@ -314,19 +324,40 @@ void _requirePrompt(int found, Remix remix) {
 }
 
 Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
-  final raw = rawBlock(remix.info, 'prompt');
-  if (raw == null) throw BackendException(backendSupport(remix.info)['comfyui']!);
+  final raw = carriesGraph('comfyui', remix.info) ? rawBlock(remix.info, 'prompt') : null;
   final random = math.Random();
   final ids = <String>[];
-  for (var run = 0; run < remix.count; run++) {
-    final graph = jsonDecode(raw) as Map<String, dynamic>;
-    final found = _patchGraph(
-      graph,
-      remix,
-      remix.seedFor(run, random),
-      fields: (node) => (node['inputs'] as Map<String, dynamic>?) ?? {},
+  final skipped = <String>[];
+  ComfyModels? installed;
+  if (raw == null) {
+    if (!remix.info.hasGeneration) throw BackendException(backendSupport(remix.info)['comfyui']!);
+    final checkpoints = await _get(client, '$base/object_info/CheckpointLoaderSimple');
+    final loras = remix.info.loras.isEmpty ? const <String, dynamic>{} : await _get(client, '$base/object_info/LoraLoader');
+    installed = ComfyModels(
+      ComfyModels.options(checkpoints, 'CheckpointLoaderSimple', 'ckpt_name'),
+      ComfyModels.options(loras, 'LoraLoader', 'lora_name'),
     );
-    if (run == 0) _requirePrompt(found, remix);
+  }
+  final recipe = Recipe.from(remix.info, prompt: remix.prompt, negative: remix.negative, width: remix.width, height: remix.height);
+  for (var run = 0; run < remix.count; run++) {
+    final seed = remix.seedFor(run, random);
+    late final Map<String, dynamic> graph;
+    if (raw != null) {
+      graph = jsonDecode(raw) as Map<String, dynamic>;
+      final found = _patchGraph(
+        graph,
+        remix,
+        seed,
+        fields: (node) => (node['inputs'] as Map<String, dynamic>?) ?? {},
+      );
+      if (run == 0) _requirePrompt(found, remix);
+    } else {
+      try {
+        graph = comfyGraph(recipe, seed, installed!, skipped: run == 0 ? skipped : null);
+      } on StateError catch (e) {
+        throw BackendException(e.message);
+      }
+    }
     final reply = await _post(client, '$base/prompt', {
       'prompt': graph,
       'client_id': 'generativeview',
@@ -334,10 +365,20 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     ids.add('${reply['prompt_id'] ?? ''}');
   }
   return RemixTicket(
-    'Queued ${_count(remix.count)} in ComfyUI',
+    'Queued ${_count(remix.count)} in ComfyUI${_built(raw == null, skipped)}',
     remix.count,
     _comfyResults(base, ids),
   );
+}
+
+/// What to add to the "queued" line when a graph was built rather than the
+/// picture's own sent back.
+String _built(bool built, List<String> skipped) {
+  if (!built) return '';
+  final note = ' (a text-to-image graph made from its settings';
+  if (skipped.isEmpty) return '$note)';
+  final names = skipped.map((n) => modelKey(n)).join(', ');
+  return '$note; without ${skipped.length == 1 ? 'the LoRA' : 'the LoRAs'} $names, which the server does not have)';
 }
 
 /// Wait for each of the ComfyUI prompts [ids] and fetch what it saved.
@@ -406,16 +447,40 @@ String _comfyError(Map<dynamic, dynamic> status) {
 }
 
 Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
-  final raw = rawBlock(remix.info, 'invokeai_graph');
-  if (raw == null) throw BackendException(backendSupport(remix.info)['invokeai']!);
+  final raw = carriesGraph('invokeai', remix.info) ? rawBlock(remix.info, 'invokeai_graph') : null;
   final random = math.Random();
   final ids = <int>[];
+  final skipped = <String>[];
   var fetchable = true;
+  var mains = const <InvokeModel>[];
+  var loras = const <InvokeModel>[];
+  if (raw == null) {
+    if (!remix.info.hasGeneration) throw BackendException(backendSupport(remix.info)['invokeai']!);
+    List<InvokeModel> listed(Map<String, dynamic> reply) => [
+          for (final m in (reply['models'] as List? ?? const []))
+            if (m is Map<String, dynamic>) InvokeModel.fromJson(m),
+        ];
+    mains = listed(await _get(client, '$base/api/v2/models/?model_type=main'));
+    if (remix.info.loras.isNotEmpty) {
+      loras = listed(await _get(client, '$base/api/v2/models/?model_type=lora'));
+    }
+  }
+  final recipe = Recipe.from(remix.info, prompt: remix.prompt, negative: remix.negative, width: remix.width, height: remix.height);
   for (var run = 0; run < remix.count; run++) {
-    final graph = jsonDecode(raw) as Map<String, dynamic>;
-    final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
-    final found = _patchGraph(nodes, remix, remix.seedFor(run, random), fields: (node) => node);
-    if (run == 0) _requirePrompt(found, remix);
+    final seed = remix.seedFor(run, random);
+    late final Map<String, dynamic> graph;
+    if (raw != null) {
+      graph = jsonDecode(raw) as Map<String, dynamic>;
+      final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
+      final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
+      if (run == 0) _requirePrompt(found, remix);
+    } else {
+      try {
+        graph = invokeGraph(recipe, seed, mains, loras, skipped: run == 0 ? skipped : null);
+      } on StateError catch (e) {
+        throw BackendException(e.message);
+      }
+    }
     final reply = await _post(client, '$base/api/v1/queue/default/enqueue_batch', {
       'batch': {'graph': graph, 'runs': 1},
       'prepend': false,
@@ -428,7 +493,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     }
   }
   return RemixTicket(
-    'Queued ${_count(remix.count)} in InvokeAI',
+    'Queued ${_count(remix.count)} in InvokeAI${_built(raw == null, skipped)}',
     remix.count,
     fetchable
         ? _invokeResults(base, ids)
