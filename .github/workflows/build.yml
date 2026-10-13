@@ -219,6 +219,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Integration test on an emulated tablet
+        id: emulator
+        # Informational: the hosted emulator breaks now and then for reasons
+        # outside the app, so a failure here warns rather than failing the
+        # build. The APK, the Linux app and the core tests still gate.
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         env:
           OUT: ${{ runner.temp }}/emulator
@@ -230,6 +235,9 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: tool/ci-android-emulator.sh
+      - name: Report an emulator failure
+        if: steps.emulator.outcome == 'failure'
+        run: echo "::warning title=Android emulator test failed::The emulated-tablet integration test did not pass (not blocking). See the emulator-screenshots artifact and the step log."
       - uses: actions/upload-artifact@v4
         if: always()
         with:
