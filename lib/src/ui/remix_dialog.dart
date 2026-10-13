@@ -87,7 +87,14 @@ class _RemixPanelState extends State<RemixPanel> {
       for (final k in backendNames.keys)
         if (support[k] == null) k,
     ];
-    _backend = usable.contains(made) ? made : (usable.isEmpty ? null : usable.first);
+    // A server that is set up first, and of those the one that made it.
+    final urls = widget.state.backendUrls;
+    final ready = [
+      for (final k in usable)
+        if ((urls[k] ?? '').isNotEmpty) k,
+    ];
+    final pool = ready.isNotEmpty ? ready : usable;
+    _backend = pool.contains(made) ? made : (pool.isEmpty ? null : pool.first);
     _loadSpelling();
   }
 
@@ -259,6 +266,26 @@ class _RemixPanelState extends State<RemixPanel> {
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(urls[_backend]!, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+            ),
+          // Said in the panel, not only in a tooltip, so it reads on a tablet.
+          if (_backend != null && _backend != 'forge' && !carriesGraph(_backend!, info))
+            Padding(
+              key: const ValueKey<String>('remix-built-graph'),
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'This picture was not made in ${backendNames[_backend]}, so it will get a standard '
+                'text-to-image ${_backend == 'comfyui' ? 'workflow' : 'graph'} built from its settings: '
+                'the same model and LoRAs (by name), prompt, seed, steps, CFG, sampler and size.',
+                style: const TextStyle(fontSize: 11.5, color: Palette.muted),
+              ),
+            ),
+          if (support.values.any((why) => why != null))
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                support.values.firstWhere((why) => why != null)!,
+                style: const TextStyle(fontSize: 11.5, color: Palette.faint),
+              ),
             ),
           if (_error != null)
             Padding(

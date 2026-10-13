@@ -173,6 +173,8 @@ class ChoiceChipButton extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? chip : Tooltip(message: tooltip!, child: chip);
+    // One that cannot be chosen looks it.
+    final shown = onTap == null && !selected ? Opacity(opacity: 0.45, child: chip) : chip;
+    return tooltip == null ? shown : Tooltip(message: tooltip!, child: shown);
   }
 }
