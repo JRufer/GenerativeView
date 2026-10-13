@@ -11,6 +11,7 @@ import '../core/thumb_cache.dart';
 import '../theme.dart';
 import 'image_menu.dart';
 import 'notes_widgets.dart';
+import 'remix_status.dart' show HighlightPulse;
 import 'thumb_image.dart';
 
 const double _gap = 3;
@@ -332,6 +333,7 @@ class _MediaGridState extends State<MediaGrid> {
                   key: ValueKey<int>(item.id),
                   item: item,
                   fresh: state.fresh.contains(item.id),
+                  highlight: state.highlightIds.contains(item.id) ? state.highlightTick : 0,
                   compact: tile < 130,
                   tier: tier,
                   cache: state.thumbs,
@@ -419,6 +421,7 @@ class _Tile extends StatelessWidget {
     super.key,
     required this.item,
     required this.fresh,
+    this.highlight = 0,
     required this.compact,
     required this.tier,
     required this.cache,
@@ -435,6 +438,10 @@ class _Tile extends StatelessWidget {
   /// Arrived while the folder was open, and not looked at yet.
   final bool fresh;
 
+  /// Non-zero while the eye is being drawn to this tile (a remix just
+  /// gone to); a new number plays the animation again.
+  final int highlight;
+
   /// Small enough that the marks are kept short.
   final bool compact;
 
@@ -448,6 +455,13 @@ class _Tile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return HighlightPulse(
+      tick: highlight,
+      child: _body(),
+    );
+  }
+
+  Widget _body() {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,

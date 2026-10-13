@@ -7,6 +7,7 @@
 // `realesr-general-x4v3.pth` (CI downloads it); otherwise only its panel is
 // checked.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,6 +16,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
+import 'package:generativeview/src/core/backends.dart' show RemixImage;
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/prompt_weights.dart';
@@ -440,6 +442,63 @@ void main() {
     expect(plain!.hasGeneration, isFalse);
     out.deleteSync();
     bare.deleteSync();
+    await close(tester, state);
+  });
+  testWidgets('remixes show while they run, open the Remixes collection when done, and are picked out', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => indexOf(state, 'sailor.png') >= 0, what: 'the pictures');
+    final sailor = state.items[indexOf(state, 'sailor.png')];
+    final owl = state.items[indexOf(state, 'owl_01.png')];
+
+    // Two out at once, in different folders.
+    final first = StreamController<RemixImage>();
+    final second = StreamController<RemixImage>();
+    state.collectRemix(sailor, first.stream);
+    state.collectRemix(owl, second.stream);
+    await pumpUntil(tester, () => find.text('2 Remixes Running').evaluate().isNotEmpty, what: 'the running chip');
+    await screenshot(tester, boundary, '40-remix-running');
+
+    // One comes back: it is saved beside its original and put in the
+    // Remixes collection, which did not exist before. The other runs on.
+    final before = await tester.runAsync(state.collections);
+    expect(before!.any((c) => c.$1 == AppState.remixCollection), isFalse);
+    first.add(RemixImage(pngWithText(256, 384, 99, const {})));
+    unawaited(first.close());
+    await pumpUntil(
+      tester,
+      () => find.text('Remix Done').evaluate().isNotEmpty && find.text('Remix Running').evaluate().isNotEmpty,
+      what: 'one done, one running',
+    );
+    final sailorRemix = File('${library.path}/sub/sailor_remix1.png');
+    expect(sailorRemix.existsSync(), isTrue);
+    expect((notesFile('${library.path}/sub')['images']['sailor_remix1.png'] as Map)['collections'], [AppState.remixCollection]);
+
+    second.add(RemixImage(pngWithText(320, 320, 98, const {})));
+    unawaited(second.close());
+    await pumpUntil(
+      tester,
+      () => find.text('2 Remixes Done').evaluate().isNotEmpty && find.textContaining('Running').evaluate().isEmpty,
+      what: 'both done',
+    );
+    final owlRemix = File('${library.path}/owl_01_remix1.png');
+    expect(owlRemix.existsSync(), isTrue);
+    final after = await tester.runAsync(state.collections);
+    expect(after!.any((c) => c.$1 == AppState.remixCollection && c.$2 == 2), isTrue);
+
+    // Tapped: the Remixes collection, both new pictures picked out.
+    await tester.tap(find.text('2 Remixes Done'));
+    await pumpUntil(
+      tester,
+      () => state.query.contains(AppState.remixCollection) && state.highlightIds.length == 2,
+      what: 'the Remixes collection with the new pictures picked out',
+    );
+    expect(names(state)..sort(), ['owl_01_remix1.png', 'sailor_remix1.png']);
+    expect(state.highlightIds, contains(state.selected!.id));
+    expect(state.remixes.value, isEmpty);
+    await screenshot(tester, boundary, '41-remixes-collection');
+    await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
+    sailorRemix.deleteSync();
+    owlRemix.deleteSync();
     await close(tester, state);
   });
 }

@@ -874,6 +874,7 @@ class AppState extends ChangeNotifier {
       }
     }
     if (mode == ViewMode.focus && list.isEmpty) mode = ViewMode.grid;
+    _resolveHighlight(list);
     if (_revealAfterReload) {
       _revealAfterReload = false;
       if (selectedIndex >= 0) revealTick++;
@@ -1188,13 +1189,30 @@ class AppState extends ChangeNotifier {
 
   // ================================================================ remix
 
-  /// Remixes sent and not yet all back.
-  final ValueNotifier<int> remixesWaiting = ValueNotifier(0);
-  final List<StreamSubscription<RemixImage>> _remixes = [];
+  /// The collection every remix made here is put in. Collections exist as
+  /// soon as one picture is in them, so the first remix makes it.
+  static const String remixCollection = 'Remixes';
+
+  /// Remixes sent: those still waiting on the server, and those back whose
+  /// pictures have not been gone to yet.
+  final ValueNotifier<List<RemixJob>> remixes = ValueNotifier(const []);
+  final List<StreamSubscription<RemixImage>> _remixSubs = [];
+  int _remixIds = 0;
+
+  /// Pictures to light up in the grid once the list holds them.
+  Set<String>? _highlightPending;
+  DateTime? _highlightPendingSince;
+
+  /// The pictures being drawn attention to just now, and a number bumped
+  /// each time that starts, so the grid knows to play the animation.
+  Set<int> highlightIds = const {};
+  int highlightTick = 0;
+  Timer? _highlightTimer;
 
   /// Save each picture [results] brings back beside [original], as
   /// `<name>_remix1.png`, `<name>_remix2.png` and so on, saying so as each
-  /// lands. Waits in the background for as long as the app is open.
+  /// lands, and put it in the [remixCollection]. Waits in the background
+  /// for as long as the app is open; how it goes shows in [remixes].
   void collectRemix(MediaItem original, Stream<RemixImage> results) {
     final sep = Platform.pathSeparator;
     final cut = original.path.lastIndexOf(sep);
@@ -1202,47 +1220,190 @@ class AppState extends ChangeNotifier {
     final file = original.path.substring(cut + 1);
     final dot = file.lastIndexOf('.');
     final stem = dot > 0 ? file.substring(0, dot) : file;
+    final id = ++_remixIds;
+    final saved = <String>[];
+    var failed = false;
     var saving = Future<void>.value();
     late final StreamSubscription<RemixImage> sub;
     void finish() {
-      _remixes.remove(sub);
-      if (!_disposed) remixesWaiting.value = _remixes.length;
+      _remixSubs.remove(sub);
+      if (_disposed) return;
+      final list = [...remixes.value];
+      final at = list.indexWhere((j) => j.id == id);
+      if (at < 0) return;
+      if (saved.isEmpty) {
+        // Nothing came back to go to; the notice has said why.
+        if (!failed) _notices.add('The remix brought nothing back');
+        list.removeAt(at);
+      } else {
+        list[at] = list[at].finished(saved);
+      }
+      remixes.value = list;
     }
 
     sub = results.listen(
       (image) {
         // One at a time, so two pictures never take the same name.
-        saving = saving.then((_) => _saveRemix(dir, stem, image));
+        saving = saving.then((_) async {
+          final path = await _saveRemix(dir, stem, image);
+          if (path != null) saved.add(path);
+        });
       },
       onError: (Object e) {
+        failed = true;
         if (!_disposed) _notices.add('Remix failed: $e');
       },
       onDone: () => saving.whenComplete(finish),
     );
-    _remixes.add(sub);
-    remixesWaiting.value = _remixes.length;
+    _remixSubs.add(sub);
+    remixes.value = [...remixes.value, RemixJob(id, original.name)];
   }
 
-  Future<void> _saveRemix(String dir, String stem, RemixImage image) async {
+  /// Write [image] beside the original and put it in the remix collection;
+  /// answers with where it went, or null if it could not be saved.
+  Future<String?> _saveRemix(String dir, String stem, RemixImage image) async {
+    late final String path;
+    late final String name;
     try {
       final sep = Platform.pathSeparator;
       var n = 1;
-      String name() => '${stem}_remix$n.${image.extension}';
-      while (await File('$dir$sep${name()}').exists()) {
+      String next() => '${stem}_remix$n.${image.extension}';
+      while (await File('$dir$sep${next()}').exists()) {
         n++;
       }
-      final path = '$dir$sep${name()}';
+      name = next();
+      path = '$dir$sep$name';
       // Written aside and renamed, so the folder watcher never sees half a
       // picture.
-      final part = File('$dir$sep.${name()}.part');
+      final part = File('$dir$sep.$name.part');
       await part.writeAsBytes(image.bytes, flush: true);
       await part.rename(path);
-      if (_disposed) return;
-      _notices.add('Saved ${name()}');
-      _rescanSoon();
     } catch (e) {
       if (!_disposed) _notices.add('Could not save the remix: $e');
+      return null;
     }
+    if (_disposed) return path;
+    try {
+      await core.call('notes_set', {
+        'paths': [path],
+        'add': [remixCollection],
+      });
+      notesTick.value++;
+    } catch (e) {
+      _notices.add('Saved $name, but could not add it to $remixCollection: $e');
+      _rescanSoon();
+      return path;
+    }
+    _notices.add('Saved $name');
+    _rescanSoon();
+    return path;
+  }
+
+  /// Show the [remixCollection], with the pictures of every remix that has
+  /// come back picked out by a short animation. Those remixes are put away;
+  /// any still running stay.
+  ///
+  /// A collection is shown within the open folder and its sub-folders, so
+  /// when the new remixes are elsewhere the folder they all share is opened
+  /// (and sub-folders included) so they can be seen.
+  Future<void> showRemixes() async {
+    final done = [for (final j in remixes.value) if (!j.running) j];
+    remixes.value = [for (final j in remixes.value) if (j.running) j];
+    final paths = [for (final j in done) ...j.saved];
+    if (paths.isEmpty) return;
+    _highlightPending = paths.toSet();
+    _highlightPendingSince = DateTime.now();
+    if (mode == ViewMode.focus) mode = ViewMode.grid;
+    // Panels slid over the grid would hide them.
+    closeOverlays();
+
+    final dirs = {for (final p in paths) _parentOf(p)};
+    var root = folder ?? dirs.first;
+    for (final d in dirs) {
+      root = _commonDir(root, d);
+    }
+    final filter = exactTerm('collection', remixCollection);
+    _queryTimer?.cancel();
+    query = filter;
+    searchText.value = TextEditingValue(
+      text: filter,
+      selection: TextSelection.collapsed(offset: filter.length),
+    );
+    if (contentSearch) {
+      contentSearch = false;
+      _save('content_search', 'false');
+    }
+    var reopen = folder != root;
+    if (!recursive && dirs.any((d) => d != root)) {
+      recursive = true;
+      _save('recursive', 'true');
+      reopen = true;
+    }
+    if (reopen) {
+      await openFolder(root);
+    } else {
+      notifyListeners();
+      await _reload();
+    }
+    // Not indexed yet, most likely: look again for them.
+    if (_highlightPending != null && !_disposed) rescan();
+  }
+
+  static String _parentOf(String path) {
+    final cut = path.lastIndexOf(Platform.pathSeparator);
+    if (cut < 0) return '.';
+    return cut == 0 ? Platform.pathSeparator : path.substring(0, cut);
+  }
+
+  /// The deepest folder holding both [a] and [b].
+  static String _commonDir(String a, String b) {
+    final sep = Platform.pathSeparator;
+    final x = a.split(sep);
+    final y = b.split(sep);
+    var n = 0;
+    while (n < x.length && n < y.length && x[n] == y[n]) {
+      n++;
+    }
+    final common = x.take(n).join(sep);
+    return common.isEmpty ? sep : common;
+  }
+
+  /// Put away the remixes that have come back, without going to them.
+  void dismissDoneRemixes() {
+    remixes.value = [for (final j in remixes.value) if (j.running) j];
+  }
+
+  /// Called with each new list: if it now holds the pictures waiting to be
+  /// pointed out, select the first and start the animation.
+  void _resolveHighlight(ItemList list) {
+    final paths = _highlightPending;
+    if (paths == null) return;
+    final since = _highlightPendingSince;
+    if (since != null && DateTime.now().difference(since) > const Duration(seconds: 15)) {
+      _highlightPending = null;
+      return;
+    }
+    final ids = <int>{};
+    var first = -1;
+    for (var i = 0; i < list.length; i++) {
+      if (!paths.contains(list[i].path)) continue;
+      ids.add(list.idAt(i));
+      if (first < 0) first = i;
+    }
+    if (first < 0) return;
+    _highlightPending = null;
+    selectedIndex = first;
+    _selectedId = list.idAt(first);
+    fresh.removeAll(ids);
+    revealTick++;
+    highlightIds = ids;
+    highlightTick++;
+    _highlightTimer?.cancel();
+    _highlightTimer = Timer(const Duration(milliseconds: 2400), () {
+      if (_disposed) return;
+      highlightIds = const {};
+      notifyListeners();
+    });
   }
 
   // ================================================================ upscale
@@ -1355,10 +1516,11 @@ class AppState extends ChangeNotifier {
     _upscaleDownload?.cancel();
     upscaleDownload.dispose();
     upscales.dispose();
-    for (final sub in [..._remixes]) {
+    for (final sub in [..._remixSubs]) {
       sub.cancel();
     }
-    remixesWaiting.dispose();
+    remixes.dispose();
+    _highlightTimer?.cancel();
     notesTick.dispose();
     _notices.close();
     _zoomSteps.close();
@@ -1370,6 +1532,22 @@ class AppState extends ChangeNotifier {
     searchFocus.dispose();
     super.dispose();
   }
+}
+
+/// A remix sent to a server: waiting, or back with [saved] pictures.
+@immutable
+class RemixJob {
+  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true});
+  final int id;
+
+  /// The name of the picture remixed.
+  final String name;
+
+  /// Where the pictures that came back were saved.
+  final List<String> saved;
+  final bool running;
+
+  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false);
 }
 
 /// An upscale under way.
