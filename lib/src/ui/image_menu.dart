@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
@@ -7,6 +9,7 @@ import 'context_menu.dart';
 import 'meta_panel.dart';
 import 'notes_widgets.dart';
 import 'remix_dialog.dart';
+import 'sheet.dart';
 import 'upscale_dialog.dart';
 
 /// The menu a right click or a press-and-hold on an image brings up.
@@ -16,6 +19,20 @@ Future<void> showImageMenu(
   MediaItem item,
   Offset position,
 ) async {
+  // The collection being looked at, if this picture is in it: the menu can
+  // take it out again.
+  String? shownCollection;
+  try {
+    final note = await state.notes(item);
+    final query = state.query.toLowerCase();
+    for (final name in note.collections) {
+      if (query.contains(exactTerm('collection', name).toLowerCase())) {
+        shownCollection = name;
+        break;
+      }
+    }
+  } catch (_) {}
+  if (!context.mounted) return;
   final choice = await showContextMenu<String>(context, position, [
     MenuEntry(
       'file',
@@ -24,6 +41,7 @@ Future<void> showImageMenu(
     ),
     const MenuEntry('prompt', 'Copy prompt', Icons.notes),
     const MenuEntry('path', 'Copy file path', Icons.link),
+    const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
     const MenuEntry('similar', 'More like this (L)', Icons.image_search),
     const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
     if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
@@ -38,6 +56,9 @@ Future<void> showImageMenu(
       item.flag == Flag.reject ? 'Clear the reject flag (X)' : 'Reject (X)',
       Icons.cancel_outlined,
     ),
+    if (shownCollection != null)
+      MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
+    MenuEntry('delete', item.isVideo ? 'Delete video…' : 'Delete image…', Icons.delete_outline),
   ]);
   if (choice == null || !context.mounted) return;
   switch (choice) {
@@ -59,6 +80,73 @@ Future<void> showImageMenu(
       await copyPrompt(context, state, item);
     case 'path':
       copyText(context, item.path, 'file path');
+    case 'paste':
+      await pasteInto(context, state, item.dir);
+    case 'uncollect':
+      await state.changeNotes(targets: [item], remove: [shownCollection!]);
+      if (context.mounted) toast(context, 'Removed from "$shownCollection"');
+    case 'delete':
+      await deleteFile(context, state, item);
+  }
+}
+
+/// Paste what is on the clipboard (a copied file, or a picture copied from
+/// a browser or an editor) into [dir].
+Future<void> pasteInto(BuildContext context, AppState state, String dir) async {
+  final source = await readPasteSource();
+  if (!context.mounted) return;
+  if (source == null) {
+    toast(context, 'Nothing to paste: copy an image or a video first');
+    return;
+  }
+  try {
+    final saved = await state.pasteInto(dir, source);
+    if (context.mounted) toast(context, 'Pasted ${saved.split(Platform.pathSeparator).last}');
+  } catch (e) {
+    if (context.mounted) toast(context, 'Could not paste here: $e');
+  }
+}
+
+/// Delete [item]'s file, after asking: to the system trash where there is
+/// one, for good (after asking again) where there isn't.
+Future<void> deleteFile(BuildContext context, AppState state, MediaItem item) async {
+  final what = item.isVideo ? 'video' : 'image';
+  // Android's media store shows its own prompt for the trash.
+  if (!trashAsksFirst) {
+    final yes = await confirmAction(
+      context,
+      title: 'Delete ${item.name}?',
+      message: 'The $what is moved to the trash, along with its stars, flag and collections. You can restore the file from the trash.',
+      action: 'Move to trash',
+    );
+    if (!yes || !context.mounted) return;
+  }
+  final (outcome, why) = await trashFile(item.path);
+  if (!context.mounted) return;
+  switch (outcome) {
+    case TrashOutcome.trashed:
+      await state.forgetFile(item);
+      if (context.mounted) toast(context, 'Moved ${item.name} to the trash');
+    case TrashOutcome.cancelled:
+      return;
+    case TrashOutcome.failed:
+      toast(context, 'Could not delete ${item.name}: ${why ?? 'unknown error'}');
+    case TrashOutcome.unsupported:
+      final yes = await confirmAction(
+        context,
+        title: 'Delete ${item.name} permanently?',
+        message: 'There is no trash for this file here, so it would be deleted for good. This can\'t be undone.',
+        action: 'Delete permanently',
+      );
+      if (!yes || !context.mounted) return;
+      try {
+        await File(item.path).delete();
+      } catch (e) {
+        if (context.mounted) toast(context, 'Could not delete ${item.name}: $e');
+        return;
+      }
+      await state.forgetFile(item);
+      if (context.mounted) toast(context, 'Deleted ${item.name}');
   }
 }
 

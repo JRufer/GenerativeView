@@ -62,7 +62,8 @@ class RouteCounter extends NavigatorObserver {
 /// The mouse's back and forward buttons.
 ///
 /// Back leaves the focus view for the grid, and in the grid opens the
-/// folder panel; forward shows or hides the generation data. Neither does
+/// folder panel; forward, or the middle button, shows or hides the
+/// generation data. Neither does
 /// anything while a panel or dialog (the remix panel among them) is open.
 ///
 /// Android also turns a mouse's back button into a system back, which at
@@ -87,7 +88,8 @@ class MouseNavigation with WidgetsBindingObserver {
   void onPointerDown(PointerDownEvent event) {
     if (event.kind != PointerDeviceKind.mouse) return;
     final back = event.buttons & kBackMouseButton != 0;
-    final forward = event.buttons & kForwardMouseButton != 0;
+    // The middle button does what forward does.
+    final forward = event.buttons & (kForwardMouseButton | kMiddleMouseButton) != 0;
     if (!back && !forward) return;
     // The system back Android sends for this press comes on release.
     if (back) {
@@ -209,6 +211,13 @@ class ShortcutLayer extends StatelessWidget {
       }
       return KeyEventResult.handled;
     }
+    if (ctrl && key == LogicalKeyboardKey.keyV) {
+      // Ctrl+V pastes a copied picture into the folder being shown.
+      final panel = _panelContext;
+      final dir = state.selected?.dir ?? state.folder;
+      if (panel != null && dir != null && event is! KeyRepeatEvent) pasteInto(panel, state, dir);
+      return KeyEventResult.handled;
+    }
     if (ctrl &&
         (key == LogicalKeyboardKey.equal ||
             key == LogicalKeyboardKey.add ||
@@ -319,6 +328,10 @@ class ShortcutLayer extends StatelessWidget {
     }
     if (key == LogicalKeyboardKey.keyN) {
       state.toggleFollowNew();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.delete) {
+      if (panel != null && item != null) deleteFile(panel, state, item);
       return true;
     }
     if (item == null) {

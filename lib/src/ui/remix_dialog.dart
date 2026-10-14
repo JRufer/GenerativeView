@@ -213,22 +213,23 @@ class _RemixPanelState extends State<RemixPanel> {
                   ),
                 ),
               ),
+              // The box is drawn on and off rather than a tick added, so
+              // the chip keeps its size either way.
               FilterChip(
+                key: const ValueKey<String>('remix-random'),
+                showCheckmark: false,
+                avatar: Icon(
+                  _random ? Icons.check_box : Icons.check_box_outline_blank,
+                  size: 18,
+                  color: _random ? Palette.accent : Palette.muted,
+                ),
                 label: const Text('Random each time'),
                 selected: _random,
                 onSelected: (v) => setState(() => _random = v),
               ),
-              SizedBox(width: 90, child: TextField(controller: _width, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], decoration: _box('Width'))),
-              IconButton(
-                tooltip: 'Swap width and height',
-                icon: const Icon(Icons.swap_horiz, size: 20),
-                onPressed: () {
-                  final w = _width.text;
-                  _width.text = _height.text;
-                  _height.text = w;
-                },
-              ),
-              SizedBox(width: 90, child: TextField(controller: _height, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], decoration: _box('Height'))),
+              // Width and height are one control, kept on one line: when
+              // they don't fit beside the seed they move down together.
+              _SizeField(width: _width, height: _height),
               _Stepper(value: _count, min: 1, max: 16, label: _count == 1 ? 'picture' : 'pictures', onChanged: (v) => setState(() => _count = v)),
             ],
           ),
@@ -324,6 +325,49 @@ InputDecoration _box(String label) => InputDecoration(
   fillColor: Palette.raised,
   border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
 );
+
+/// Width, a swap button, and height, in one box.
+class _SizeField extends StatelessWidget {
+  const _SizeField({required this.width, required this.height});
+  final TextEditingController width;
+  final TextEditingController height;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget field(TextEditingController controller, String label, String key) => SizedBox(
+          width: 76,
+          child: TextField(
+            key: ValueKey<String>(key),
+            controller: controller,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: _box(label).copyWith(fillColor: Colors.transparent),
+          ),
+        );
+    return Container(
+      key: const ValueKey<String>('remix-size'),
+      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          field(width, 'Width', 'remix-width'),
+          IconButton(
+            tooltip: 'Swap width and height',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.swap_horiz, size: 20),
+            onPressed: () {
+              final w = width.text;
+              width.text = height.text;
+              height.text = w;
+            },
+          ),
+          field(height, 'Height', 'remix-height'),
+        ],
+      ),
+    );
+  }
+}
 
 class _Stepper extends StatelessWidget {
   const _Stepper({required this.value, required this.min, required this.max, required this.label, required this.onChanged});

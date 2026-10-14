@@ -354,6 +354,11 @@ pub fn extract(path: &Path) -> GenInfo {
 
 /// Media kind by file extension: Some(false) image, Some(true) video.
 pub fn media_kind(path: &Path) -> Option<bool> {
+    // Hidden files are not pictures to show: Android's trash keeps deleted
+    // ones beside the rest as `.trashed-…`, macOS leaves `._…` copies.
+    if path.file_name()?.to_str()?.starts_with('.') {
+        return None;
+    }
     let ext = path.extension()?.to_str()?;
     let mut buf = [0u8; 8];
     if ext.len() > buf.len() {

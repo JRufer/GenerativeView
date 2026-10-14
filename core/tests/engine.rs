@@ -536,3 +536,39 @@ fn upscale_runs_and_reports() {
     assert_eq!((e["job"].clone(), e["state"].as_str()), (job, Some("error")));
     assert!(h.engine.call("upscale", &json!({ "path": "x", "model": "nope" })).is_err());
 }
+
+#[test]
+fn collections_are_deleted_and_deleted_pictures_forgotten() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = Harness::new();
+    let root = tmp.path().join("pics");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    for (i, name) in ["a.png", "b.png", "sub/c.png"].iter().enumerate() {
+        write_png(&root.join(name), i as u32, &[("prompt", &comfy_prompt("a heron", i as u64, "flux.safetensors"))]);
+    }
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+
+    h.call("notes_set", json!({ "paths": [path("a.png"), path("sub/c.png")], "add": ["Herons", "Keep"] }));
+    h.call("notes_set", json!({ "paths": [path("b.png")], "add": ["herons"], "rating": 3 }));
+    assert_eq!(h.call("collections", json!({}))[0], json!({ "name": "Herons", "count": 3 }));
+
+    // Deleting a collection empties it in every folder, whatever the case;
+    // the pictures, their stars and other collections stay.
+    assert_eq!(h.call("collection_delete", json!({ "name": "HERONS" })), json!({ "removed": 3 }));
+    let names: Vec<Value> = h.call("collections", json!({})).as_array().unwrap().iter().map(|c| c["name"].clone()).collect();
+    assert_eq!(names, vec![json!("Keep")]);
+    assert_eq!(h.call("notes_get", json!({ "path": path("b.png") }))["rating"], 3);
+    assert_eq!(h.call("notes_get", json!({ "path": path("sub/c.png") }))["collections"], json!(["Keep"]));
+    assert!(root.join("a.png").exists());
+
+    // A deleted picture leaves the index and its folder's notes.
+    std::fs::remove_file(root.join("a.png")).unwrap();
+    h.call("forget", json!({ "path": path("a.png") }));
+    h.expect_names(&root, true, "", &["b.png", "c.png"]);
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
+    assert!(file["images"].get("a.png").is_none());
+    assert_eq!(h.call("collections", json!({}))[0], json!({ "name": "Keep", "count": 1 }));
+}

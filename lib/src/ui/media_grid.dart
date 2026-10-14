@@ -461,6 +461,28 @@ class _Tile extends StatelessWidget {
     );
   }
 
+  /// How round a tile's corners are; the picture inside a whole-image
+  /// (uncropped) tile is rounded a touch less, so it sits inside the box.
+  static const double _radius = 6;
+  static const double _pictureRadius = 4;
+
+  Widget _picture() {
+    final w = item.width, h = item.height;
+    if (fit == BoxFit.contain && w > 0 && h > 0) {
+      // Fitted to its own shape, so its own corners can be rounded.
+      return Center(
+        child: AspectRatio(
+          aspectRatio: w / h,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(_pictureRadius),
+            child: ThumbImage(cache: cache, item: item, tier: tier, fit: fit),
+          ),
+        ),
+      );
+    }
+    return ThumbImage(cache: cache, item: item, tier: tier, fit: fit);
+  }
+
   Widget _body() {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -479,10 +501,10 @@ class _Tile extends StatelessWidget {
                 : fresh
                 ? Border.all(color: Palette.accent.withValues(alpha: 0.7), width: 1.5)
                 : null,
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(_radius),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(_radius),
             child: ColoredBox(
               color: Palette.tile,
               child: Stack(
@@ -491,7 +513,7 @@ class _Tile extends StatelessWidget {
                   // Rejected pictures fade back, so the keepers stand out.
                   Opacity(
                     opacity: item.flag == Flag.reject ? 0.4 : 1,
-                    child: ThumbImage(cache: cache, item: item, tier: tier, fit: fit),
+                    child: _picture(),
                   ),
                   if (item.isVideo) _VideoBadge(durationMs: item.durationMs),
                   if (item.rating > 0 || item.flag != Flag.none)

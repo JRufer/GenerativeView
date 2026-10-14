@@ -27,9 +27,18 @@ const Set<String> _allOf = {'prompt'};
 
 /// What the filter panel has chosen, and the rest of the search it leaves
 /// alone.
+/// Which kinds of file the grid shows.
+enum MediaShown { both, images, videos }
+
 class FilterSet {
-  FilterSet({required this.free, required this.chosen, this.minRating = 0, this.unrated = false, Set<Flag>? flags})
-    : flags = flags ?? {};
+  FilterSet({
+    required this.free,
+    required this.chosen,
+    this.minRating = 0,
+    this.unrated = false,
+    Set<Flag>? flags,
+    this.media = MediaShown.both,
+  }) : flags = flags ?? {};
 
   /// Terms the panel does not manage: typed words, dates, negations.
   final List<String> free;
@@ -39,8 +48,15 @@ class FilterSet {
   int minRating;
   bool unrated;
   final Set<Flag> flags;
+  MediaShown media;
 
-  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag'};
+  /// The search fields that mean the kind of file (`type:video`).
+  static const Set<String> _typeFields = {'type', 'kind', 'media', 'is'};
+
+  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag', ..._typeFields};
+
+  /// The same search with every filter taken off and typed words kept.
+  FilterSet cleared() => FilterSet(free: free, chosen: {});
 
   /// Read the panel's choices back out of a search.
   factory FilterSet.parse(String query) {
@@ -49,10 +65,22 @@ class FilterSet {
     var minRating = 0;
     var unrated = false;
     final flags = <Flag>{};
+    var media = MediaShown.both;
     for (final raw in splitTerms(query)) {
       final t = parseTerm(raw);
       if (t.negate || !_managed.contains(t.field)) {
         free.add(raw);
+        continue;
+      }
+      if (_typeFields.contains(t.field)) {
+        final kinds = t.value.toLowerCase().split('|').map((k) => k.trim()).toSet();
+        final images = kinds.any((k) => k.startsWith('image') || k.startsWith('picture') || k == 'photo' || k == 'still');
+        final videos = kinds.any((k) => k.startsWith('video') || k == 'movie' || k == 'clip');
+        if (images == videos) {
+          if (!images) free.add(raw);
+        } else {
+          media = images ? MediaShown.images : MediaShown.videos;
+        }
         continue;
       }
       if (t.field == 'rating') {
@@ -77,12 +105,18 @@ class FilterSet {
       final values = _allOf.contains(t.field) || t.field == 'fullprompt' ? [t.value] : t.value.split('|');
       chosen.putIfAbsent(t.field, () => {}).addAll(values.where((v) => v.isNotEmpty));
     }
-    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags);
+    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media);
   }
 
-  bool get isEmpty => chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty;
+  bool get isEmpty =>
+      chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty && media == MediaShown.both;
 
-  int get count => chosen.values.fold(0, (n, s) => n + s.length) + (minRating > 0 ? 1 : 0) + (unrated ? 1 : 0) + flags.length;
+  int get count =>
+      chosen.values.fold(0, (n, s) => n + s.length) +
+      (minRating > 0 ? 1 : 0) +
+      (unrated ? 1 : 0) +
+      flags.length +
+      (media == MediaShown.both ? 0 : 1);
 
   bool has(String field, String value) => chosen[field]?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
 
@@ -119,8 +153,15 @@ class FilterSet {
     if (minRating > 0) parts.add('rating:>=$minRating');
     if (unrated) parts.add('rating:none');
     if (flags.isNotEmpty) parts.add('flag:${flags.map((f) => f.word).join('|')}');
+    if (media == MediaShown.images) parts.add('type:image');
+    if (media == MediaShown.videos) parts.add('type:video');
     return parts.join(' ');
   }
+}
+
+/// Take every filter off the search, keeping what was typed.
+void clearFilters(AppState state) {
+  state.applySearch(FilterSet.parse(state.query).cleared().toQuery(), content: false);
 }
 
 /// Whether [query] has anything the filter panel set.
@@ -192,7 +233,7 @@ class _FilterPanelState extends State<FilterPanel> {
   }
 
   void _clear() {
-    _filters = FilterSet(free: _filters.free, chosen: {});
+    _filters = _filters.cleared();
     _apply();
   }
 
@@ -223,6 +264,9 @@ class _FilterPanelState extends State<FilterPanel> {
                         'Within: ${_filters.freeText}',
                         style: const TextStyle(fontSize: 12, color: Palette.faint),
                       ),
+                    const PanelHeading('Show'),
+                    _mediaRow(),
+                    const SizedBox(height: 8),
                     const PanelHeading('Rating and flag'),
                     _ratingRow(),
                     const SizedBox(height: 8),
@@ -266,6 +310,28 @@ class _FilterPanelState extends State<FilterPanel> {
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _mediaRow() {
+    Widget choice(MediaShown media, String label, IconData icon) => ChoiceChipButton(
+          key: ValueKey<String>('filter-type-${media.name}'),
+          label: label,
+          icon: icon,
+          selected: _filters.media == media,
+          onTap: () {
+            _filters.media = media;
+            _apply();
+          },
+        );
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        choice(MediaShown.both, 'Images and videos', Icons.perm_media_outlined),
+        choice(MediaShown.images, 'Images only', Icons.image_outlined),
+        choice(MediaShown.videos, 'Videos only', Icons.videocam_outlined),
       ],
     );
   }

@@ -4,6 +4,7 @@ import '../app_state.dart';
 import '../core/models.dart' show exactTerm;
 import '../theme.dart';
 import 'context_menu.dart';
+import 'sheet.dart';
 
 /// The left-hand panel: pinned folders, then places to start from and a
 /// lazily loaded folder tree. Tap a folder to view it; tap its arrow to look
@@ -468,6 +469,23 @@ class _CollectionsState extends State<_Collections> {
     if (mounted) setState(() => _names = names);
   }
 
+  /// A right click or a long press on a collection: delete it, once the
+  /// user has said yes.
+  Future<void> _menu(String name, int count, Offset position) async {
+    final choice = await showContextMenu<String>(context, position, const [
+      MenuEntry('delete', 'Delete collection…', Icons.delete_outline),
+    ]);
+    if (choice != 'delete' || !mounted) return;
+    final pictures = count == 1 ? '1 picture' : '$count pictures';
+    final yes = await confirmAction(
+      context,
+      title: 'Delete "$name"?',
+      message: 'The $pictures in it are taken out of the collection and the collection goes away. The pictures themselves are not deleted.',
+      action: 'Delete collection',
+    );
+    if (yes) await widget.state.deleteCollection(name);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_names.isEmpty) return const SizedBox.shrink();
@@ -519,23 +537,28 @@ class _CollectionsState extends State<_Collections> {
                   final on = current == query;
                   return Material(
                     color: on ? Palette.accent.withValues(alpha: 0.16) : Colors.transparent,
-                    child: InkWell(
-                      onTap: () {
-                        widget.state.applyFilter(on ? '' : query);
-                        widget.onPicked?.call();
-                      },
-                      hoverColor: Palette.hover,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 30, right: 12),
-                        child: Row(
-                          children: [
-                            Icon(Icons.collections_bookmark_outlined, size: 16, color: on ? Palette.accent : Palette.muted),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFFCFCFD6))),
-                            ),
-                            Text('$count', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
-                          ],
+                    child: GestureDetector(
+                      key: ValueKey<String>('collection-$name'),
+                      onSecondaryTapUp: (details) => _menu(name, count, details.globalPosition),
+                      onLongPressStart: (details) => _menu(name, count, details.globalPosition),
+                      child: InkWell(
+                        onTap: () {
+                          widget.state.applyFilter(on ? '' : query);
+                          widget.onPicked?.call();
+                        },
+                        hoverColor: Palette.hover,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 30, right: 12),
+                          child: Row(
+                            children: [
+                              Icon(Icons.collections_bookmark_outlined, size: 16, color: on ? Palette.accent : Palette.muted),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFFCFCFD6))),
+                              ),
+                              Text('$count', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                            ],
+                          ),
                         ),
                       ),
                     ),

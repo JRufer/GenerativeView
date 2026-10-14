@@ -178,3 +178,44 @@ class ChoiceChipButton extends StatelessWidget {
     return tooltip == null ? shown : Tooltip(message: tooltip!, child: shown);
   }
 }
+
+/// Ask before doing something that can't easily be undone. True only if
+/// the user pressed [action]; Esc, Cancel or tapping outside give false.
+Future<bool> confirmAction(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String action,
+  IconData icon = Icons.delete_outline,
+}) async {
+  final yes = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      key: const ValueKey<String>('confirm-dialog'),
+      backgroundColor: Palette.panel,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: const BorderSide(color: Palette.line),
+      ),
+      icon: Icon(icon, color: Palette.danger),
+      title: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Palette.text)),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Text(message, style: const TextStyle(fontSize: 13.5, height: 1.4, color: Palette.muted)),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey<String>('confirm-action'),
+          style: FilledButton.styleFrom(backgroundColor: Palette.danger, foregroundColor: Palette.canvas),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(action),
+        ),
+      ],
+    ),
+  );
+  return yes ?? false;
+}

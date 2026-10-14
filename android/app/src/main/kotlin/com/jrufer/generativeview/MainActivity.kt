@@ -1,10 +1,15 @@
 package com.jrufer.generativeview
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import io.flutter.embedding.android.FlutterActivity
@@ -29,6 +34,8 @@ class MainActivity : FlutterActivity() {
                     "copyFile" -> result.success(copyFile(call.argument<String>("path")))
                     "readCopiedFile" -> readCopiedFile(result)
                     "openUrl" -> result.success(openUrl(call.argument<String>("url")))
+                    "trashFile" -> trashFile(call.argument<String>("path"), result)
+                    "pasteSource" -> pasteSource(result)
                     else -> result.notImplemented()
                 }
             }
@@ -115,6 +122,116 @@ class MainActivity : FlutterActivity() {
             }
             runOnUiThread { result.success(bytes) }
         }
+    }
+
+    // --- Deleting and pasting ----------------------------------------------
+
+    private var trashResult: MethodChannel.Result? = null
+
+    /**
+     * Move a file to the system trash (Android 11+), through MediaStore, which
+     * asks the user itself. Answers "trashed", "cancelled", or "unsupported"
+     * when the file can't be trashed (older Android, or a file MediaStore
+     * doesn't know), so the caller can offer to delete it outright.
+     */
+    private fun trashFile(path: String?, result: MethodChannel.Result) {
+        if (path == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R || trashResult != null) {
+            result.success("unsupported")
+            return
+        }
+        workers.execute {
+            val uri = try {
+                mediaUriFor(path)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (uri == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    result.success("unsupported")
+                    return@runOnUiThread
+                }
+                try {
+                    val request = MediaStore.createTrashRequest(contentResolver, listOf(uri), true)
+                    trashResult = result
+                    startIntentSenderForResult(request.intentSender, TRASH_REQUEST, null, 0, 0, 0)
+                } catch (e: Exception) {
+                    trashResult = null
+                    result.success("unsupported")
+                }
+            }
+        }
+    }
+
+    /** The MediaStore address of the file at [path], if it has one. */
+    private fun mediaUriFor(path: String): Uri? {
+        val files = MediaStore.Files.getContentUri("external")
+        contentResolver.query(
+            files,
+            arrayOf(MediaStore.Files.FileColumns._ID),
+            "${MediaStore.Files.FileColumns.DATA} = ?",
+            arrayOf(path),
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) return ContentUris.withAppendedId(files, cursor.getLong(0))
+        }
+        return null
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == TRASH_REQUEST) {
+            val result = trashResult
+            trashResult = null
+            result?.success(if (resultCode == Activity.RESULT_OK) "trashed" else "cancelled")
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    /**
+     * What a paste would bring in: {"path"} for a file of ours copied with
+     * Copy image, otherwise {"bytes", "type", "name"} read through the
+     * clipboard's address; null when it holds no picture or video.
+     */
+    private fun pasteSource(result: MethodChannel.Result) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val uri = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+        if (uri == null) {
+            result.success(null)
+            return
+        }
+        if (uri.authority == packageName + ".copied") {
+            val path = uri.path
+            if (path != null && File(path).isFile) {
+                result.success(mapOf("path" to path))
+                return
+            }
+        }
+        workers.execute {
+            val found: Map<String, Any>? = try {
+                val type = contentResolver.getType(uri)
+                if (type == null || !(type.startsWith("image/") || type.startsWith("video/"))) {
+                    null
+                } else {
+                    var name: String? = null
+                    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) name = c.getString(0)
+                    }
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes == null) null else buildMap {
+                        put("bytes", bytes)
+                        put("type", type)
+                        name?.let { put("name", it) }
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread { result.success(found) }
+        }
+    }
+
+    companion object {
+        private const val TRASH_REQUEST = 4101
     }
 
     override fun onDestroy() {

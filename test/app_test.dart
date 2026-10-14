@@ -1851,7 +1851,7 @@ void main() {
     expect(full, 1440);
 
     // ---- the folder panel slides out and pushes the grid over ---------------
-    const handle = 7.0;
+    const handle = 14.0;
     await tester.tap(find.byTooltip('Folders ([)'));
     await tester.pump();
     await tester.pump(part);

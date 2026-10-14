@@ -178,6 +178,49 @@ impl Engine {
         Ok(Value::Array(out).to_string())
     }
 
+    /// A picture was deleted (or moved to the trash): drop it from the
+    /// index, and its stars, flag and collections from its folder's notes,
+    /// so it stops counting anywhere.
+    fn forget(&self, path: &str) -> Result<String, String> {
+        let (dir, name) = split_path(path)?;
+        let note = self.db.note(&dir, &name);
+        if !note.is_empty() {
+            let change = Change { rating: Some(0), flag: Some(Flag::None), add: Vec::new(), remove: note.collections.clone() };
+            self.notes.change(&self.db, &dir, std::slice::from_ref(&name), &change)?;
+        }
+        self.db.delete_path(&dir, &name).map_err(|e| e.to_string())?;
+        Ok("null".into())
+    }
+
+    /// Take every picture out of the collection `name`, which then no
+    /// longer exists. The pictures themselves are left alone. Returns how
+    /// many were in it.
+    fn delete_collection(&self, name: &str) -> Result<String, String> {
+        let members = self.db.collection_members(name).map_err(|e| e.to_string())?;
+        let count = members.len();
+        // One write per folder, removing each spelling found there.
+        let mut by_dir: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+        for (dir, file, spelt) in members {
+            let at = match by_dir.iter().position(|(d, ..)| *d == dir) {
+                Some(at) => at,
+                None => {
+                    by_dir.push((dir, Vec::new(), Vec::new()));
+                    by_dir.len() - 1
+                }
+            };
+            let (_, files, spellings) = &mut by_dir[at];
+            files.push(file);
+            if !spellings.contains(&spelt) {
+                spellings.push(spelt);
+            }
+        }
+        for (dir, files, spellings) in by_dir {
+            let change = Change { remove: spellings, ..Change::default() };
+            self.notes.change(&self.db, &dir, &files, &change)?;
+        }
+        Ok(json!({ "removed": count }).to_string())
+    }
+
     /// The pictures that match a description. `sort` is as for `query`, and
     /// "relevance" (best match first) if left out; `bar` overrides how well
     /// a picture has to fit (see `clip::BAR`).
@@ -250,6 +293,8 @@ impl Engine {
                 let names = self.db.collection_names().map_err(db_err)?;
                 Ok(Value::Array(names.into_iter().map(|(name, count)| json!({ "name": name, "count": count })).collect()).to_string())
             }
+            "forget" => self.forget(str_arg(args, "path")?),
+            "collection_delete" => self.delete_collection(str_arg(args, "name")?),
             "describe" => Ok(self.content.describe(str_arg(args, "path")?)?.to_string()),
             "upscale_models" => {
                 let dir = crate::sr::model_dir(&self.data_dir);

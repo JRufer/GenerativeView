@@ -16,6 +16,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
       ('[', 'Show or hide the folders'),
       ('F5', 'Rescan the folder'),
       ('N', 'Follow new pictures as they arrive'),
+      ('Ctrl V', 'Paste a copied picture into this folder'),
     ],
   ),
   (
@@ -28,7 +29,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
       ('Enter  or  Space', 'Open the picture / back to the grid'),
       ('Esc', 'Back, close a panel, or clear the selection'),
       ('Mouse back', 'Back to the grid; in the grid, show the folders'),
-      ('Mouse forward', 'Show or hide the generation data'),
+      ('Mouse forward  or  middle', 'Show or hide the generation data'),
       ('Ctrl +  /  Ctrl −', 'Bigger or smaller tiles'),
       ('C', 'Tiles cropped to fill or whole'),
     ],
@@ -47,6 +48,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
       ('Shift U', 'Upscale'),
       ('Ctrl C', 'Copy its prompt'),
       ('Ctrl Shift C', 'Copy the picture itself'),
+      ('Delete', 'Move it to the trash (asks first)'),
     ],
   ),
   (
