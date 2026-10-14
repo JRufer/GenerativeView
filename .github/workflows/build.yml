@@ -43,11 +43,38 @@ jobs:
         working-directory: core
         run: cargo test
 
+  libmpv:
+    # libmpv for the AppImage to fall back on where the system has none (no
+    # mpv installed, or Ubuntu 22.04's older one). Built on the oldest system
+    # the AppImage supports, so it runs on anything newer.
+    name: libmpv for the AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: libmpv-bundle
+          key: libmpv-ubuntu22.04-${{ hashFiles('tool/build-libmpv-bundle.sh') }}
+      - name: Build libmpv and gather what it needs
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: tool/build-libmpv-bundle.sh libmpv-bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-bundle
+          path: libmpv-bundle/
+          if-no-files-found: error
+
   linux:
     name: Linux app
     runs-on: ubuntu-24.04
+    needs: [libmpv]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: libmpv-bundle
+          path: ${{ runner.temp }}/libmpv-bundle
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -83,7 +110,7 @@ jobs:
           cp assets/icon.png "$bundle/share/generativeview.png"
           cp tool/install-linux.sh "$bundle/install.sh"
           tar -C build/linux/x64/release -czf dist/generativeview-linux-x64.tar.gz bundle
-          tool/build-appimage.sh "$bundle" dist/GenerativeView-x86_64.AppImage
+          MPV_BUNDLE="$RUNNER_TEMP/libmpv-bundle" tool/build-appimage.sh "$bundle" dist/GenerativeView-x86_64.AppImage
       - name: Integration test (the built app in a virtual display)
         env:
           GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
@@ -110,6 +137,33 @@ jobs:
           thumbs=$(find "$XDG_CACHE_HOME" -name '*.jpg' | wc -l)
           echo "::notice::AppImage rendered $thumbs thumbnails"
           test "$thumbs" -ge 5
+      - name: Smoke-test the AppImage on Ubuntu 22.04 without mpv
+        run: |
+          # The oldest system it supports, with what any desktop has (GTK, sound,
+          # a display) and no mpv: the
+          # AppImage must start on the libmpv it carries.
+          mkdir -p "$RUNNER_TEMP/screens"
+          docker run --rm \
+            -v "$PWD/dist:/dist:ro" -v /tmp/gv-integration:/pictures:ro -v "$RUNNER_TEMP/screens:/screens" \
+            ubuntu:22.04 bash -euc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends libgtk-3-0 libasound2 libpulse0 libegl1 libgl1 libgles2 libgl1-mesa-dri xvfb xauth imagemagick >/dev/null
+              if ldconfig -p | grep -q "libmpv\.so\.2 "; then echo "::error::libmpv is installed, so this proves nothing"; exit 1; fi
+              cp -r /pictures /tmp/pictures
+              export APPIMAGE_EXTRACT_AND_RUN=1 XDG_DATA_HOME=/tmp/data XDG_CACHE_HOME=/tmp/cache
+              xvfb-run -a -s "-screen 0 1440x900x24" bash -c "
+                /dist/GenerativeView-x86_64.AppImage /tmp/pictures > /tmp/app.log 2>&1 &
+                pid=\$!
+                sleep 20
+                import -window root /screens/appimage-ubuntu22.png || true
+                if ! kill -0 \$pid; then echo ::error::The AppImage exited on Ubuntu 22.04; grep -v \"^\\s*\$\" /tmp/app.log | tail -15 | sed \"s/^/::error::/\"; exit 1; fi
+                kill \$pid
+              "
+              thumbs=$(find /tmp/cache -name "*.jpg" | wc -l)
+              echo "::notice::On Ubuntu 22.04 without mpv, the AppImage rendered $thumbs thumbnails"
+              test "$thumbs" -ge 5
+            '
       - uses: actions/upload-artifact@v4
         with:
           name: generativeview-linux-x64
@@ -248,7 +302,7 @@ jobs:
   release:
     name: Publish release
     if: github.event_name == 'push'
-    needs: [core, linux, android, emulator]
+    needs: [core, libmpv, linux, android, emulator]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -281,7 +335,7 @@ jobs:
           {
             echo "Automatic build of \`${GITHUB_SHA::7}\`: $(echo "$COMMIT_SUBJECT" | head -1)"
             echo
-            echo "- **Linux**: \`GenerativeView-x86_64.AppImage\` — \`chmod +x\` it and run. Needs GTK 3, plus \`mpv\` and \`ffmpeg\` for video. The \`.tar.gz\` is the same app as a plain folder with an \`install.sh\`."
+            echo "- **Linux**: \`GenerativeView-x86_64.AppImage\` — \`chmod +x\` it and run. Runs on Ubuntu 22.04, Debian 12, Arch and newer, on Wayland or X11. Needs GTK 3, and \`ffmpeg\` for video thumbnails; it brings its own video player library where \`mpv\` isn't installed. The \`.tar.gz\` is the same app as a plain folder with an \`install.sh\`."
             echo "- **Android**: \`GenerativeView-arm64-v8a.apk\` for tablets and phones."
           } > notes.md
           gh release create "$tag" --target "$GITHUB_SHA" --title "Build $GITHUB_RUN_NUMBER" --notes-file notes.md --latest out/*
