@@ -1451,7 +1451,8 @@ class AppState extends ChangeNotifier {
     final paths = _highlightPending;
     if (paths == null) return;
     final since = _highlightPendingSince;
-    if (since != null && DateTime.now().difference(since) > const Duration(seconds: 15)) {
+    final waited = since == null ? Duration.zero : DateTime.now().difference(since);
+    if (waited > const Duration(seconds: 15)) {
       _highlightPending = null;
       return;
     }
@@ -1463,6 +1464,9 @@ class AppState extends ChangeNotifier {
       if (first < 0) first = i;
     }
     if (first < 0) return;
+    // The rest may be a moment behind, still being indexed: wait for them a
+    // little, then point out what is here.
+    if (ids.length < paths.length && waited < const Duration(seconds: 4)) return;
     _highlightPending = null;
     selectedIndex = first;
     _selectedId = list.idAt(first);
