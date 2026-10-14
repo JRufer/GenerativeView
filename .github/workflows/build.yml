@@ -156,7 +156,7 @@ jobs:
                 pid=\$!
                 sleep 20
                 import -window root /screens/appimage-ubuntu22.png || true
-                if ! kill -0 \$pid; then cat /tmp/app.log; echo ::error::The AppImage exited on Ubuntu 22.04; exit 1; fi
+                if ! kill -0 \$pid; then echo ::error::The AppImage exited on Ubuntu 22.04; grep -v \"^\\s*\$\" /tmp/app.log | tail -15 | sed \"s/^/::error::/\"; exit 1; fi
                 kill \$pid
               "
               thumbs=$(find /tmp/cache -name "*.jpg" | wc -l)
