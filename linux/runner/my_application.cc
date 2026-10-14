@@ -164,6 +164,94 @@ static FlValue* read_copied_image() {
   return result != nullptr ? result : fl_value_new_null();
 }
 
+// --- Deleting and pasting ---------------------------------------------------
+
+// Move a file to the desktop's trash (the freedesktop.org one GIO keeps,
+// per drive). "trashed", "unsupported" when the drive has no trash, or
+// "failed: <why>".
+static FlValue* trash_file(const gchar* path) {
+  g_autoptr(GFile) file = g_file_new_for_path(path);
+  g_autoptr(GError) error = nullptr;
+  if (g_file_trash(file, nullptr, &error)) {
+    return fl_value_new_string("trashed");
+  }
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED)) {
+    return fl_value_new_string("unsupported");
+  }
+  g_autofree gchar* text = g_strconcat("failed: ", error->message, nullptr);
+  return fl_value_new_string(text);
+}
+
+// What a paste would bring in: {"path": ...} for a file copied in a file
+// manager (or with Copy image here), so it arrives with its generation data;
+// otherwise {"bytes": ..., "type": "image/..."} for a picture copied from a
+// browser or an editor; null when the clipboard holds neither.
+static FlValue* paste_source() {
+  GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  gchar** uris = gtk_clipboard_wait_for_uris(clipboard);
+  if (uris != nullptr) {
+    for (gchar** uri = uris; *uri != nullptr; uri++) {
+      g_autofree gchar* path = g_filename_from_uri(*uri, nullptr, nullptr);
+      if (path != nullptr && g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
+        FlValue* result = fl_value_new_map();
+        fl_value_set_string_take(result, "path", fl_value_new_string(path));
+        g_strfreev(uris);
+        return result;
+      }
+    }
+    g_strfreev(uris);
+  }
+  // Ask for the types that keep a picture's own bytes first.
+  static const gchar* kTypes[] = {"image/png", "image/webp", "image/jpeg",
+                                  "image/gif", "image/bmp"};
+  GdkAtom* targets = nullptr;
+  gint count = 0;
+  if (!gtk_clipboard_wait_for_targets(clipboard, &targets, &count)) {
+    return fl_value_new_null();
+  }
+  FlValue* result = nullptr;
+  for (const gchar* type : kTypes) {
+    for (gint i = 0; i < count && result == nullptr; i++) {
+      g_autofree gchar* name = gdk_atom_name(targets[i]);
+      if (!g_str_equal(name, type)) {
+        continue;
+      }
+      GtkSelectionData* data =
+          gtk_clipboard_wait_for_contents(clipboard, targets[i]);
+      if (data != nullptr) {
+        gint length = gtk_selection_data_get_length(data);
+        if (length > 0) {
+          result = fl_value_new_map();
+          fl_value_set_string_take(
+              result, "bytes",
+              fl_value_new_uint8_list(gtk_selection_data_get_data(data),
+                                      static_cast<size_t>(length)));
+          fl_value_set_string_take(result, "type", fl_value_new_string(type));
+        }
+        gtk_selection_data_free(data);
+      }
+    }
+    if (result != nullptr) {
+      break;
+    }
+  }
+  g_free(targets);
+  return result != nullptr ? result : fl_value_new_null();
+}
+
+// The "path" argument of a call, or nullptr.
+static const gchar* path_argument(FlMethodCall* method_call) {
+  FlValue* args = fl_method_call_get_args(method_call);
+  if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+    return nullptr;
+  }
+  FlValue* path = fl_value_lookup_string(args, "path");
+  if (path == nullptr || fl_value_get_type(path) != FL_VALUE_TYPE_STRING) {
+    return nullptr;
+  }
+  return fl_value_get_string(path);
+}
+
 // Handles calls on the "generativeview/media" channel.
 static void media_method_call_cb(FlMethodChannel* channel,
                                  FlMethodCall* method_call,
@@ -184,6 +272,15 @@ static void media_method_call_cb(FlMethodChannel* channel,
       copied = copy_file_to_clipboard(fl_value_get_string(path));
     }
     g_autoptr(FlValue) result = fl_value_new_bool(copied);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (g_str_equal(method, "trashFile")) {
+    const gchar* path = path_argument(method_call);
+    g_autoptr(FlValue) result = path != nullptr
+                                    ? trash_file(path)
+                                    : fl_value_new_string("failed: no path");
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (g_str_equal(method, "pasteSource")) {
+    g_autoptr(FlValue) result = paste_source();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());

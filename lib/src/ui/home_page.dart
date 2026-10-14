@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
@@ -26,6 +27,10 @@ const double _sideBySideWidth = 820;
 const double _minContentHeight = 160;
 const double _minFooterHeight = 96;
 const double _footerHandleHeight = 18;
+
+/// The strip between a side panel and the content: wide enough to take
+/// hold of with a finger, with the grip in the middle.
+const double _sideHandleWidth = 14;
 
 /// How long a panel takes to open or close.
 const Duration _panelMotion = Duration(milliseconds: 220);
@@ -274,7 +279,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 children: [
                   SizedBox(width: state.leftWidth, child: folders),
                   _DragHandle(
-                    onDrag: (dx) => state.setLeftWidth(state.leftWidth + dx),
+                    key: const ValueKey<String>('resize-left'),
+                    size: state.leftWidth,
+                    min: minLeftWidth,
+                    grows: 1,
+                    onResize: state.setLeftWidth,
+                    onClose: state.toggleLeft,
                   ),
                 ],
               ),
@@ -288,7 +298,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _DragHandle(
-                    onDrag: (dx) => state.setRightWidth(state.rightWidth - dx),
+                    key: const ValueKey<String>('resize-right'),
+                    size: state.rightWidth,
+                    min: minRightWidth,
+                    grows: -1,
+                    onResize: state.setRightWidth,
+                    onClose: state.toggleRight,
                   ),
                   SizedBox(width: state.rightWidth, child: meta),
                 ],
@@ -359,12 +374,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _DragHandle(
+                      key: const ValueKey<String>('resize-bottom'),
                       axis: Axis.vertical,
                       // From the height on screen, which may be less than
                       // the saved share asks for.
-                      onDrag: (dy) => state.setBottomShare(
-                        math.min(state.bottomShare, height / room) - dy / room,
-                      ),
+                      size: height,
+                      min: math.max(room * minBottomShare, _minFooterHeight),
+                      grows: -1,
+                      onResize: (px) => state.setBottomShare(px / room),
+                      onClose: state.toggleRight,
                     ),
                     SizedBox(height: height, child: meta),
                   ],
@@ -592,57 +610,136 @@ class _ContentBanner extends StatelessWidget {
   }
 }
 
-/// A thin strip between panels that resizes them when dragged.
-class _DragHandle extends StatelessWidget {
-  const _DragHandle({required this.onDrag, this.axis = Axis.horizontal});
+/// A strip between a panel and the content that resizes the panel when
+/// dragged, with a grip in the middle that is easy to find and hold with a
+/// thumb.
+///
+/// Dragged past the panel's smallest size it sticks there; dragged on past
+/// half of that, the panel snaps shut, as if its button had been pressed,
+/// and opens again at the size it had before.
+class _DragHandle extends StatefulWidget {
+  const _DragHandle({
+    super.key,
+    required this.size,
+    required this.min,
+    required this.grows,
+    required this.onResize,
+    required this.onClose,
+    this.axis = Axis.horizontal,
+  });
 
-  /// Called with how far the handle has moved along [axis].
-  final ValueChanged<double> onDrag;
+  /// The panel's size along [axis] now, in pixels.
+  final double size;
+
+  /// The smallest it may be.
+  final double min;
+
+  /// +1 if dragging right (or down) makes the panel bigger, -1 if smaller.
+  final double grows;
+
+  /// Called with the size, in pixels, the panel should be.
+  final ValueChanged<double> onResize;
+
+  /// Shut the panel.
+  final VoidCallback onClose;
 
   /// The way the handle moves: sideways between columns, or up and down on
   /// top of the footer.
   final Axis axis;
 
   @override
+  State<_DragHandle> createState() => _DragHandleState();
+}
+
+class _DragHandleState extends State<_DragHandle> {
+  /// The size the drag started from, and the size it now asks for, which
+  /// may be below the smallest allowed.
+  double? _start;
+  double _wanted = 0;
+  bool _hover = false;
+
+  bool get _dragging => _start != null;
+
+  /// Held at its smallest, and about to snap shut if dragged further.
+  bool get _stuck => _dragging && _wanted < widget.min;
+
+  void _begin() => setState(() {
+        _start = widget.size;
+        _wanted = widget.size;
+      });
+
+  void _update(double delta) {
+    final start = _start;
+    if (start == null) return;
+    _wanted += delta * widget.grows;
+    if (_wanted < widget.min / 2) {
+      // Far enough: shut it, and leave its size as it was for next time.
+      _start = null;
+      widget.onResize(start);
+      widget.onClose();
+      setState(() {});
+      return;
+    }
+    widget.onResize(math.max(_wanted, widget.min));
+    setState(() {});
+  }
+
+  void _end() => setState(() => _start = null);
+
+  @override
   Widget build(BuildContext context) {
-    if (axis == Axis.vertical) {
-      // Taller than its sideways twin, with a grip: this one gets dragged by
-      // thumb on a tablet held upright.
-      return MouseRegion(
-        cursor: SystemMouseCursors.resizeRow,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onVerticalDragUpdate: (d) => onDrag(d.delta.dy),
-          child: Container(
+    final vertical = widget.axis == Axis.vertical;
+    final lit = _dragging || _hover;
+    final gripColor = _stuck ? Palette.danger : (lit ? Palette.accent : Palette.muted);
+    final grip = AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      width: vertical ? 36 : 10,
+      height: vertical ? 10 : 36,
+      decoration: BoxDecoration(
+        color: Palette.panel,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: gripColor, width: 1.5),
+      ),
+    );
+    final Widget strip = vertical
+        ? Container(
             height: _footerHandleHeight,
             alignment: Alignment.center,
             decoration: const BoxDecoration(
               color: Palette.panel,
               border: Border(top: BorderSide(color: Palette.line)),
             ),
-            child: Container(
-              width: 36,
-              height: 4,
-              decoration: const BoxDecoration(
-                color: Palette.line,
-                borderRadius: BorderRadius.all(Radius.circular(2)),
-              ),
+            child: grip,
+          )
+        : SizedBox(
+            width: _sideHandleWidth,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                const Positioned.fill(
+                  child: Center(child: VerticalDivider(width: 1, thickness: 1, color: Palette.line)),
+                ),
+                grip,
+              ],
             ),
-          ),
-        ),
-      );
-    }
+          );
     return MouseRegion(
-      cursor: SystemMouseCursors.resizeColumn,
+      cursor: vertical ? SystemMouseCursors.resizeRow : SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onHorizontalDragUpdate: (d) => onDrag(d.delta.dx),
-        child: const SizedBox(
-          width: 7,
-          child: Center(
-            child: VerticalDivider(width: 1, thickness: 1, color: Palette.line),
-          ),
-        ),
+        // Follows the finger from where it went down, slop and all.
+        dragStartBehavior: DragStartBehavior.down,
+        onVerticalDragStart: vertical ? (_) => _begin() : null,
+        onVerticalDragUpdate: vertical ? (d) => _update(d.delta.dy) : null,
+        onVerticalDragEnd: vertical ? (_) => _end() : null,
+        onVerticalDragCancel: vertical ? _end : null,
+        onHorizontalDragStart: vertical ? null : (_) => _begin(),
+        onHorizontalDragUpdate: vertical ? null : (d) => _update(d.delta.dx),
+        onHorizontalDragEnd: vertical ? null : (_) => _end(),
+        onHorizontalDragCancel: vertical ? null : _end,
+        child: strip,
       ),
     );
   }

@@ -11,6 +11,7 @@ import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/thumb_cache.dart';
+import 'platform.dart' show PasteSource;
 
 enum ViewMode { grid, focus }
 
@@ -89,6 +90,12 @@ const double maxTileSize = 520;
 /// How much of the height the metadata panel may take as a footer.
 const double minBottomShare = 0.15;
 const double maxBottomShare = 0.7;
+
+/// How narrow and wide the side panels may be dragged.
+const double minLeftWidth = 200;
+const double maxLeftWidth = 520;
+const double minRightWidth = 260;
+const double maxRightWidth = 720;
 
 /// Everything the UI shows, and the operations that change it.
 class AppState extends ChangeNotifier {
@@ -322,8 +329,8 @@ class AppState extends ChangeNotifier {
       'tile_size',
       tileSize,
     ).clamp(minTileSize, maxTileSize).toDouble();
-    leftWidth = number('left_width', leftWidth).clamp(200, 520).toDouble();
-    rightWidth = number('right_width', rightWidth).clamp(260, 720).toDouble();
+    leftWidth = number('left_width', leftWidth).clamp(minLeftWidth, maxLeftWidth).toDouble();
+    rightWidth = number('right_width', rightWidth).clamp(minRightWidth, maxRightWidth).toDouble();
     bottomShare = number(
       'bottom_share',
       bottomShare,
@@ -1031,13 +1038,13 @@ class AppState extends ChangeNotifier {
   }
 
   void setLeftWidth(double value) {
-    leftWidth = value.clamp(200, 520).toDouble();
+    leftWidth = value.clamp(minLeftWidth, maxLeftWidth).toDouble();
     _save('left_width', leftWidth.toStringAsFixed(0), debounce: true);
     notifyListeners();
   }
 
   void setRightWidth(double value) {
-    rightWidth = value.clamp(260, 720).toDouble();
+    rightWidth = value.clamp(minRightWidth, maxRightWidth).toDouble();
     _save('right_width', rightWidth.toStringAsFixed(0), debounce: true);
     notifyListeners();
   }
@@ -1138,6 +1145,71 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       return const [];
     }
+  }
+
+  /// Take every picture out of the collection [name], wherever it is, so
+  /// the collection no longer exists. The pictures stay where they are.
+  Future<bool> deleteCollection(String name) async {
+    try {
+      await core.call('collection_delete', {'name': name});
+    } catch (e) {
+      _notices.add('Could not delete the collection: $e');
+      return false;
+    }
+    // Showing it would now show nothing.
+    if (query.trim() == exactTerm('collection', name)) {
+      applyFilter('');
+    }
+    notesTick.value++;
+    await _reload();
+    return true;
+  }
+
+  // ================================================================ files
+
+  /// [item] was deleted or moved to the trash: drop it from the index and
+  /// its folder's notes. In the grid the selection moves to its neighbour.
+  Future<void> forgetFile(MediaItem item) async {
+    final wasSelected = selected?.id == item.id;
+    final at = selectedIndex;
+    try {
+      await core.call('forget', {'path': item.path});
+    } catch (e) {
+      _notices.add('Could not update the index: $e');
+    }
+    notesTick.value++;
+    await _reload();
+    if (wasSelected && selectedIndex < 0 && items.isNotEmpty) {
+      select(at.clamp(0, items.length - 1).toInt());
+    }
+  }
+
+  /// Save what is on the clipboard into [dir] under a name that is free
+  /// there, and return its path. A file is copied byte for byte, so its
+  /// generation data comes along.
+  Future<String> pasteInto(String dir, PasteSource source) async {
+    final String name;
+    final from = source.path;
+    if (from != null) {
+      name = from.split(Platform.pathSeparator).last;
+    } else {
+      final given = source.name?.trim() ?? '';
+      name = given.contains('.') ? given : 'pasted-${_stamp()}.${extensionForType(source.type)}';
+    }
+    final target = freeFileName(dir, name);
+    if (from != null) {
+      await File(from).copy(target);
+    } else {
+      await File(target).writeAsBytes(source.bytes!, flush: true);
+    }
+    rescan();
+    return target;
+  }
+
+  static String _stamp() {
+    final d = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${d.year}${two(d.month)}${two(d.day)}-${two(d.hour)}${two(d.minute)}${two(d.second)}';
   }
 
   // ================================================================ look-alikes

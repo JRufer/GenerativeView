@@ -332,6 +332,23 @@ impl Db {
         Ok(out)
     }
 
+    /// Every picture in the collection `name` (in any letter case), as
+    /// (dir, file name, the collection as that note spells it).
+    pub fn collection_members(&self, name: &str) -> DbResult<Vec<(String, String, String)>> {
+        let target = name.to_lowercase();
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare_cached("SELECT dir, name, collections FROM notes WHERE collections != ''")?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            let lines = r.get_ref(2)?.as_str()?;
+            if let Some(spelt) = lines.split('\n').find(|c| !c.is_empty() && c.to_lowercase() == target) {
+                out.push((r.get(0)?, r.get(1)?, spelt.to_string()));
+            }
+        }
+        Ok(out)
+    }
+
     /// The folders under `root` that hold a notes file the index knows of.
     pub fn note_dirs(&self, root: &str, recursive: bool) -> DbResult<Vec<String>> {
         let conn = self.read.lock();
@@ -573,6 +590,7 @@ fn field_alias(s: &str) -> Option<&'static str> {
         "flag" | "flagged" => "flag",
         "collection" | "col" | "in" => "collection",
         "similar" | "like" => "similar",
+        "type" | "kind" | "media" | "is" => "kind",
         _ => return None,
     })
 }
@@ -725,7 +743,7 @@ impl Term {
 
     /// Whether this term's predicate reads the `ftext` table.
     fn reads_text(&self) -> bool {
-        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar"))
+        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar" | "kind"))
     }
 
     /// Append this term's predicate.
@@ -754,6 +772,23 @@ impl Term {
                 }
             }
             (Some("rating"), _) => rating_sql(&self.text),
+            (Some("kind"), _) => {
+                // type:image, type:video; either, as type:image|video.
+                let kinds: Vec<String> = self
+                    .text
+                    .split('|')
+                    .filter_map(|k| match k.trim().to_ascii_lowercase().as_str() {
+                        "image" | "images" | "picture" | "pictures" | "photo" | "still" => Some("f.kind = 0".to_string()),
+                        "video" | "videos" | "movie" | "clip" => Some("f.kind = 1".to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                if kinds.is_empty() {
+                    "0".to_string()
+                } else {
+                    any(kinds)
+                }
+            }
             (Some("flag"), _) => {
                 let flags: Vec<String> = self
                     .text
@@ -1366,6 +1401,20 @@ mod tests {
     fn names(db: &Db, dir: &str, recursive: bool, text: &str) -> Vec<String> {
         let q = Query { dir: dir.into(), recursive, text: text.into(), sort: "name".into(), ..Default::default() };
         db.query(&q).unwrap().rows.into_iter().map(|r| r.2).collect()
+    }
+
+    #[test]
+    fn images_or_videos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path()).unwrap();
+        let mut clip = rec("/out", "clip.mp4", 3, "a fox running", "wan", "motion");
+        clip.video = true;
+        db.upsert(&[rec("/out", "a.png", 1, "a fox", "flux", "fur"), rec("/out", "b.png", 2, "an owl", "flux", "fur"), clip]).unwrap();
+        assert_eq!(names(&db, "/out", true, "type:image"), ["a.png", "b.png"]);
+        assert_eq!(names(&db, "/out", true, "type:video"), ["clip.mp4"]);
+        assert_eq!(names(&db, "/out", true, "type:image|video"), ["a.png", "b.png", "clip.mp4"]);
+        assert_eq!(names(&db, "/out", true, "fox -type:video"), ["a.png"]);
+        assert_eq!(names(&db, "/out", true, "type:nonsense"), Vec::<String>::new());
     }
 
     #[test]

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import 'context_menu.dart';
 import 'filter_sheet.dart';
 import 'remix_dialog.dart';
 import 'remix_status.dart';
@@ -152,18 +153,30 @@ const double _sliderWidth = 120;
 
 class _BarButton extends StatelessWidget {
   const _BarButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onTap,
     this.active = false,
+    this.onMenu,
   });
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
   final bool active;
 
+  /// A right click or a press-and-hold, with where to put a menu (just
+  /// under the button).
+  final ValueChanged<Offset>? onMenu;
+
   @override
   Widget build(BuildContext context) {
+    final menu = onMenu;
+    Offset below() {
+      final box = context.findRenderObject() as RenderBox?;
+      return box == null ? Offset.zero : box.localToGlobal(Offset(0, box.size.height));
+    }
+
     return Tooltip(
       message: tooltip,
       child: Material(
@@ -171,6 +184,8 @@ class _BarButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         child: InkWell(
           onTap: onTap,
+          onSecondaryTapUp: menu == null ? null : (_) => menu(below()),
+          onLongPress: menu == null ? null : () => menu(below()),
           borderRadius: BorderRadius.circular(6),
           hoverColor: Palette.hover,
           child: SizedBox(
@@ -950,12 +965,23 @@ class _FilterButton extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         _BarButton(
+          key: const ValueKey<String>('filter-button'),
           icon: Icons.tune,
           tooltip: 'Filters (F)',
           active: on,
           onTap: () {
             if (state.folder != null) openFilters(context, state);
           },
+          // With filters on, a right click or a long press offers to clear
+          // them without opening the panel.
+          onMenu: !on
+              ? null
+              : (position) async {
+                  final choice = await showContextMenu<String>(context, position, const [
+                    MenuEntry('clear', 'Clear filters', Icons.filter_alt_off_outlined),
+                  ]);
+                  if (choice == 'clear') clearFilters(state);
+                },
         ),
         if (on)
           Positioned(

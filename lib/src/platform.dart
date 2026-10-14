@@ -122,3 +122,68 @@ Future<bool> openUrl(String url) async {
     return false;
   }
 }
+
+/// How moving a file to the trash went.
+enum TrashOutcome {
+  trashed,
+
+  /// The user said no to the system's own prompt (Android).
+  cancelled,
+
+  /// There is no trash for this file: older Android, a file the media
+  /// store doesn't know, or a drive without one. It can still be deleted.
+  unsupported,
+  failed,
+}
+
+/// Whether the system shows its own "move to trash?" prompt, so the app
+/// need not ask first. True on Android, where the media store always asks.
+bool get trashAsksFirst => Platform.isAndroid;
+
+/// Move the file at [path] to the system trash. The text is why, if it
+/// failed.
+Future<(TrashOutcome, String?)> trashFile(String path) async {
+  try {
+    final answer = await _media.invokeMethod<String>('trashFile', {'path': path}) ?? 'unsupported';
+    return switch (answer) {
+      'trashed' => (TrashOutcome.trashed, null),
+      'cancelled' => (TrashOutcome.cancelled, null),
+      'unsupported' => (TrashOutcome.unsupported, null),
+      _ => (TrashOutcome.failed, answer.replaceFirst('failed: ', '')),
+    };
+  } on PlatformException catch (e) {
+    return (TrashOutcome.failed, e.message);
+  } on MissingPluginException {
+    return (TrashOutcome.unsupported, null);
+  }
+}
+
+/// What is on the clipboard to paste as a picture or video: a file to copy
+/// (generation data and all), or a picture's bytes with its type.
+class PasteSource {
+  const PasteSource({this.path, this.bytes, this.type, this.name});
+  final String? path;
+  final Uint8List? bytes;
+
+  /// The MIME type of [bytes], such as image/png.
+  final String? type;
+
+  /// The name the source gave it, if any.
+  final String? name;
+}
+
+/// What a paste would bring in, or null if the clipboard holds no picture.
+Future<PasteSource?> readPasteSource() async {
+  try {
+    final raw = await _media.invokeMethod<Map<Object?, Object?>>('pasteSource');
+    if (raw == null) return null;
+    final path = raw['path'] as String?;
+    final bytes = raw['bytes'] as Uint8List?;
+    if (path == null && bytes == null) return null;
+    return PasteSource(path: path, bytes: bytes, type: raw['type'] as String?, name: raw['name'] as String?);
+  } on PlatformException {
+    return null;
+  } on MissingPluginException {
+    return null;
+  }
+}

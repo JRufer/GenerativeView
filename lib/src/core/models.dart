@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -741,4 +742,31 @@ class ContentStatus {
     todo: todo ?? this.todo,
     error: error == null ? this.error : error(),
   );
+}
+
+/// The file extension for a pasted picture of MIME type [type].
+String extensionForType(String? type) => switch (type) {
+      'image/jpeg' => 'jpg',
+      'image/webp' => 'webp',
+      'image/gif' => 'gif',
+      'image/bmp' => 'bmp',
+      'video/mp4' => 'mp4',
+      'video/webm' => 'webm',
+      'video/quicktime' => 'mov',
+      _ => 'png',
+    };
+
+/// A path in [dir] for a file called [name] that doesn't exist yet:
+/// `name.png`, then `name (2).png`, `name (3).png`, …
+String freeFileName(String dir, String name) {
+  final sep = Platform.pathSeparator;
+  final base = dir.endsWith(sep) ? dir : '$dir$sep';
+  if (!File('$base$name').existsSync()) return '$base$name';
+  final dot = name.lastIndexOf('.');
+  final stem = dot > 0 ? name.substring(0, dot) : name;
+  final ext = dot > 0 ? name.substring(dot) : '';
+  for (var n = 2;; n++) {
+    final candidate = '$base$stem ($n)$ext';
+    if (!File(candidate).existsSync()) return candidate;
+  }
 }

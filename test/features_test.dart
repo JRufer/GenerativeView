@@ -92,6 +92,8 @@ void main() {
 
   int indexOf(AppState state, String name) => names(state).indexOf(name);
 
+  const fixtures = ['fox_01.png', 'fox_02.png', 'fox_03.png', 'owl_01.png', 'heron.png', 'sailor.png'];
+
   Map<String, dynamic> notesFile(String dir) =>
       jsonDecode(File('$dir/.generativeview.json').readAsStringSync()) as Map<String, dynamic>;
 
@@ -421,6 +423,11 @@ void main() {
     await tester.pump();
     await click(kForwardMouseButton);
     expect(state.rightOpen, isFalse);
+    // The middle button does the same.
+    await click(kMiddleMouseButton);
+    expect(state.rightOpen, isTrue);
+    await click(kMiddleMouseButton);
+    expect(state.rightOpen, isFalse);
 
     // With the remix panel up, neither button does anything.
     await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
@@ -428,6 +435,7 @@ void main() {
     await pumpUntil(tester, () => find.byKey(const ValueKey('remix-prompt')).evaluate().isNotEmpty, what: 'the remix panel');
     await click(kBackMouseButton);
     await click(kForwardMouseButton);
+    await click(kMiddleMouseButton);
     expect(find.byKey(const ValueKey('remix-prompt')), findsOneWidget);
     expect(state.mode, ViewMode.focus);
     expect(state.rightOpen, isFalse);
@@ -550,6 +558,274 @@ void main() {
     await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
     sailorRemix.deleteSync();
     owlRemix.deleteSync();
+    await close(tester, state);
+  });
+  testWidgets('collections are deleted from their menu, after asking', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    if (!state.leftOpen) state.toggleLeft();
+    await tester.runAsync(() => state.changeNotes(
+          targets: [state.items[indexOf(state, 'owl_01.png')], state.items[indexOf(state, 'sailor.png')]],
+          add: ['Doomed'],
+        ));
+    await pumpUntil(tester, () => find.byKey(const ValueKey('collection-Doomed')).evaluate().isNotEmpty, what: 'the collection listed');
+    // Shown, so deleting it also stops showing it.
+    await tester.tap(find.byKey(const ValueKey('collection-Doomed')));
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the collection shown');
+
+    Future<void> openMenu() async {
+      final row = find.byKey(const ValueKey('collection-Doomed'));
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+      await mouse.down(tester.getCenter(row));
+      await mouse.up();
+      await mouse.removePointer();
+      await settle(tester);
+    }
+
+    // Said no to: nothing changes.
+    await openMenu();
+    await tester.tap(find.text('Delete collection…'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('confirm-dialog')), findsOneWidget);
+    expect(find.textContaining('2 pictures'), findsOneWidget);
+    await screenshot(tester, boundary, '42-delete-collection');
+    await tester.tap(find.text('Cancel'));
+    await settle(tester);
+    var left = await tester.runAsync(state.collections);
+    expect(left!.any((c) => c.$1 == 'Doomed'), isTrue);
+
+    // Said yes to: gone everywhere, the pictures still there.
+    await openMenu();
+    await tester.tap(find.text('Delete collection…'));
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('confirm-action')));
+    await pumpUntil(tester, () => find.byKey(const ValueKey('collection-Doomed')).evaluate().isEmpty, what: 'the collection gone');
+    left = await tester.runAsync(state.collections);
+    expect(left!.any((c) => c.$1 == 'Doomed'), isFalse);
+    expect(state.query, isEmpty);
+    await pumpUntil(tester, () => !state.query.contains('collection') && fixtures.every((n) => indexOf(state, n) >= 0), what: 'everything again');
+    expect(File('${library.path}/owl_01.png').existsSync(), isTrue);
+    expect(notesFile('${library.path}/sub')['images']?['sailor.png']?['collections'], isNull);
+    await close(tester, state);
+  });
+
+  testWidgets('pictures are pasted in, taken out of a collection, and deleted', (tester) async {
+    const channel = MethodChannel('generativeview/media');
+    final calls = <String>[];
+    String trashAnswer = 'unsupported';
+    Object? pasteAnswer;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      switch (call.method) {
+        case 'pasteSource':
+          return pasteAnswer;
+        case 'trashFile':
+          if (trashAnswer == 'trashed') File((call.arguments as Map)['path'] as String).deleteSync();
+          return trashAnswer;
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+    addTearDown(() {
+      for (final f in library.listSync().whereType<File>()) {
+        final name = f.uri.pathSegments.last;
+        if (name.startsWith('pasted-') || name == 'heron (2).png') f.deleteSync();
+      }
+    });
+
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    Future<void> menuOn(String name, String entry) async {
+      state.select(indexOf(state, name));
+      await tester.pump();
+      final tile = find.byKey(ValueKey<int>(state.items[indexOf(state, name)].id));
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+      await mouse.down(tile.evaluate().isNotEmpty ? tester.getCenter(tile) : const Offset(720, 450));
+      await mouse.up();
+      await mouse.removePointer();
+      await pumpUntil(tester, () => find.text(entry).evaluate().isNotEmpty, what: 'the menu with "$entry"');
+      // Let it finish opening: rows further down take taps once shown.
+      await settle(tester);
+      await tester.tap(find.text(entry));
+      await settle(tester);
+    }
+
+    // ---- nothing on the clipboard ---------------------------------------------
+    pasteAnswer = null;
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await pumpUntil(tester, () => find.textContaining('Nothing to paste').evaluate().isNotEmpty, what: 'nothing to paste');
+
+    // ---- a copied file arrives whole, beside its namesake --------------------
+    pasteAnswer = {'path': '${library.path}/heron.png'};
+    String? snack() {
+      final bars = find.byType(SnackBar).evaluate();
+      if (bars.isEmpty) return null;
+      final texts = find.descendant(of: find.byWidget(bars.last.widget), matching: find.byType(Text)).evaluate();
+      return texts.map((e) => (e.widget as Text).data).join(' ');
+    }
+
+    await menuOn('heron.png', 'Paste into this folder');
+    await pumpUntil(tester, () => calls.where((c) => c == 'pasteSource').length == 2, what: 'the clipboard read from the menu');
+    final copied = File('${library.path}/heron (2).png');
+    await pumpUntil(tester, () => copied.existsSync() || (snack()?.contains('paste here') ?? false), what: 'the copy written');
+    expect(copied.existsSync(), isTrue, reason: snack());
+    await pumpUntil(tester, () => indexOf(state, 'heron (2).png') >= 0, what: 'the pasted copy listed');
+    expect(File('${library.path}/heron (2).png').readAsBytesSync(), File('${library.path}/heron.png').readAsBytesSync());
+    // A picture's bytes from a browser get a name of their own.
+    pasteAnswer = {'bytes': pngWithText(64, 64, 77, const {}), 'type': 'image/png'};
+    await menuOn('heron.png', 'Paste into this folder');
+    await pumpUntil(tester, () => names(state).any((n) => n.startsWith('pasted-')), what: 'the pasted picture');
+    final pasted = names(state).firstWhere((n) => n.startsWith('pasted-'));
+    expect(pasted, endsWith('.png'));
+
+    // ---- in a collection, it can be taken out ----------------------------------
+    final copy = state.items[indexOf(state, 'heron (2).png')];
+    await tester.runAsync(() => state.changeNotes(targets: [copy], add: ['Herons']));
+    state.applyFilter(exactTerm('collection', 'Herons'));
+    await pumpUntil(tester, () => names(state).join() == 'heron (2).png', what: 'the collection');
+    await menuOn('heron (2).png', 'Remove from "Herons"');
+    await pumpUntil(tester, () => state.items.isEmpty, what: 'out of the collection');
+    expect(File('${library.path}/heron (2).png').existsSync(), isTrue);
+    state.applySearch('');
+    await pumpUntil(tester, () => indexOf(state, 'heron (2).png') >= 0 && indexOf(state, pasted) >= 0, what: 'everything again');
+
+    // ---- deleted, after asking: to the trash ---------------------------------
+    trashAnswer = 'trashed';
+    await menuOn('heron (2).png', 'Delete image…');
+    expect(find.text('Move to trash'), findsOneWidget);
+    await screenshot(tester, boundary, '43-delete-image');
+    await tester.tap(find.text('Cancel'));
+    await settle(tester);
+    expect(calls, isNot(contains('trashFile')));
+    expect(File('${library.path}/heron (2).png').existsSync(), isTrue);
+    await menuOn('heron (2).png', 'Delete image…');
+    await tester.tap(find.byKey(const ValueKey('confirm-action')));
+    await pumpUntil(tester, () => indexOf(state, 'heron (2).png') < 0, what: 'trashed and forgotten');
+    expect(File('${library.path}/heron (2).png').existsSync(), isFalse);
+    expect(state.selected, isNotNull, reason: 'the selection moves to a neighbour');
+
+    // ---- where there is no trash, asked again, then gone for good ---------------
+    trashAnswer = 'unsupported';
+    state.select(indexOf(state, pasted));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('confirm-action')));
+    await settle(tester);
+    expect(find.text('Delete permanently'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('confirm-action')));
+    await pumpUntil(tester, () => indexOf(state, pasted) < 0, what: 'deleted for good');
+    expect(File('${library.path}/$pasted').existsSync(), isFalse);
+    await close(tester, state);
+  });
+
+  testWidgets('images or videos, and filters cleared from the button', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-type-videos')).evaluate().isNotEmpty, what: 'the filter panel');
+    await tester.tap(find.byKey(const ValueKey('filter-type-videos')));
+    await pumpUntil(tester, () => state.items.isEmpty, what: 'no videos here');
+    expect(state.query, 'type:video');
+    await tester.tap(find.byKey(const ValueKey('filter-type-images')));
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'all images');
+    expect(state.query, 'type:image');
+    await screenshot(tester, boundary, '44-images-or-videos');
+    await tester.tap(find.byKey(const ValueKey('filters-done')));
+    await settle(tester);
+
+    // A word typed alongside stays when the filters are cleared.
+    state.applySearch('fox type:image');
+    await pumpUntil(tester, () => names(state).every((n) => n.startsWith('fox')) && state.items.length >= 3, what: 'foxes only');
+    final button = find.byKey(const ValueKey('filter-button'));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+    await mouse.down(tester.getCenter(button));
+    await mouse.up();
+    await mouse.removePointer();
+    await settle(tester);
+    await tester.tap(find.text('Clear filters'));
+    await pumpUntil(tester, () => state.query == 'fox', what: 'the filters cleared');
+    // And a long press, on a touch screen, finds the same menu.
+    state.applySearch('fox type:video');
+    await pumpUntil(tester, () => state.items.isEmpty, what: 'filtered again');
+    await tester.longPress(button);
+    await settle(tester);
+    await tester.tap(find.text('Clear filters'));
+    await pumpUntil(tester, () => state.query == 'fox', what: 'cleared by touch');
+    // With nothing to clear there is no menu.
+    await tester.longPress(button);
+    await settle(tester);
+    expect(find.text('Clear filters'), findsNothing);
+    state.applySearch('');
+    await close(tester, state);
+  });
+
+  testWidgets('the remix panel keeps its controls steady', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    state.select(indexOf(state, 'fox_03.png'));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('remix-random')).evaluate().isNotEmpty, what: 'the remix panel');
+    await settle(tester);
+    final random = find.byKey(const ValueKey('remix-random'));
+    final before = tester.getSize(random);
+    await tester.tap(random);
+    await settle(tester);
+    expect(tester.getSize(random), before, reason: 'ticking it does not resize it');
+    await tester.tap(random);
+    await settle(tester);
+    expect(tester.getSize(random), before);
+    // Width and height on one line, in one box.
+    final width = tester.getRect(find.byKey(const ValueKey('remix-width')));
+    final height = tester.getRect(find.byKey(const ValueKey('remix-height')));
+    expect(width.center.dy, height.center.dy);
+    expect(height.left, greaterThan(width.right));
+    await screenshot(tester, boundary, '45-remix-controls');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    await close(tester, state);
+  });
+
+  testWidgets('side panels resize by their grips and snap shut past half their least', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    if (!state.leftOpen) state.toggleLeft();
+    state.setLeftWidth(320);
+    await settle(tester);
+    final grip = find.byKey(const ValueKey('resize-left'));
+    expect(grip, findsOneWidget);
+    await screenshot(tester, boundary, '46-resize-grips');
+
+    // Wider and narrower.
+    await tester.drag(grip, const Offset(60, 0));
+    await settle(tester);
+    expect(state.leftWidth, closeTo(380, 1));
+    // Past the least, it sticks there and stays open.
+    await tester.drag(grip, const Offset(-(380 - minLeftWidth) - 60, 0));
+    await settle(tester);
+    expect(state.leftOpen, isTrue);
+    expect(state.leftWidth, minLeftWidth);
+    // On past half of it, shut, and it will open at the size it had.
+    state.setLeftWidth(300);
+    await settle(tester);
+    await tester.drag(grip, const Offset(-(300 - minLeftWidth / 2) - 30, 0));
+    await settle(tester);
+    expect(state.leftOpen, isFalse);
+    expect(state.leftWidth, 300);
+    state.toggleLeft();
+    await settle(tester);
+
+    // The metadata panel, from the other side.
+    if (!state.rightOpen) state.toggleRight();
+    state.select(0);
+    await settle(tester);
+    final right = find.byKey(const ValueKey('resize-right'));
+    await tester.drag(right, Offset(state.rightWidth - minRightWidth / 2 + 30, 0));
+    await settle(tester);
+    expect(state.rightOpen, isFalse);
     await close(tester, state);
   });
 }
