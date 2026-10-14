@@ -13,6 +13,7 @@ const String _copyright = '© 2026 Joshua Hamilton Rufer';
 const String _githubUrl = 'https://github.com/JRufer';
 const String _websiteUrl = 'https://jrufer.com';
 const String _sourceUrl = 'https://github.com/JRufer/GenerativeView';
+const String _iconAsset = 'assets/icon.png';
 
 /// A project GenerativeView is built on or uses, credited on the About panel.
 class Credit {
@@ -88,7 +89,13 @@ const List<(String, List<Credit>)> credits = [
 
 /// The About panel: the app, who made it, its licence, and what it is built
 /// from.
-Future<void> showAbout(BuildContext context) {
+Future<void> showAbout(BuildContext context) async {
+  // Load the icon first, so the panel opens with it already drawn (a phone
+  // would otherwise show a blank space for a moment).
+  try {
+    await precacheImage(const AssetImage(_iconAsset), context);
+  } catch (_) {}
+  if (!context.mounted) return;
   return showPanel<void>(
     context,
     title: 'About',
@@ -137,7 +144,7 @@ class _AboutContentState extends State<AboutContent> {
         Center(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
-            child: Image.asset('assets/icon.png', width: 96, height: 96, filterQuality: FilterQuality.medium),
+            child: Image.asset(_iconAsset, width: 96, height: 96, filterQuality: FilterQuality.medium, gaplessPlayback: true),
           ),
         ),
         const SizedBox(height: 14),
@@ -287,7 +294,7 @@ class _AboutContentState extends State<AboutContent> {
         padding: const EdgeInsets.all(12),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: Image.asset('assets/icon.png', width: 64, height: 64),
+          child: Image.asset(_iconAsset, width: 64, height: 64),
         ),
       ),
       applicationLegalese: '$_copyright\nReleased under the MIT License.',

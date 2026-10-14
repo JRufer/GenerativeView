@@ -357,8 +357,12 @@ void main() {
     await settle(tester);
     await tester.tap(find.text('About GenerativeView'));
     await settle(tester);
-    await tester.runAsync(() => precacheImage(const AssetImage('assets/icon.png'), tester.element(find.byKey(const ValueKey<String>('about-panel')))));
-    await settle(tester);
+    // The icon is drawn, on every screen size.
+    await pumpUntil(
+      tester,
+      () => tester.widgetList<RawImage>(find.descendant(of: find.byKey(const ValueKey<String>('about-panel')), matching: find.byType(RawImage))).any((w) => w.image != null),
+      what: 'the app icon on the About panel',
+    );
     expect(find.text('Josh Rufer'), findsOneWidget);
     await screenshot(tester, boundary, '25-about-phone');
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -392,8 +396,12 @@ void main() {
     await settle(tester);
     await tester.tap(find.text('About GenerativeView'));
     await settle(tester);
-    await tester.runAsync(() => precacheImage(const AssetImage('assets/icon.png'), tester.element(find.byKey(const ValueKey<String>('about-panel')))));
-    await settle(tester);
+    // The icon is drawn, on every screen size.
+    await pumpUntil(
+      tester,
+      () => tester.widgetList<RawImage>(find.descendant(of: find.byKey(const ValueKey<String>('about-panel')), matching: find.byType(RawImage))).any((w) => w.image != null),
+      what: 'the app icon on the About panel',
+    );
     expect(find.text('GenerativeView'), findsWidgets);
     expect(find.text('Josh Rufer'), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('about-github')), findsOneWidget);
