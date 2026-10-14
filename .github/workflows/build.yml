@@ -139,7 +139,8 @@ jobs:
           test "$thumbs" -ge 5
       - name: Smoke-test the AppImage on Ubuntu 22.04 without mpv
         run: |
-          # The oldest system it supports, with only GTK and a display: the
+          # The oldest system it supports, with what any desktop has (GTK, sound,
+          # a display) and no mpv: the
           # AppImage must start on the libmpv it carries.
           mkdir -p "$RUNNER_TEMP/screens"
           docker run --rm \
@@ -147,7 +148,7 @@ jobs:
             ubuntu:22.04 bash -euc '
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -qq
-              apt-get install -y -qq --no-install-recommends libgtk-3-0 libegl1 libgl1 libgl1-mesa-dri xvfb xauth imagemagick >/dev/null
+              apt-get install -y -qq --no-install-recommends libgtk-3-0 libasound2 libpulse0 libegl1 libgl1 libgl1-mesa-dri xvfb xauth imagemagick >/dev/null
               if ldconfig -p | grep -q "libmpv\.so\.2 "; then echo "::error::libmpv is installed, so this proves nothing"; exit 1; fi
               cp -r /pictures /tmp/pictures
               export APPIMAGE_EXTRACT_AND_RUN=1 XDG_DATA_HOME=/tmp/data XDG_CACHE_HOME=/tmp/cache
