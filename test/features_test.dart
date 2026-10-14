@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -383,6 +384,56 @@ void main() {
     await settle(tester);
     await pumpUntil(tester, () => state.items.length == 2, what: 'its pictures');
     state.applySearch('');
+    await close(tester, state);
+  });
+
+  testWidgets('the mouse back and forward buttons', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    Future<void> click(int button) async {
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: button);
+      await mouse.down(const Offset(720, 450));
+      await mouse.up();
+      await mouse.removePointer();
+      await settle(tester);
+    }
+
+    if (state.leftOpen) state.toggleLeft();
+    if (state.rightOpen) state.toggleRight();
+    state.select(indexOf(state, 'fox_01.png'));
+    state.openFocus();
+    await tester.pump();
+
+    // Back from a picture: the grid, folders still hidden.
+    await click(kBackMouseButton);
+    expect(state.mode, ViewMode.grid);
+    expect(state.leftOpen, isFalse);
+    // Back in the grid: the folders open, and stay open.
+    await click(kBackMouseButton);
+    expect(state.leftOpen, isTrue);
+    await click(kBackMouseButton);
+    expect(state.leftOpen, isTrue);
+    expect(state.mode, ViewMode.grid);
+    // Forward: the generation data, on and off, in either view.
+    await click(kForwardMouseButton);
+    expect(state.rightOpen, isTrue);
+    state.openFocus();
+    await tester.pump();
+    await click(kForwardMouseButton);
+    expect(state.rightOpen, isFalse);
+
+    // With the remix panel up, neither button does anything.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+    await settle(tester);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('remix-prompt')).evaluate().isNotEmpty, what: 'the remix panel');
+    await click(kBackMouseButton);
+    await click(kForwardMouseButton);
+    expect(find.byKey(const ValueKey('remix-prompt')), findsOneWidget);
+    expect(state.mode, ViewMode.focus);
+    expect(state.rightOpen, isFalse);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    state.closeFocus();
     await close(tester, state);
   });
 
