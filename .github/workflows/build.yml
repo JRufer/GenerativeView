@@ -81,14 +81,14 @@ jobs:
           clip vp8-vorbis.webm -c:v libvpx -c:a libvorbis
           clip h264-flac.mkv -c:v libx264 -c:a flac
           clip av1-opus.mkv -c:v libaom-av1 -cpu-used 8 -c:a libopus
-          clip mpeg4-mp3.m4v -c:v mpeg4 -c:a libmp3lame
+          clip mpeg4-mp3.m4v -f mp4 -c:v mpeg4 -c:a libmp3lame
           clip prores-pcm.mov -c:v prores_ks -pix_fmt yuv422p10le -c:a pcm_s16le
           clip h264-alac.mov -c:v libx264 -c:a alac
           ffmpeg -v error -y -f lavfi -i testsrc2=duration=1:size=320x240:rate=12 -pix_fmt yuv420p -c:v libx264 "$clips/silent-h264.mp4"
           ls "$clips"
           set -o pipefail
           python3 tool/check-libmpv-bundle.py libmpv-bundle "$clips"/* 2>&1 | sed -E 's/^(Traceback|  File|[A-Za-z]+Error)/::error::\1/'
-          test "$(ls "$clips" | wc -l)" -ge 9 || { echo "::error::Too few clips could be made"; exit 1; }
+          test "$(ls "$clips" | wc -l)" -ge 11 || { echo "::error::Too few clips could be made"; exit 1; }
           echo "::notice::libmpv bundle: $(du -sh libmpv-bundle | cut -f1), $(ls libmpv-bundle | wc -l) files: $(ls libmpv-bundle | tr '\n' ' ')"
       - uses: actions/upload-artifact@v4
         with:

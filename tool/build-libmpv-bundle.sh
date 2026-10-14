@@ -115,11 +115,27 @@ excluded() {
 rm -rf "$out"
 mkdir -p "$out"
 cp "$lib" "$out/libmpv.so.2"
-LD_LIBRARY_PATH="$prefix/lib" ldd "$out/libmpv.so.2" | awk '/=> \// { print $1, $3 }' | while read -r name path; do
-  if excluded "$name"; then
-    continue
-  fi
-  cp -L "$path" "$out/$name"
+# Follow what each bundled library needs, but not through a library taken
+# from the system: what that one needs is the system's business.
+declare -A where
+while read -r name path; do where[$name]="$path"; done < <(
+  LD_LIBRARY_PATH="$prefix/lib" ldd "$out/libmpv.so.2" | awk '/=> \// { print $1, $3 }')
+queue=("$out/libmpv.so.2")
+while [ "${#queue[@]}" -gt 0 ]; do
+  current="${queue[0]}"
+  queue=("${queue[@]:1}")
+  for name in $(readelf -d "$current" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
+    if [ -e "$out/$name" ] || excluded "$name"; then
+      continue
+    fi
+    path="${where[$name]:-}"
+    if [ -z "$path" ]; then
+      echo "Cannot find $name, needed by $(basename "$current")" >&2
+      exit 1
+    fi
+    cp -L "$path" "$out/$name"
+    queue+=("$out/$name")
+  done
 done
 # Each finds the others beside it; nothing kept that only helps debugging.
 for f in "$out"/*.so*; do
