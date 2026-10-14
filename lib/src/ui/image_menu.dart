@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../core/models.dart';
 import '../platform.dart';
 import 'context_menu.dart';
+import 'filter_sheet.dart' show FilterSet;
 import 'meta_panel.dart';
 import 'notes_widgets.dart';
 import 'remix_dialog.dart';
@@ -19,20 +20,10 @@ Future<void> showImageMenu(
   MediaItem item,
   Offset position,
 ) async {
-  // The collection being looked at, if this picture is in it: the menu can
-  // take it out again.
-  String? shownCollection;
-  try {
-    final note = await state.notes(item);
-    final query = state.query.toLowerCase();
-    for (final name in note.collections) {
-      if (query.contains(exactTerm('collection', name).toLowerCase())) {
-        shownCollection = name;
-        break;
-      }
-    }
-  } catch (_) {}
-  if (!context.mounted) return;
+  // The collection being looked at, if the grid is narrowed to one: every
+  // picture shown is in it, so the menu can take this one out again.
+  final collections = FilterSet.parse(state.query).chosen['collection'] ?? const <String>{};
+  final shownCollection = collections.length == 1 ? collections.first : null;
   final choice = await showContextMenu<String>(context, position, [
     MenuEntry(
       'file',

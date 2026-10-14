@@ -649,8 +649,18 @@ void main() {
 
     // ---- a copied file arrives whole, beside its namesake --------------------
     pasteAnswer = {'path': '${library.path}/heron.png'};
+    String? snack() {
+      final bars = find.byType(SnackBar).evaluate();
+      if (bars.isEmpty) return null;
+      final texts = find.descendant(of: find.byWidget(bars.last.widget), matching: find.byType(Text)).evaluate();
+      return texts.map((e) => (e.widget as Text).data).join(' ');
+    }
+
     await menuOn('heron.png', 'Paste into this folder');
-    await pumpUntil(tester, () => indexOf(state, 'heron (2).png') >= 0, what: 'the pasted copy');
+    final copied = File('${library.path}/heron (2).png');
+    await pumpUntil(tester, () => copied.existsSync() || (snack()?.contains('paste here') ?? false), what: 'the copy written');
+    expect(copied.existsSync(), isTrue, reason: snack());
+    await pumpUntil(tester, () => indexOf(state, 'heron (2).png') >= 0, what: 'the pasted copy listed');
     expect(File('${library.path}/heron (2).png').readAsBytesSync(), File('${library.path}/heron.png').readAsBytesSync());
     // A picture's bytes from a browser get a name of their own.
     pasteAnswer = {'bytes': pngWithText(64, 64, 77, const {}), 'type': 'image/png'};
