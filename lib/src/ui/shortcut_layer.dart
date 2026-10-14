@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -56,6 +59,70 @@ class RouteCounter extends NavigatorObserver {
       depth--;
 }
 
+/// The mouse's back and forward buttons.
+///
+/// Back leaves the focus view for the grid, and in the grid opens the
+/// folder panel; forward shows or hides the generation data. Neither does
+/// anything while a panel or dialog (the remix panel among them) is open.
+///
+/// Android also turns a mouse's back button into a system back, which at
+/// the grid would close the app; that one is swallowed here, as a binding
+/// observer registered ahead of the app's own navigator.
+class MouseNavigation with WidgetsBindingObserver {
+  MouseNavigation({required this.state, required this.routes});
+
+  final AppState state;
+  final RouteCounter routes;
+
+  Timer? _swallow;
+
+  void attach() => WidgetsBinding.instance.addObserver(this);
+
+  void detach() {
+    WidgetsBinding.instance.removeObserver(this);
+    _swallow?.cancel();
+  }
+
+  /// A pointer went down; act if it was one of the side buttons.
+  void onPointerDown(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.mouse) return;
+    final back = event.buttons & kBackMouseButton != 0;
+    final forward = event.buttons & kForwardMouseButton != 0;
+    if (!back && !forward) return;
+    // The system back Android sends for this press comes on release.
+    if (back) {
+      _swallow?.cancel();
+      _swallow = Timer(const Duration(seconds: 2), () => _swallow = null);
+    }
+    // The home page is route one; anything above it, such as the remix
+    // panel, owns the window.
+    if (routes.depth > 1) return;
+    if (back) {
+      this.back();
+    } else {
+      this.forward();
+    }
+  }
+
+  void back() {
+    if (state.mode == ViewMode.focus) {
+      state.closeFocus();
+    } else if (!state.leftOpen) {
+      state.toggleLeft();
+    }
+  }
+
+  void forward() => state.toggleRight();
+
+  @override
+  Future<bool> didPopRoute() async {
+    if (_swallow == null) return false;
+    _swallow!.cancel();
+    _swallow = null;
+    return true;
+  }
+}
+
 /// Keyboard shortcuts for the whole window.
 ///
 /// This sits above the navigator, so whatever holds keyboard focus — a text
@@ -68,11 +135,13 @@ class ShortcutLayer extends StatelessWidget {
     super.key,
     required this.state,
     required this.routes,
+    required this.mouse,
     required this.child,
   });
 
   final AppState state;
   final RouteCounter routes;
+  final MouseNavigation mouse;
   final Widget child;
 
   bool get _typing {
@@ -284,11 +353,15 @@ class ShortcutLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      canRequestFocus: false,
-      skipTraversal: true,
-      onKeyEvent: (node, event) => _onKey(context, event),
-      child: child,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: mouse.onPointerDown,
+      child: Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (node, event) => _onKey(context, event),
+        child: child,
+      ),
     );
   }
 }

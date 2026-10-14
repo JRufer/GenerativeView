@@ -27,6 +27,8 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
       ('Home  End  PgUp  PgDn', 'Jump'),
       ('Enter  or  Space', 'Open the picture / back to the grid'),
       ('Esc', 'Back, close a panel, or clear the selection'),
+      ('Mouse back', 'Back to the grid; in the grid, show the folders'),
+      ('Mouse forward', 'Show or hide the generation data'),
       ('Ctrl +  /  Ctrl −', 'Bigger or smaller tiles'),
       ('C', 'Tiles cropped to fill or whole'),
     ],

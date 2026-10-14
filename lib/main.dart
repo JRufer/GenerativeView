@@ -67,6 +67,24 @@ class GenerativeViewApp extends StatefulWidget {
 
 class _GenerativeViewAppState extends State<GenerativeViewApp> {
   final RouteCounter _routes = RouteCounter();
+  MouseNavigation? _mouse;
+
+  @override
+  void initState() {
+    super.initState();
+    // Before the app's navigator registers its own observer, so a back
+    // that came from the mouse is caught first.
+    final state = widget.state;
+    if (state != null) {
+      _mouse = MouseNavigation(state: state, routes: _routes)..attach();
+    }
+  }
+
+  @override
+  void dispose() {
+    _mouse?.detach();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +97,7 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
       navigatorObservers: [_routes],
       builder: (context, child) => state == null
           ? child!
-          : ShortcutLayer(state: state, routes: _routes, child: child!),
+          : ShortcutLayer(state: state, routes: _routes, mouse: _mouse!, child: child!),
       home: state == null
           ? _StartupFailure(failure: widget.failure)
           : HomePage(state: state),
