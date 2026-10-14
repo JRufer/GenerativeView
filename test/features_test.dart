@@ -363,6 +363,7 @@ void main() {
       () => tester.widgetList<RawImage>(find.descendant(of: find.byKey(const ValueKey<String>('about-panel')), matching: find.byType(RawImage))).any((w) => w.image != null),
       what: 'the app icon on the About panel',
     );
+    await settle(tester);
     expect(find.text('Josh Rufer'), findsOneWidget);
     await screenshot(tester, boundary, '25-about-phone');
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -402,6 +403,7 @@ void main() {
       () => tester.widgetList<RawImage>(find.descendant(of: find.byKey(const ValueKey<String>('about-panel')), matching: find.byType(RawImage))).any((w) => w.image != null),
       what: 'the app icon on the About panel',
     );
+    await settle(tester);
     expect(find.text('GenerativeView'), findsWidgets);
     expect(find.text('Josh Rufer'), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('about-github')), findsOneWidget);
