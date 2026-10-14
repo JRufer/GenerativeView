@@ -174,11 +174,13 @@ Every merge to `main` is built, tested and published under [Releases](https://gi
 
 - **Android**: `GenerativeView-arm64-v8a.apk` for tablets and phones. Sideload it.
 
-**Linux needs** GTK 3, and for video `mpv` (playback) and `ffmpeg` (video thumbnails). On CachyOS / Arch:
+**Linux**: the AppImage runs on Ubuntu 22.04, Debian 12, Arch / CachyOS and anything newer (x86_64), on Wayland or X11. It needs GTK 3, which desktops already have, and `ffmpeg` for video thumbnails. It plays video with the system's `mpv` library when there is one and brings its own when there isn't. The `.tar.gz` folder doesn't bring one, so with it install `mpv` too. On CachyOS / Arch:
 
 ```sh
 sudo pacman -S --needed gtk3 mpv ffmpeg
 ```
+
+On Ubuntu / Debian: `sudo apt install ffmpeg` (and `mpv` for the `.tar.gz`).
 
 **Android**: on first launch tap **Allow access** and turn on "All files access" for GenerativeView; it needs real folder paths to scan and watch, which Android only gives through that permission. (That permission is also why this is a sideload app rather than a Play Store one.)
 

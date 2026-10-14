@@ -5,8 +5,12 @@
 #   tool/build-appimage.sh [path/to/bundle] [output.AppImage]
 #
 # The AppImage carries the app, the Flutter engine and the Rust core. It
-# still uses the system's GTK 3 and, for video, libmpv (the `mpv` package)
-# and `ffmpeg`.
+# uses the system's GTK 3, and `ffmpeg` for video thumbnails.
+#
+# Set MPV_BUNDLE to a folder made by tool/build-libmpv-bundle.sh to carry a
+# libmpv too, used only when the system has no libmpv.so.2 of its own (no
+# mpv installed, or Ubuntu 22.04's older one). Without it, the `mpv` package
+# is needed: the app's video player loads it at startup.
 #
 # Needs `appimagetool` on the PATH, or set APPIMAGETOOL to its location; if
 # neither is there it is downloaded from the AppImage project's releases.
@@ -29,9 +33,30 @@ cp -a "$bundle" "$appdir/bundle"
 rm -f "$appdir/bundle/install.sh"
 cp "$root/assets/icon.png" "$appdir/generativeview.png"
 cp "$root/linux/packaging/generativeview.desktop" "$appdir/generativeview.desktop"
+if [ -n "${MPV_BUNDLE:-}" ]; then
+  test -f "$MPV_BUNDLE/libmpv.so.2" || { echo "No libmpv.so.2 in $MPV_BUNDLE" >&2; exit 1; }
+  cp -a "$MPV_BUNDLE" "$appdir/mpv"
+fi
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh
 here="$(dirname "$(readlink -f "$0")")"
+# The system's libmpv if it has one; the one carried here if not.
+if [ -d "$here/mpv" ]; then
+  have=""
+  for ldconfig in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+    if command -v "$ldconfig" >/dev/null 2>&1; then
+      "$ldconfig" -p 2>/dev/null | grep -q 'libmpv\.so\.2 ' && have=1
+      break
+    fi
+  done
+  for dir in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/local/lib; do
+    [ -e "$dir/libmpv.so.2" ] && have=1
+  done
+  if [ -z "$have" ]; then
+    LD_LIBRARY_PATH="$here/mpv${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH
+  fi
+fi
 exec "$here/bundle/generativeview" "$@"
 RUN
 chmod +x "$appdir/AppRun"
