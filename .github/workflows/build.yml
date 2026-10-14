@@ -252,6 +252,22 @@ jobs:
           fi
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
           echo "ANDROID_KEYSTORE_PASSWORD=$password" >> "$GITHUB_ENV"
+      - name: Install the NDK Flutter builds with
+        run: |
+          # Gradle would fetch it on its own, but a broken download there
+          # fails the whole build ("Error on ZipFile unknown archive"); here
+          # it gets a few tries.
+          ndk=$(grep -rhoE 'val ndkVersion: String = "[0-9.]+"' "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/" | head -1 | grep -oE '[0-9][0-9.]+')
+          test -n "$ndk"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for attempt in 1 2 3 4; do
+            if [ -f "$ANDROID_HOME/ndk/$ndk/source.properties" ]; then break; fi
+            echo "Installing NDK $ndk (try $attempt)"
+            rm -rf "$ANDROID_HOME/ndk/$ndk"
+            yes | "$sdkmanager" --install "ndk;$ndk" >/dev/null || true
+            [ -f "$ANDROID_HOME/ndk/$ndk/source.properties" ] || sleep 20
+          done
+          test -f "$ANDROID_HOME/ndk/$ndk/source.properties" || { echo "::error::Could not install NDK $ndk"; exit 1; }
       - name: Build APKs
         run: |
           flutter pub get
@@ -291,6 +307,22 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Install the NDK Flutter builds with
+        run: |
+          # Gradle would fetch it on its own, but a broken download there
+          # fails the whole build ("Error on ZipFile unknown archive"); here
+          # it gets a few tries.
+          ndk=$(grep -rhoE 'val ndkVersion: String = "[0-9.]+"' "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/" | head -1 | grep -oE '[0-9][0-9.]+')
+          test -n "$ndk"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for attempt in 1 2 3 4; do
+            if [ -f "$ANDROID_HOME/ndk/$ndk/source.properties" ]; then break; fi
+            echo "Installing NDK $ndk (try $attempt)"
+            rm -rf "$ANDROID_HOME/ndk/$ndk"
+            yes | "$sdkmanager" --install "ndk;$ndk" >/dev/null || true
+            [ -f "$ANDROID_HOME/ndk/$ndk/source.properties" ] || sleep 20
+          done
+          test -f "$ANDROID_HOME/ndk/$ndk/source.properties" || { echo "::error::Could not install NDK $ndk"; exit 1; }
       - name: Build Rust core for the emulator
         run: |
           rustup target add x86_64-linux-android
