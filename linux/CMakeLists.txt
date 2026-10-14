@@ -39,6 +39,16 @@ endif()
 # Be cautious about adding new options here, as plugins use this function by
 # default. In most cases, you should add new options to specific targets instead
 # of modifying this function.
+# Build against the GLib of the oldest system the app supports (Ubuntu 22.04,
+# GLib 2.72), whatever the build machine has. Newer GLib headers otherwise
+# switch common macros to functions older systems lack (2.80's
+# g_once_init_enter_pointer), and the app won't start there. Applies to the
+# plugins too, which are added below this directory.
+add_compile_definitions(
+  GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72
+  GLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72
+)
+
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_14)
   target_compile_options(${TARGET} PRIVATE -Wall -Werror)
