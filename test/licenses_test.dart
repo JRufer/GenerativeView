@@ -22,7 +22,7 @@ void main() {
     final entries = await read('assets/licenses/rust.txt.gz');
     final packages = packagesOf(entries);
     final cargo = File('core/Cargo.toml').readAsStringSync();
-    final deps = RegExp(r'^\[dependencies\]\n((?:[^\[].*\n?)*)', multiLine: true).firstMatch(cargo)!.group(1)!;
+    final deps = RegExp(r'^\[dependencies\]\n((?:[^\[\n].*\n|\n)*)', multiLine: true).firstMatch(cargo)!.group(1)!;
     for (final line in deps.split('\n')) {
       final name = RegExp(r'^([A-Za-z0-9_-]+)\s*=').firstMatch(line)?.group(1);
       if (name == null) continue;
