@@ -22,6 +22,8 @@ import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/prompt_weights.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
+import 'package:generativeview/src/licenses.dart';
+import 'package:generativeview/src/ui/about_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
@@ -348,6 +350,20 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('about, on a phone-sized screen', (tester) async {
+    final state = await launch(tester, size: const Size(412, 915));
+    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await tester.tap(find.byKey(const ValueKey<String>('more-menu')));
+    await settle(tester);
+    await tester.tap(find.text('About GenerativeView'));
+    await settle(tester);
+    expect(find.text('Josh Rufer'), findsOneWidget);
+    await screenshot(tester, boundary, '25-about-phone');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    await close(tester, state);
+  });
+
   testWidgets('the keyboard shortcuts list, and the best rated', (tester) async {
     final state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
@@ -367,6 +383,48 @@ void main() {
     expect(find.text('Keyboard shortcuts'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await settle(tester);
+
+    // ---- about, from the More menu -------------------------------------------
+    registerLicenses();
+    await tester.tap(find.byKey(const ValueKey<String>('more-menu')));
+    await settle(tester);
+    await tester.tap(find.text('About GenerativeView'));
+    await settle(tester);
+    expect(find.text('GenerativeView'), findsWidgets);
+    expect(find.text('Josh Rufer'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('about-github')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('about-website')), findsOneWidget);
+    await screenshot(tester, boundary, '25-about');
+    // Every credit is listed, with somewhere to go.
+    final aboutList = find.byKey(const ValueKey<String>('about-panel'));
+    for (final (_, list) in credits) {
+      for (final c in list) {
+        expect(c.url, startsWith('https://'), reason: c.name);
+        await tester.scrollUntilVisible(find.text(c.name), 200, scrollable: find.descendant(of: aboutList, matching: find.byType(Scrollable)).first);
+      }
+    }
+    await settle(tester);
+    await screenshot(tester, boundary, '26-about-credits');
+    // The MIT licence text.
+    await tester.drag(find.descendant(of: aboutList, matching: find.byType(Scrollable)).first, const Offset(0, 4000));
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('about-mit')));
+    await settle(tester);
+    expect(find.textContaining('Permission is hereby granted'), findsOneWidget);
+    expect(find.textContaining('Joshua Hamilton Rufer'), findsWidgets);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    // The licences page carries the Rust crates and native libraries too.
+    await tester.tap(find.byKey(const ValueKey<String>('about-licences')));
+    await settle(tester);
+    await pumpUntil(tester, () => find.textContaining('rusqlite').evaluate().isNotEmpty, what: 'the licences page');
+    expect(find.textContaining('mpv'), findsWidgets);
+    await screenshot(tester, boundary, '27-licences');
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await settle(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    expect(find.byKey(const ValueKey<String>('about-panel')), findsNothing);
 
     // ---- best rated, on the usage page ---------------------------------------
     await tester.tap(find.byTooltip('Usage stats'));

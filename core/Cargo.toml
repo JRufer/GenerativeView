@@ -2,6 +2,9 @@
 name = "gvcore"
 version = "0.1.0"
 edition = "2021"
+authors = ["Joshua Hamilton Rufer"]
+license = "MIT"
+repository = "https://github.com/JRufer/GenerativeView"
 description = "GenerativeView core: metadata extraction, search index, thumbnails"
 publish = false
 

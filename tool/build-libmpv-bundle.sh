@@ -80,16 +80,20 @@ for pc in "$prefix"/lib/pkgconfig/lib*_gv.pc; do
 done
 
 # --- libmpv alone: no player, no scripting ---------------------------------
+# Built as LGPL (-Dgpl=false), like the FFmpeg above (no --enable-gpl), so the
+# app can be released under MIT with these beside it as shared libraries.
+# None of the parts the LGPL build leaves out (X11 output, OSS, DVD, CD...)
+# are used here anyway.
 # OpenGL rendering through any context (what media_kit draws with), sound
 # through PulseAudio/PipeWire or ALSA. No hardware decoding, which would tie
 # it to the system's driver libraries.
 git clone -q --depth 1 --branch "$mpv_version" https://github.com/mpv-player/mpv.git "$work/mpv"
 meson setup "$work/mpv-build" "$work/mpv" \
   --buildtype=release --prefix=/usr \
-  -Dlibmpv=true -Dcplayer=false -Dtests=false \
+  -Dlibmpv=true -Dcplayer=false -Dtests=false -Dgpl=false \
   -Dlua=disabled -Djavascript=disabled -Dmanpage-build=disabled \
   -Dgl=enabled -Dplain-gl=enabled -Degl=enabled -Dx11=disabled -Dwayland=disabled -Ddrm=disabled \
-  -Dpulse=enabled -Dalsa=enabled -Dpipewire=disabled -Djack=disabled \
+  -Dpulse=enabled -Dalsa=enabled -Dpipewire=disabled -Djack=disabled -Doss-audio=disabled \
   -Dvaapi=disabled -Dvdpau=disabled -Dlibplacebo=disabled -Dlibavdevice=disabled \
   -Dlibarchive=disabled -Dlibbluray=disabled -Ddvdnav=disabled -Dcdda=disabled -Ddvbin=disabled \
   -Duchardet=disabled -Drubberband=disabled -Dlcms2=disabled -Dzimg=disabled \
@@ -142,6 +146,47 @@ for f in "$out"/*.so*; do
   chmod u+w "$f"
   strip --strip-unneeded "$f"
   patchelf --set-rpath '$ORIGIN' "$f"
+done
+
+# --- licences ---------------------------------------------------------------
+# Everything bundled goes with its licence: the upstream licence files of what
+# is built here, and the Debian copyright file of each library taken from the
+# system.
+lic="$out/licenses"
+mkdir -p "$lic"
+cp "$work/mpv/LICENSE.LGPL" "$lic/mpv-LICENSE.LGPL"
+cp "$work/mpv/Copyright" "$lic/mpv-Copyright"
+cp "$work/ffmpeg/COPYING.LGPLv2.1" "$lic/ffmpeg-COPYING.LGPLv2.1"
+cp "$work/ffmpeg/LICENSE.md" "$lic/ffmpeg-LICENSE.md"
+cp "$work/dav1d/COPYING" "$lic/dav1d-COPYING"
+{
+  echo "libmpv (mpv $mpv_version, built with -Dgpl=false: LGPL-2.1-or-later),"
+  echo "FFmpeg $ffmpeg_version (built without --enable-gpl: LGPL-2.1-or-later) and"
+  echo "dav1d $dav1d_version (BSD-2-Clause), built from the upstream sources by"
+  echo "tool/build-libmpv-bundle.sh in https://github.com/JRufer/GenerativeView:"
+  echo "  https://github.com/mpv-player/mpv/tree/$mpv_version"
+  echo "  https://github.com/FFmpeg/FFmpeg/tree/$ffmpeg_version"
+  echo "  https://github.com/videolan/dav1d/tree/$dav1d_version"
+  echo "These are shared libraries that may be replaced with your own builds."
+  echo
+  echo "Libraries taken from Ubuntu 22.04, with their packages:"
+} > "$lic/README"
+for f in "$out"/*.so*; do
+  name="$(basename "$f")"
+  [ "$name" = libmpv.so.2 ] && continue
+  case "$name" in lib*_gv.so*) continue ;; esac
+  path="${where[$name]:-}"
+  [ -n "$path" ] || continue
+  pkg="$(dpkg -S "$(readlink -f "$path")" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+  [ -n "$pkg" ] || pkg="$(dpkg -S "$path" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+  # Merged /usr: the package may list it under the other half of the link.
+  [ -n "$pkg" ] || pkg="$(dpkg -S "*/$(basename "$(readlink -f "$path")")" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+  if [ -z "$pkg" ] || [ ! -f "/usr/share/doc/$pkg/copyright" ]; then
+    echo "No licence found for bundled $name" >&2
+    exit 1
+  fi
+  echo "  $name: $pkg" >> "$lic/README"
+  cp "/usr/share/doc/$pkg/copyright" "$lic/$pkg-copyright"
 done
 
 echo "Bundled into $out:"

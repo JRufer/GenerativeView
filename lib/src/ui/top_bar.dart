@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import 'about_panel.dart';
 import 'context_menu.dart';
 import 'filter_sheet.dart';
 import 'remix_dialog.dart';
@@ -1006,7 +1007,7 @@ class _FilterButton extends StatelessWidget {
 }
 
 /// The rest: following new pictures, where the generation servers are,
-/// and the keyboard shortcuts.
+/// the keyboard shortcuts, and about the app.
 class _MoreMenu extends StatelessWidget {
   const _MoreMenu({required this.state});
   final AppState state;
@@ -1040,6 +1041,8 @@ class _MoreMenu extends StatelessWidget {
             openBackendSettings(context, state);
           case 'keys':
             showShortcuts(context);
+          case 'about':
+            showAbout(context);
         }
       },
       itemBuilder: (context) => [
@@ -1047,6 +1050,8 @@ class _MoreMenu extends StatelessWidget {
         const PopupMenuDivider(height: 8),
         item('servers', Icons.dns_outlined, 'Generation servers…'),
         item('keys', Icons.keyboard_outlined, 'Keyboard shortcuts (?)'),
+        const PopupMenuDivider(height: 8),
+        item('about', Icons.info_outline, 'About GenerativeView'),
       ],
       child: SizedBox(
         width: _barButton,
