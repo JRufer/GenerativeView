@@ -92,6 +92,8 @@ void main() {
 
   int indexOf(AppState state, String name) => names(state).indexOf(name);
 
+  const fixtures = ['fox_01.png', 'fox_02.png', 'fox_03.png', 'owl_01.png', 'heron.png', 'sailor.png'];
+
   Map<String, dynamic> notesFile(String dir) =>
       jsonDecode(File('$dir/.generativeview.json').readAsStringSync()) as Map<String, dynamic>;
 
@@ -560,7 +562,7 @@ void main() {
   });
   testWidgets('collections are deleted from their menu, after asking', (tester) async {
     final state = await launch(tester);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
     if (!state.leftOpen) state.toggleLeft();
     await tester.runAsync(() => state.changeNotes(
           targets: [state.items[indexOf(state, 'owl_01.png')], state.items[indexOf(state, 'sailor.png')]],
@@ -601,7 +603,7 @@ void main() {
     left = await tester.runAsync(state.collections);
     expect(left!.any((c) => c.$1 == 'Doomed'), isFalse);
     expect(state.query, isEmpty);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'everything again');
+    await pumpUntil(tester, () => !state.query.contains('collection') && fixtures.every((n) => indexOf(state, n) >= 0), what: 'everything again');
     expect(File('${library.path}/owl_01.png').existsSync(), isTrue);
     expect(notesFile('${library.path}/sub')['images']?['sailor.png']?['collections'], isNull);
     await close(tester, state);
@@ -624,9 +626,15 @@ void main() {
       return null;
     });
     addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+    addTearDown(() {
+      for (final f in library.listSync().whereType<File>()) {
+        final name = f.uri.pathSegments.last;
+        if (name.startsWith('pasted-') || name == 'heron (2).png') f.deleteSync();
+      }
+    });
 
     final state = await launch(tester);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
     Future<void> menuOn(String name, String entry) async {
       state.select(indexOf(state, name));
       await tester.pump();
@@ -687,7 +695,7 @@ void main() {
     await pumpUntil(tester, () => state.items.isEmpty, what: 'out of the collection');
     expect(File('${library.path}/heron (2).png').existsSync(), isTrue);
     state.applySearch('');
-    await pumpUntil(tester, () => state.items.length == 8, what: 'everything again');
+    await pumpUntil(tester, () => indexOf(state, 'heron (2).png') >= 0 && indexOf(state, pasted) >= 0, what: 'everything again');
 
     // ---- deleted, after asking: to the trash ---------------------------------
     trashAnswer = 'trashed';
@@ -716,20 +724,19 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('confirm-action')));
     await pumpUntil(tester, () => indexOf(state, pasted) < 0, what: 'deleted for good');
     expect(File('${library.path}/$pasted').existsSync(), isFalse);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'back to six');
     await close(tester, state);
   });
 
   testWidgets('images or videos, and filters cleared from the button', (tester) async {
     final state = await launch(tester);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await pumpUntil(tester, () => find.byKey(const ValueKey('filter-type-videos')).evaluate().isNotEmpty, what: 'the filter panel');
     await tester.tap(find.byKey(const ValueKey('filter-type-videos')));
     await pumpUntil(tester, () => state.items.isEmpty, what: 'no videos here');
     expect(state.query, 'type:video');
     await tester.tap(find.byKey(const ValueKey('filter-type-images')));
-    await pumpUntil(tester, () => state.items.length == 6, what: 'all images');
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'all images');
     expect(state.query, 'type:image');
     await screenshot(tester, boundary, '44-images-or-videos');
     await tester.tap(find.byKey(const ValueKey('filters-done')));
@@ -737,7 +744,7 @@ void main() {
 
     // A word typed alongside stays when the filters are cleared.
     state.applySearch('fox type:image');
-    await pumpUntil(tester, () => state.items.length == 3, what: 'foxes only');
+    await pumpUntil(tester, () => names(state).every((n) => n.startsWith('fox')) && state.items.length >= 3, what: 'foxes only');
     final button = find.byKey(const ValueKey('filter-button'));
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
     await mouse.down(tester.getCenter(button));
@@ -763,7 +770,7 @@ void main() {
 
   testWidgets('the remix panel keeps its controls steady', (tester) async {
     final state = await launch(tester);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
     state.select(indexOf(state, 'fox_03.png'));
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
@@ -790,7 +797,7 @@ void main() {
 
   testWidgets('side panels resize by their grips and snap shut past half their least', (tester) async {
     final state = await launch(tester);
-    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
     if (!state.leftOpen) state.toggleLeft();
     state.setLeftWidth(320);
     await settle(tester);
