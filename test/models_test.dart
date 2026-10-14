@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/src/core/models.dart';
+import 'package:generativeview/src/core/native_core.dart';
+import 'package:generativeview/src/platform.dart';
 
 /// Build a packed query result the way `core/src/db.rs` does.
 Uint8List pack(
@@ -136,5 +139,133 @@ void main() {
     expect(GenInfo.sourceLabel('invokeai'), 'InvokeAI');
     expect(GenInfo.kindLabel('clip'), 'Text encoder');
     expect(GenInfo.kindLabel('wan_t5_encoder'), 'Wan t5 encoder');
+  });
+
+  test('cross-platform path joining normalizes Windows and Unix separators', () {
+    expect(joinMediaPath('/out', 'a.png'), '/out/a.png');
+    expect(joinMediaPath('/', 'a.png'), '/a.png');
+    expect(joinMediaPath(r'C:\', 'a.png'), 'C:/a.png');
+    expect(joinMediaPath('C:/', 'a.png'), 'C:/a.png');
+    expect(
+      joinMediaPath(r'C:\Users\josh\ComfyUI\output', '0001.png'),
+      'C:/Users/josh/ComfyUI/output/0001.png',
+    );
+    expect(
+      joinMediaPath(r'D:\renders\', 'clip.mp4'),
+      'D:/renders/clip.mp4',
+    );
+  });
+
+  test('NativeCore.resolveLibraryPath selects platform binary or override', () {
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'linux', environment: {}),
+      'libgvcore.so',
+    );
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'android', environment: {}),
+      'libgvcore.so',
+    );
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'windows', environment: {}),
+      'gvcore.dll',
+    );
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'macos', environment: {}),
+      'libgvcore.dylib',
+    );
+    expect(
+      NativeCore.resolveLibraryPath(
+        operatingSystem: 'windows',
+        environment: {'GVCORE_LIB': r'C:\custom\gvcore.dll'},
+      ),
+      r'C:\custom\gvcore.dll',
+    );
+  });
+
+test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
+    final linuxCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'linux');
+    expect(linuxCmd?.executable, 'xdg-open');
+    expect(linuxCmd?.arguments, ['https://civitai.com/models/1']);
+
+    final macCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'macos');
+    expect(macCmd?.executable, 'open');
+    expect(macCmd?.arguments, ['https://civitai.com/models/1']);
+
+    final winCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'windows');
+    expect(winCmd?.executable, 'rundll32');
+    expect(winCmd?.arguments, ['url.dll,FileProtocolHandler', 'https://civitai.com/models/1']);
+    expect(
+      desktopUrlCommand('file:///etc/passwd', operatingSystem: 'linux'),
+      isNull,
+    );
+
+    expect(
+      isPrimaryShortcutModifier(
+        isControlPressed: false,
+        isMetaPressed: true,
+        operatingSystem: 'macos',
+      ),
+      isTrue,
+    );
+    expect(
+      isPrimaryShortcutModifier(
+        isControlPressed: true,
+        isMetaPressed: false,
+        operatingSystem: 'macos',
+      ),
+      isFalse,
+    );
+    expect(
+      isPrimaryShortcutModifier(
+        isControlPressed: true,
+        isMetaPressed: false,
+        operatingSystem: 'windows',
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('generativeview/media MethodChannel contract handles all outcomes', (tester) async {
+    const channel = MethodChannel('generativeview/media');
+    String? nextTrashReply = 'trashed';
+
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'copyFile':
+          return (call.arguments as Map)['path'] == 'C:/pics/a.png';
+        case 'readCopiedFile':
+          return Uint8List.fromList([1, 2, 3, 4]);
+        case 'pasteSource':
+          return <String, Object?>{
+            'path': 'C:/pics/a.png',
+            'type': 'image/png',
+            'name': 'a.png',
+          };
+        case 'trashFile':
+          return nextTrashReply;
+        default:
+          return null;
+      }
+    });
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
+    });
+
+    expect(await copyFileToClipboard('C:/pics/a.png'), isTrue);
+    expect(await copyFileToClipboard('C:/pics/other.png'), isFalse);
+    expect(await readCopiedFile(), Uint8List.fromList([1, 2, 3, 4]));
+
+    final paste = await readPasteSource();
+    expect(paste?.path, 'C:/pics/a.png');
+    expect(paste?.type, 'image/png');
+    expect(paste?.name, 'a.png');
+
+    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.trashed, null));
+    nextTrashReply = 'cancelled';
+    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.cancelled, null));
+    nextTrashReply = 'unsupported';
+    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.unsupported, null));
+    nextTrashReply = 'failed: permission denied';
+    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.failed, 'permission denied'));
   });
 }

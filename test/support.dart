@@ -5,7 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-
+import 'package:generativeview/src/core/native_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -15,7 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 String coreLibraryPath() {
   final fromEnv = Platform.environment['GVCORE_LIB'];
   if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
-  return '${Directory.current.path}/core/target/release/libgvcore.so';
+  return '${Directory.current.path}/core/target/release/${NativeCore.defaultLibraryPath()}';
 }
 
 final List<int> _crcTable = List<int>.generate(256, (n) {

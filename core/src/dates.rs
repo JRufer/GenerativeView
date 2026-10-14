@@ -9,15 +9,49 @@ pub type Day = i32;
 
 static TZ: Once = Once::new();
 
+#[cfg(unix)]
 extern "C" {
-    // In every C library we build against, but not in the `libc` crate's
-    // bindings for all of them.
+    // In every POSIX C library we build against, but not in the `libc`
+    // crate's bindings for all of them.
     fn tzset();
 }
 
+#[cfg(windows)]
+extern "C" {
+    // Windows Universal CRT (ucrtbase) exposes `_tzset` and `localtime_s`
+    // (with `(tm*, time_t*)` parameter order) instead of POSIX `tzset` and
+    // `localtime_r`.
+    fn _tzset();
+    fn localtime_s(tm: *mut libc::tm, time: *const libc::time_t) -> libc::c_int;
+}
+
 fn init_zone() {
-    // SAFETY: `tzset` only reads the environment and the zone database.
+    // SAFETY: `tzset` / `_tzset` only reads the environment and zone database.
+    #[cfg(unix)]
     TZ.call_once(|| unsafe { tzset() });
+    #[cfg(windows)]
+    TZ.call_once(|| unsafe { _tzset() });
+}
+
+#[cfg(unix)]
+fn local_tm(secs: libc::time_t) -> Option<libc::tm> {
+    // SAFETY: `tm` is plain data, and `localtime_r` writes only to it.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let ok = unsafe { !libc::localtime_r(&secs, &mut tm).is_null() };
+    ok.then_some(tm)
+}
+
+#[cfg(windows)]
+fn local_tm(secs: libc::time_t) -> Option<libc::tm> {
+    // MSVC `localtime_s` rejects negative `time_t` values (pre-1970);
+    // returning `None` lets callers fall back to civil day math.
+    if secs < 0 {
+        return None;
+    }
+    // SAFETY: `tm` is plain data, and `localtime_s` writes only to it.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let ok = unsafe { localtime_s(&mut tm, &secs) == 0 };
+    ok.then_some(tm)
 }
 
 /// Days since 1970-01-01 of a civil date (proleptic Gregorian).
@@ -65,12 +99,9 @@ pub fn format_day(day: Day) -> String {
 pub fn local_day(ms: i64) -> Day {
     init_zone();
     let secs = ms.div_euclid(1000) as libc::time_t;
-    // SAFETY: `tm` is plain data, and `localtime_r` writes only to it.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let ok = unsafe { !libc::localtime_r(&secs, &mut tm).is_null() };
-    if !ok {
+    let Some(tm) = local_tm(secs) else {
         return ms.div_euclid(86_400_000) as Day;
-    }
+    };
     days_from_civil(tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32)
 }
 
@@ -175,5 +206,20 @@ mod tests {
         for bad in ["", "soon", "2026-13", "2026-02-30", "2026-10-09-01", "2026-10-11..2026-10-05", "0"] {
             assert_eq!(parse_range(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn pre_epoch_and_trimmed_ranges() {
+        // Pre-1970 timestamps must not panic or fail under either POSIX `localtime_r`
+        // or Windows `localtime_s` fallback logic.
+        let pre_epoch_ms = -3 * 86_400_000;
+        let d = local_day(pre_epoch_ms);
+        assert!((-4..=-2).contains(&d), "unexpected pre-epoch day: {d}");
+
+        // Ranges with surrounding whitespace parse identically.
+        assert_eq!(
+            parse_range("  2026-10-01 .. 2026-10-05  "),
+            parse_range("2026-10-01..2026-10-05")
+        );
     }
 }
