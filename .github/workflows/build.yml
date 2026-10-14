@@ -63,7 +63,11 @@ jobs:
         run: |
           # A second of picture and sound in each format, made with the
           # distro's full FFmpeg, then played through the bundle alone.
-          sudo apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null
+          # Plus what any desktop has and the bundle leaves to it (graphics,
+          # sound); the build step installs these too, but it is skipped when
+          # the bundle comes from the cache.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg libegl1 libgl1 libpulse0 libasound2 >/dev/null
           clips="$RUNNER_TEMP/clips"
           mkdir -p "$clips"
           clip() {
