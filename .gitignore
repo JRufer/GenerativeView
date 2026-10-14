@@ -20,3 +20,4 @@ android/key.properties
 # Misc
 .DS_Store
 *.log
+__pycache__/

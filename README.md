@@ -272,3 +272,11 @@ Set `GV_SCREENSHOT_DIR` to have the tests save a PNG of each stage, and `GV_SAMP
 - The spelling check is English.
 - Whether a pasted image keeps its generation data is up to the program you paste into. File managers, and anything that takes the copied *file*, get it untouched; a program that takes the *picture* and re-encodes it (browsers do, for images pasted into a web page) drops the data.
 - LoRA and model names are compared as written in each file, so the same LoRA saved as `style/inkwash.safetensors` by ComfyUI and as `inkwash` by A1111 counts as two.
+
+## License
+
+GenerativeView is free and open-source software under the [MIT License](LICENSE), © 2026 Joshua Hamilton Rufer.
+
+It is built on the work of many open-source projects, each under its own licence; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In the app, **More (⋮) → About GenerativeView** credits and links them all, and **Open-source licences** there shows every licence text in full. After changing the Rust core's dependencies, run `tool/gen-licenses.py` to refresh the notices (CI checks this).
+
+Made by [Josh Rufer](https://github.com/JRufer) · [jrufer.com](https://jrufer.com)

@@ -32,6 +32,7 @@ mkdir -p "$appdir"
 cp -a "$bundle" "$appdir/bundle"
 rm -f "$appdir/bundle/install.sh"
 cp "$root/assets/icon.png" "$appdir/generativeview.png"
+cp "$root/LICENSE" "$appdir/LICENSE"
 cp "$root/linux/packaging/generativeview.desktop" "$appdir/generativeview.desktop"
 if [ -n "${MPV_BUNDLE:-}" ]; then
   test -f "$MPV_BUNDLE/libmpv.so.2" || { echo "No libmpv.so.2 in $MPV_BUNDLE" >&2; exit 1; }

@@ -42,6 +42,12 @@ jobs:
       - name: Test
         working-directory: core
         run: cargo test
+      - name: Licence notices match Cargo.lock
+        # The app's licences page lists every crate compiled into the core;
+        # a dependency change must come with tool/gen-licenses.py re-run.
+        run: |
+          (cd core && cargo fetch --locked)
+          python3 tool/gen-licenses.py --check
 
   libmpv:
     # libmpv for the AppImage to fall back on where the system has none (no
@@ -143,6 +149,7 @@ jobs:
           mkdir -p "$bundle/share" dist
           cp linux/packaging/generativeview.desktop "$bundle/share/"
           cp assets/icon.png "$bundle/share/generativeview.png"
+          cp LICENSE "$bundle/share/LICENSE"
           cp tool/install-linux.sh "$bundle/install.sh"
           tar -C build/linux/x64/release -czf dist/generativeview-linux-x64.tar.gz bundle
           MPV_BUNDLE="$RUNNER_TEMP/libmpv-bundle" tool/build-appimage.sh "$bundle" dist/GenerativeView-x86_64.AppImage
@@ -404,6 +411,8 @@ jobs:
             echo
             echo "- **Linux**: \`GenerativeView-x86_64.AppImage\` — \`chmod +x\` it and run. Runs on Ubuntu 22.04, Debian 12, Arch and newer, on Wayland or X11. Needs GTK 3, and \`ffmpeg\` for video thumbnails; it brings its own video player library where \`mpv\` isn't installed. The \`.tar.gz\` is the same app as a plain folder with an \`install.sh\`."
             echo "- **Android**: \`GenerativeView-arm64-v8a.apk\` for tablets and phones."
+            echo
+            echo "GenerativeView is released under the [MIT License](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/LICENSE). Third-party licences are listed in the app under ⋮ → About → Open-source licences."
           } > notes.md
           gh release create "$tag" --target "$GITHUB_SHA" --title "Build $GITHUB_RUN_NUMBER" --notes-file notes.md --latest out/*
 

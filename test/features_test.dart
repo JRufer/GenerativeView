@@ -22,6 +22,8 @@ import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/prompt_weights.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
+import 'package:generativeview/src/licenses.dart';
+import 'package:generativeview/src/ui/about_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
@@ -348,6 +350,27 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('about, on a phone-sized screen', (tester) async {
+    final state = await launch(tester, size: const Size(412, 915));
+    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await tester.tap(find.byKey(const ValueKey<String>('more-menu')));
+    await settle(tester);
+    await tester.tap(find.text('About GenerativeView'));
+    await settle(tester);
+    // The icon is drawn, on every screen size.
+    await pumpUntil(
+      tester,
+      () => tester.widgetList<RawImage>(find.descendant(of: find.byKey(const ValueKey<String>('about-panel')), matching: find.byType(RawImage))).any((w) => w.image != null),
+      what: 'the app icon on the About panel',
+    );
+    await settle(tester);
+    expect(find.text('Josh Rufer'), findsOneWidget);
+    await screenshot(tester, boundary, '25-about-phone');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    await close(tester, state);
+  });
+
   testWidgets('the keyboard shortcuts list, and the best rated', (tester) async {
     final state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
@@ -367,6 +390,66 @@ void main() {
     expect(find.text('Keyboard shortcuts'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await settle(tester);
+
+    // ---- about, from the More menu -------------------------------------------
+    registerLicenses();
+    await tester.tap(find.byKey(const ValueKey<String>('more-menu')));
+    await settle(tester);
+    await tester.tap(find.text('About GenerativeView'));
+    await settle(tester);
+    // The icon is drawn, on every screen size.
+    await pumpUntil(
+      tester,
+      () => tester.widgetList<RawImage>(find.descendant(of: find.byKey(const ValueKey<String>('about-panel')), matching: find.byType(RawImage))).any((w) => w.image != null),
+      what: 'the app icon on the About panel',
+    );
+    await settle(tester);
+    expect(find.text('GenerativeView'), findsWidgets);
+    expect(find.text('Josh Rufer'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('about-github')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('about-website')), findsOneWidget);
+    await screenshot(tester, boundary, '25-about');
+    // Every credit is listed, with somewhere to go: scroll through the
+    // panel, noting each one that comes into view.
+    final aboutList = find.byKey(const ValueKey<String>('about-panel'));
+    final names = [for (final (_, list) in credits) for (final c in list) c.name];
+    for (final (_, list) in credits) {
+      for (final c in list) {
+        expect(c.url, startsWith('https://'), reason: c.name);
+      }
+    }
+    final seen = <String>{};
+    for (var step = 0; step < 40 && seen.length < names.length; step++) {
+      seen.addAll(names.where((n) => find.text(n).evaluate().isNotEmpty));
+      if (step == 4) await screenshot(tester, boundary, '26-about-credits');
+      await tester.drag(aboutList, const Offset(0, -250), warnIfMissed: false);
+      await settle(tester);
+    }
+    expect(names.toSet().difference(seen), isEmpty);
+    // The MIT licence text, its button at the top.
+    await tester.drag(aboutList, const Offset(0, 6000), warnIfMissed: false);
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('about-mit')));
+    await settle(tester);
+    expect(find.textContaining('Permission is hereby granted'), findsOneWidget);
+    expect(find.textContaining('Joshua Hamilton Rufer'), findsWidgets);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    // The licences page carries the Rust crates and native libraries too.
+    await tester.tap(find.byKey(const ValueKey<String>('about-licences')));
+    await settle(tester);
+    // The page opens; what it lists is checked by licenses_test.dart.
+    expect(find.byType(LicensePage), findsOneWidget);
+    for (var i = 0; i < 10 && find.textContaining('rusqlite').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    await screenshot(tester, boundary, '27-licences');
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await settle(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    expect(find.byKey(const ValueKey<String>('about-panel')), findsNothing);
 
     // ---- best rated, on the usage page ---------------------------------------
     await tester.tap(find.byTooltip('Usage stats'));
