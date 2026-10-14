@@ -657,6 +657,7 @@ void main() {
     }
 
     await menuOn('heron.png', 'Paste into this folder');
+    await pumpUntil(tester, () => calls.where((c) => c == 'pasteSource').length == 2, what: 'the clipboard read from the menu');
     final copied = File('${library.path}/heron (2).png');
     await pumpUntil(tester, () => copied.existsSync() || (snack()?.contains('paste here') ?? false), what: 'the copy written');
     expect(copied.existsSync(), isTrue, reason: snack());
