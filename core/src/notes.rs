@@ -23,7 +23,7 @@ use crate::db::Db;
 use parking_lot::Mutex;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 /// The notes file in each folder. Hidden, so file managers and the folder
 /// walk leave it be.
@@ -273,14 +273,40 @@ impl Notes {
 
 /// Write `file` to `path` so that a reader (or a sync tool) never sees half
 /// of it: to a temporary file beside it, then renamed over it.
+///
+/// On Windows, file watchers (`ReadDirectoryChangesW`) or search indexers may
+/// briefly hold a handle on `.generativeview.json` without `FILE_SHARE_DELETE`,
+/// causing `std::fs::rename` to return `PermissionDenied` or sharing violation
+/// (OS error 32). A bounded retry loop resolves transient locks cleanly.
 fn write_atomic(path: &Path, file: &Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Value::Object(file.clone())).map_err(|e| e.to_string())? + "\n";
     let tmp = path.with_file_name(format!("{FILE_NAME}.{}.tmp", std::process::id()));
     std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("cannot write {}: {e}", path.display())
-    })
+
+    let mut last_err = None;
+    for attempt in 0..4 {
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    let _ = std::fs::remove_file(path);
+                    if std::fs::rename(&tmp, path).is_ok() {
+                        return Ok(());
+                    }
+                }
+                last_err = Some(e);
+                if attempt < 3 {
+                    std::thread::sleep(Duration::from_millis(15));
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    Err(format!(
+        "cannot write {}: {}",
+        path.display(),
+        last_err.map(|e| e.to_string()).unwrap_or_else(|| "unknown error".into())
+    ))
 }
 
 #[cfg(test)]
@@ -330,5 +356,25 @@ mod tests {
         std::fs::remove_file(Path::new(&dir).join(FILE_NAME)).unwrap();
         assert!(notes.load_dir(&db, &dir, false));
         assert!(db.note(&dir, "b.png").is_empty());
+    }
+
+    #[test]
+    fn write_atomic_overwrites_repeatedly_without_leaving_tmp_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join(FILE_NAME);
+        for rating in 1..=5 {
+            let mut map = Map::new();
+            map.insert("generativeview".into(), json!(1));
+            map.insert("rating".into(), json!(rating));
+            write_atomic(&target, &map).unwrap();
+        }
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(saved["rating"], 5);
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover tmp files found: {leftovers:?}");
     }
 }

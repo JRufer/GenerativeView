@@ -117,13 +117,25 @@ class NativeCore {
   /// Scan progress and index-change notifications.
   Stream<Map<String, dynamic>> get events => _events.stream;
 
+  /// Resolve the shared library filename or path for [operatingSystem] and
+  /// [environment]. Supports `GVCORE_LIB` override across all platforms.
+  static String resolveLibraryPath({
+    String? operatingSystem,
+    Map<String, String>? environment,
+  }) {
+    final env = environment ?? Platform.environment;
+    final override = env['GVCORE_LIB'];
+    if (override != null && override.isNotEmpty) return override;
+    return switch (operatingSystem ?? Platform.operatingSystem) {
+      'windows' => 'gvcore.dll',
+      'macos' => 'libgvcore.dylib',
+      _ => 'libgvcore.so',
+    };
+  }
+
   /// Where the shared library lives. Bundled builds find it by name; tests
   /// and `flutter run` from a checkout can point at a cargo build.
-  static String defaultLibraryPath() {
-    final override = Platform.environment['GVCORE_LIB'];
-    if (override != null && override.isNotEmpty) return override;
-    return 'libgvcore.so';
-  }
+  static String defaultLibraryPath() => resolveLibraryPath();
 
   /// Load the library and open the engine. Throws [CoreException] if the
   /// library is missing or the index database cannot be opened.

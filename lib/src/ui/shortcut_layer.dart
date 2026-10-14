@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/models.dart';
+import '../platform.dart';
 import 'filter_sheet.dart';
 import 'image_menu.dart';
 import 'notes_widgets.dart';
@@ -160,7 +161,10 @@ class ShortcutLayer extends StatelessWidget {
     if (routes.depth > 1) return KeyEventResult.ignored;
     final key = event.logicalKey;
     final keyboard = HardwareKeyboard.instance;
-    final ctrl = keyboard.isControlPressed;
+    final ctrl = isPrimaryShortcutModifier(
+      isControlPressed: keyboard.isControlPressed,
+      isMetaPressed: keyboard.isMetaPressed,
+    );
     final search = state.searchText;
 
     if (_typing) {
@@ -231,7 +235,7 @@ class ShortcutLayer extends StatelessWidget {
       state.setTileSize(state.tileSize / 1.15);
       return KeyEventResult.handled;
     }
-    if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed) {
+    if (keyboard.isControlPressed || keyboard.isAltPressed || keyboard.isMetaPressed) {
       return KeyEventResult.ignored;
     }
     if (event is! KeyRepeatEvent) {

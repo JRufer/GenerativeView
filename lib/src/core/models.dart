@@ -2,6 +2,17 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// Join a folder path [dir] and file [name] using normalized forward slashes
+/// so Windows paths (`C:\Pictures` or `C:/Pictures/`) never produce mixed
+/// separators (`C:\Pictures/img.png`).
+String joinMediaPath(String dir, String name) {
+  final normalizedDir = dir.replaceAll('\\', '/');
+  if (normalizedDir.isEmpty) return name;
+  return normalizedDir.endsWith('/')
+      ? '$normalizedDir$name'
+      : '$normalizedDir/$name';
+}
+
 /// One image or video in the current view.
 class MediaItem {
   const MediaItem({
@@ -34,7 +45,7 @@ class MediaItem {
   final int rating;
   final Flag flag;
 
-  String get path => dir.endsWith('/') ? '$dir$name' : '$dir/$name';
+  String get path => joinMediaPath(dir, name);
 
   /// Changes whenever the file's contents may have.
   String get version => '$id/$mtime/$size';

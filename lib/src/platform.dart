@@ -1,4 +1,4 @@
-/// The few things that differ between Linux and Android.
+/// Platform-specific integration across Linux, Android, Windows, and macOS.
 library;
 
 import 'dart:io';
@@ -26,7 +26,7 @@ Future<AppDirs> resolveAppDirs() async {
 
 /// How often the core re-checks folder timestamps as a backstop to
 /// file-system notifications. Android's shared storage often delivers no
-/// notifications at all, so it leans on this; on Linux it only matters for
+/// notifications at all, so it leans on this; on desktop it only matters for
 /// network mounts.
 int get pollIntervalMs => Platform.isAndroid ? 3000 : 15000;
 
@@ -35,6 +35,34 @@ int get thumbCacheBytes => Platform.isAndroid ? 160 << 20 : 384 << 20;
 
 /// Full-size image cache budget (Flutter's own image cache).
 int get imageCacheBytes => Platform.isAndroid ? 256 << 20 : 768 << 20;
+
+/// Whether the primary keyboard shortcut modifier (`Cmd` on macOS, `Ctrl` on
+/// Windows, Linux, and Android) is currently pressed.
+bool isPrimaryShortcutModifier({
+  required bool isControlPressed,
+  required bool isMetaPressed,
+  String? operatingSystem,
+}) {
+  final os = operatingSystem ?? Platform.operatingSystem;
+  return os == 'macos' ? isMetaPressed : isControlPressed;
+}
+
+/// Build the desktop process invocation to launch an external HTTP(S) [url],
+/// or null if [url] is not an HTTP(S) address.
+({String executable, List<String> arguments})? desktopUrlCommand(
+  String url, {
+  String? operatingSystem,
+}) {
+  if (!url.startsWith('https://') && !url.startsWith('http://')) return null;
+  return switch (operatingSystem ?? Platform.operatingSystem) {
+    'macos' => (executable: 'open', arguments: [url]),
+    'windows' => (
+      executable: 'rundll32',
+      arguments: ['url.dll,FileProtocolHandler', url],
+    ),
+    _ => (executable: 'xdg-open', arguments: [url]),
+  };
+}
 
 /// Whether we can read arbitrary folders. Always true off Android.
 Future<bool> hasStorageAccess() async {
@@ -91,8 +119,8 @@ Future<bool> copyFileToClipboard(String path) async {
 
 /// What is on the clipboard after [copyFileToClipboard], read back the way a
 /// program pasting it would read it: through the content address on Android,
-/// as the picture on Linux. Here so the integration test can check that the
-/// bytes arrive unchanged.
+/// or native clipboard file/image targets on desktop. Here so the integration
+/// test can check that the bytes arrive unchanged.
 Future<Uint8List?> readCopiedFile() async {
   try {
     return await _media.invokeMethod<Uint8List>('readCopiedFile');
@@ -105,7 +133,8 @@ Future<Uint8List?> readCopiedFile() async {
 
 /// Open a web page in the user's browser.
 Future<bool> openUrl(String url) async {
-  if (!url.startsWith('https://') && !url.startsWith('http://')) return false;
+  final cmd = desktopUrlCommand(url);
+  if (cmd == null) return false;
   if (Platform.isAndroid) {
     try {
       return await _media.invokeMethod<bool>('openUrl', {'url': url}) ?? false;
@@ -116,7 +145,7 @@ Future<bool> openUrl(String url) async {
     }
   }
   try {
-    final result = await Process.run('xdg-open', [url]);
+    final result = await Process.run(cmd.executable, cmd.arguments);
     return result.exitCode == 0;
   } on ProcessException {
     return false;
