@@ -4,7 +4,7 @@
 name: ci-report
 on:
   push:
-    branches: [feat/mit-license-about]
+    branches: [feature/ratings-filters-upscale]
 permissions:
   contents: write
 env:
