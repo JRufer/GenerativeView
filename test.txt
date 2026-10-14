@@ -1,0 +1,74 @@
+Resolving dependencies...
+Downloading packages...
+  archive 4.3.0 (4.5.2 available)
+  code_assets 1.2.1 (2.1.0 available)
+  hooks 2.0.2 (2.2.0 available)
+  image 4.10.1 (4.12.0 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.2 available)
+  petitparser 7.0.2 (7.1.0 available)
+  record_use 0.6.0 (1.1.1 available)
+  synchronized 3.4.2 (3.5.0 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.3 available)
+  xml 7.0.1 (7.1.0 available)
+Got dependencies!
+13 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart
+00:00 +0: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: (setUpAll)
+00:00 +0: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: picture types are told apart by their bytes
+00:00 +1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +2: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +3: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +4: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +5: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:03 +6: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +7: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +8: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:05 +9: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:05 +10: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:05 +11: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:05 +12: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:05 +13: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:05 +14: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:06 +15: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:06 +16: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:06 +17: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:06 +18: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: weights round-trip as prompt syntax
+00:06 +19: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:06 +20: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:06 +21: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:06 +22: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:06 +23: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:06 +24: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:07 +25: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:07 +26: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:07 +27: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: about, on a phone-sized screen
+00:08 +28: /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+GALLERY: 127 items, 30 thumbnails on screen after 535 ms
+GALLERY: "fennec model:flux" -> 8 items
+00:12 +29: /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+00:13 +30: /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+00:16 +31: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: upscale on the device, with or without the metadata
+00:21 +32: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:23 +33: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:24 +34: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:25 +35: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:26 +36: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: images or videos, and filters cleared from the button
+00:26 +37: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the grid follows files being added and removed
+00:27 +38: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the remix panel keeps its controls steady
+00:27 +39: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:27 +40: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: side panels resize by their grips and snap shut past half their least
+00:28 +41: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:29 +42: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:30 +43: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:30 +44: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:33 +45: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: usage stats count what a folder was made with, and filter by it
+00:35 +46: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: an image copies, metadata and all, from its menu
+00:36 +47: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: zoom moves in steps of ten percent and marks 100%
+00:38 +48: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:41 +49: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: panels, the search box and its switch move into place
+00:42 +50: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: (tearDownAll)
+00:42 +50: All tests passed!
