@@ -395,18 +395,25 @@ void main() {
     expect(find.byKey(const ValueKey<String>('about-github')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('about-website')), findsOneWidget);
     await screenshot(tester, boundary, '25-about');
-    // Every credit is listed, with somewhere to go.
+    // Every credit is listed, with somewhere to go: scroll through the
+    // panel, noting each one that comes into view.
     final aboutList = find.byKey(const ValueKey<String>('about-panel'));
+    final names = [for (final (_, list) in credits) for (final c in list) c.name];
     for (final (_, list) in credits) {
       for (final c in list) {
         expect(c.url, startsWith('https://'), reason: c.name);
-        await tester.scrollUntilVisible(find.text(c.name), 200, scrollable: find.descendant(of: aboutList, matching: find.byType(Scrollable)).first);
       }
     }
-    await settle(tester);
-    await screenshot(tester, boundary, '26-about-credits');
-    // The MIT licence text.
-    await tester.drag(find.descendant(of: aboutList, matching: find.byType(Scrollable)).first, const Offset(0, 4000));
+    final seen = <String>{};
+    for (var step = 0; step < 40 && seen.length < names.length; step++) {
+      seen.addAll(names.where((n) => find.text(n).evaluate().isNotEmpty));
+      if (step == 4) await screenshot(tester, boundary, '26-about-credits');
+      await tester.drag(aboutList, const Offset(0, -250), warnIfMissed: false);
+      await settle(tester);
+    }
+    expect(names.toSet().difference(seen), isEmpty);
+    // The MIT licence text, its button at the top.
+    await tester.drag(aboutList, const Offset(0, 6000), warnIfMissed: false);
     await settle(tester);
     await tester.tap(find.byKey(const ValueKey<String>('about-mit')));
     await settle(tester);
