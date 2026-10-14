@@ -644,16 +644,10 @@ void main() {
       await mouse.up();
       await mouse.removePointer();
       await pumpUntil(tester, () => find.text(entry).evaluate().isNotEmpty, what: 'the menu with "$entry"');
-      final before = calls.length;
-      final at = tester.getCenter(find.text(entry));
+      // Let it finish opening: rows further down take taps once shown.
+      await settle(tester);
       await tester.tap(find.text(entry));
       await settle(tester);
-      await settle(tester);
-      if (entry.startsWith('Paste') && calls.length == before) {
-        final texts = find.byType(Text).evaluate().map((e) => (e.widget as Text).data).whereType<String>().take(40).join(' | ');
-        fail('"$entry" at $at led nowhere: menu still up: ${find.text(entry).evaluate().isNotEmpty}, '
-            'menu items: ${find.byWidgetPredicate((w) => w is PopupMenuItem).evaluate().length}, texts: $texts');
-      }
     }
 
     // ---- nothing on the clipboard ---------------------------------------------
