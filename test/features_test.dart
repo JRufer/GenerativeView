@@ -32,6 +32,7 @@ import 'package:generativeview/src/ui/thumb_image.dart';
 import 'support.dart';
 
 void main() {
+  const fixtures = ['fox_01.png', 'fox_02.png', 'fox_03.png', 'owl_01.png', 'heron.png', 'sailor.png'];
   late Directory scratch;
   late Directory library;
   late NativeCore core;
@@ -57,6 +58,22 @@ void main() {
     write('sub/sailor.png', {'invokeai_metadata': invokeMetadata('portrait of an old sailor', seed: 6)}, w: 256, h: 384);
 
     core = NativeCore.start(dataDir: '${scratch.path}/data', cacheDir: '${scratch.path}/cache', libraryPath: coreLibraryPath());
+  });
+
+  tearDown(() {
+    void clean(Directory dir) {
+      for (final ent in dir.listSync()) {
+        if (ent is File) {
+          final name = ent.path.split(RegExp(r'[/\\]')).last;
+          if (!fixtures.contains(name) && name != '.generativeview.json') {
+            try { ent.deleteSync(); } catch (_) {}
+          }
+        } else if (ent is Directory) {
+          clean(ent);
+        }
+      }
+    }
+    clean(library);
   });
 
   tearDownAll(() {
@@ -93,8 +110,6 @@ void main() {
   List<String> names(AppState state) => [for (var i = 0; i < state.items.length; i++) state.items[i].name];
 
   int indexOf(AppState state, String name) => names(state).indexOf(name);
-
-  const fixtures = ['fox_01.png', 'fox_02.png', 'fox_03.png', 'owl_01.png', 'heron.png', 'sailor.png'];
 
   Map<String, dynamic> notesFile(String dir) =>
       jsonDecode(File('$dir/.generativeview.json').readAsStringSync()) as Map<String, dynamic>;

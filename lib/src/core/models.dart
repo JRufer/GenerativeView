@@ -767,11 +767,31 @@ String extensionForType(String? type) => switch (type) {
       _ => 'png',
     };
 
+/// Normalize a filesystem path to use forward slashes (`/`) across all platforms,
+/// stripping Windows extended-length verbatim prefixes (`\\?\`) and redundant
+/// trailing slashes while preserving Unix root (`/`) and Windows drive roots (`C:/`).
+String normalizePath(String raw) {
+  var stripped = raw;
+  if (stripped.startsWith(r'\\?\UNC\')) {
+    stripped = '//${stripped.substring(8)}';
+  } else if (stripped.startsWith(r'\\?\')) {
+    stripped = stripped.substring(4);
+  }
+  var s = stripped.replaceAll(r'\', '/');
+  while (s.length > 1 && s.endsWith('/')) {
+    if (s.length == 3 && s[1] == ':' && RegExp(r'^[A-Za-z]').hasMatch(s)) {
+      break;
+    }
+    s = s.substring(0, s.length - 1);
+  }
+  return s;
+}
+
 /// A path in [dir] for a file called [name] that doesn't exist yet:
 /// `name.png`, then `name (2).png`, `name (3).png`, …
 String freeFileName(String dir, String name) {
-  final sep = Platform.pathSeparator;
-  final base = dir.endsWith(sep) ? dir : '$dir$sep';
+  final sep = dir.contains('/') ? '/' : Platform.pathSeparator;
+  final base = (dir.endsWith('/') || dir.endsWith(r'\')) ? dir : '$dir$sep';
   if (!File('$base$name').existsSync()) return '$base$name';
   final dot = name.lastIndexOf('.');
   final stem = dot > 0 ? name.substring(0, dot) : name;
@@ -781,3 +801,4 @@ String freeFileName(String dir, String name) {
     if (!File(candidate).existsSync()) return candidate;
   }
 }
+

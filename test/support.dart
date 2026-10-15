@@ -5,11 +5,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+export 'package:generativeview/src/core/models.dart' show normalizePath;
+
 
 /// Where the host build of the core lives when running from a checkout.
 String coreLibraryPath() {
@@ -305,7 +309,7 @@ List<String> captureCopiedFiles(WidgetTester tester) {
     call,
   ) async {
     if (call.method != 'copyFile') return null;
-    copied.add((call.arguments as Map)['path'] as String);
+    copied.add(normalizePath((call.arguments as Map)['path'] as String));
     return true;
   });
   addTearDown(

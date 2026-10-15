@@ -21,7 +21,7 @@ void main() {
   test('every Rust crate the core uses directly has its licence', () async {
     final entries = await read('assets/licenses/rust.txt.gz');
     final packages = packagesOf(entries);
-    final cargo = File('core/Cargo.toml').readAsStringSync();
+    final cargo = File('core/Cargo.toml').readAsStringSync().replaceAll('\r\n', '\n');
     final deps = RegExp(r'^\[dependencies\]\n((?:[^\[\n].*\n|\n)*)', multiLine: true).firstMatch(cargo)!.group(1)!;
     for (final line in deps.split('\n')) {
       final name = RegExp(r'^([A-Za-z0-9_-]+)\s*=').firstMatch(line)?.group(1);

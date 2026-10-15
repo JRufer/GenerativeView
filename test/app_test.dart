@@ -952,7 +952,7 @@ void main() {
       () => find.text('portraits').evaluate().isNotEmpty,
       what: 'the sub-folder row',
     );
-    final portraits = '${library.path}/portraits';
+    final portraits = normalizePath('${library.path}/portraits');
     final section = find.byKey(const ValueKey<String>('pinned-folders'));
     Finder inSection(String text) =>
         find.descendant(of: section, matching: find.text(text));
@@ -1292,7 +1292,7 @@ void main() {
       () => state.items.length == 9 && tilesWithImages(tester) == 9,
       what: '9 thumbnails',
     );
-    final path = '${library.path}/ComfyUI_00001_.png';
+    final path = normalizePath('${library.path}/ComfyUI_00001_.png');
 
     // ---- press and hold a tile ------------------------------------------------
     await tester.longPress(tiles().last);
@@ -1315,7 +1315,7 @@ void main() {
     expect(state.selected?.name, 'plain-photo.png');
     await tester.tap(find.text('Copy file path'));
     await settle(tester);
-    expect(copied.last, '${library.path}/plain-photo.png');
+    expect(copied.last, normalizePath('${library.path}/plain-photo.png'));
 
     await tester.tap(tiles().last, buttons: kSecondaryButton);
     await settle(tester);
@@ -1672,7 +1672,7 @@ void main() {
       timeout: const Duration(seconds: 60),
     );
     final home = state.content.value.modelDir;
-    expect(home, startsWith('${scratch.path}/data/models/'));
+    expect(home.replaceAll(r'\', '/'), startsWith('${scratch.path.replaceAll(r'\', '/')}/data/models/'));
     for (final name in names) {
       expect(
         File('$home/$name').lengthSync(),

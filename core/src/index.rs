@@ -80,12 +80,19 @@ impl Indexer {
 }
 
 pub fn normalize(path: &str) -> String {
-    if path.len() > 1 {
-        path.trim_end_matches('/').to_string()
+    crate::fsnav::normalize_path(path)
+}
+
+fn align_root_prefix(path: String, root: &str) -> String {
+    if root.starts_with("/private/") && !path.starts_with("/private/") {
+        format!("/private{path}")
+    } else if !root.starts_with("/private/") && path.starts_with("/private/") {
+        path.strip_prefix("/private").unwrap_or(&path).to_string()
     } else {
-        path.to_string()
+        path
     }
 }
+
 
 fn join(dir: &str, name: &str) -> String {
     if dir.ends_with('/') {
@@ -290,7 +297,14 @@ impl Worker {
         })
         .ok()?;
         let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
-        watcher.watch(Path::new(root), mode).ok()?;
+        let path = Path::new(root);
+        if watcher.watch(path, mode).is_err() {
+            if let Ok(canon) = std::fs::canonicalize(path) {
+                watcher.watch(&canon, mode).ok()?;
+            } else {
+                return None;
+            }
+        }
         Some(watcher)
     }
 
@@ -417,11 +431,12 @@ impl Worker {
         let mut removed = 0usize;
         let mut need_full = false;
         for path in &paths {
-            let Some(full) = path.to_str() else { continue };
-            let (Some(parent), Some(name)) = (path.parent().and_then(Path::to_str), path.file_name().and_then(|n| n.to_str())) else {
+            let Some(full_raw) = path.to_str() else { continue };
+            let (Some(parent_raw), Some(name)) = (path.parent().and_then(Path::to_str), path.file_name().and_then(|n| n.to_str())) else {
                 continue;
             };
-            let parent = normalize(parent);
+            let parent = align_root_prefix(normalize(parent_raw), &s.root);
+            let full = align_root_prefix(normalize(full_raw), &s.root);
             if full == s.root {
                 continue;
             }
@@ -437,7 +452,7 @@ impl Worker {
             match std::fs::metadata(path) {
                 Ok(md) if md.is_dir() => {
                     // A folder appeared or changed: its contents need a walk.
-                    if s.recursive && !s.dir_mtimes.contains_key(full) {
+                    if s.recursive && !s.dir_mtimes.contains_key(&full) {
                         need_full = true;
                     }
                 }
@@ -453,8 +468,8 @@ impl Worker {
                         removed += self.db.delete_path(&parent, name).unwrap_or(0);
                     } else if s.recursive {
                         // Possibly a folder that was deleted or moved away.
-                        removed += self.db.delete_tree(full).unwrap_or(0);
-                        s.dir_mtimes.retain(|d, _| d != full && !d.starts_with(&join(full, "")));
+                        removed += self.db.delete_tree(&full).unwrap_or(0);
+                        s.dir_mtimes.retain(|d, _| d != &full && !d.starts_with(&join(&full, "")));
                     }
                 }
             }

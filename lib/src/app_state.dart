@@ -350,7 +350,7 @@ class AppState extends ChangeNotifier {
     ];
     pinnedFolders = [
       for (final entry in _savedList(saved['pinned_folders']))
-        if (entry is String && entry.isNotEmpty) entry,
+        if (entry is String && entry.isNotEmpty) normalizePath(entry),
     ];
     followNew = flag('follow_new', followNew);
     backendUrls = {
@@ -450,16 +450,18 @@ class AppState extends ChangeNotifier {
 
   /// Open the tree down to [path] so the current folder is visible in it.
   Future<void> revealInTree(String path) async {
+    final target = normalizePath(path);
     Place? best;
     for (final p in places) {
+      final pPath = normalizePath(p.path);
       final under =
-          path == p.path ||
-          path.startsWith(p.path.endsWith('/') ? p.path : '${p.path}/');
-      if (under && (best == null || p.path.length > best.path.length)) best = p;
+          target == pPath ||
+          target.startsWith(pPath.endsWith('/') ? pPath : '$pPath/');
+      if (under && (best == null || pPath.length > best.path.length)) best = p;
     }
     if (best == null) return;
-    var current = best.path;
-    final rest = path
+    var current = normalizePath(best.path);
+    final rest = target
         .substring(current.length)
         .split('/')
         .where((s) => s.isNotEmpty)
@@ -482,10 +484,7 @@ class AppState extends ChangeNotifier {
   /// Show a folder. The index answers at once with what it already knows;
   /// the core then scans for changes and tells us when to refresh.
   Future<void> openFolder(String path, {bool remember = true}) async {
-    var dir = path.trim();
-    while (dir.length > 1 && dir.endsWith('/')) {
-      dir = dir.substring(0, dir.length - 1);
-    }
+    var dir = normalizePath(path.trim());
     if (dir.isEmpty) return;
     folder = dir;
     items = ItemList.empty;
@@ -757,15 +756,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool isFolderPinned(String path) => pinnedFolders.contains(path);
+  bool isFolderPinned(String path) => pinnedFolders.contains(normalizePath(path));
 
   void toggleFolderPin(String path) {
-    pinnedFolders = isFolderPinned(path)
+    final norm = normalizePath(path);
+    pinnedFolders = isFolderPinned(norm)
         ? [
             for (final p in pinnedFolders)
-              if (p != path) p,
+              if (p != norm) p,
           ]
-        : [...pinnedFolders, path];
+        : [...pinnedFolders, norm];
     _save('pinned_folders', jsonEncode(pinnedFolders));
     notifyListeners();
   }
@@ -1191,7 +1191,7 @@ class AppState extends ChangeNotifier {
     final String name;
     final from = source.path;
     if (from != null) {
-      name = from.split(Platform.pathSeparator).last;
+      name = from.split(RegExp(r'[/\\]')).last;
     } else {
       final given = source.name?.trim() ?? '';
       name = given.contains('.') ? given : 'pasted-${_stamp()}.${extensionForType(source.type)}';
@@ -1286,8 +1286,7 @@ class AppState extends ChangeNotifier {
   /// lands, and put it in the [remixCollection]. Waits in the background
   /// for as long as the app is open; how it goes shows in [remixes].
   void collectRemix(MediaItem original, Stream<RemixImage> results) {
-    final sep = Platform.pathSeparator;
-    final cut = original.path.lastIndexOf(sep);
+    final cut = original.path.lastIndexOf(RegExp(r'[/\\]'));
     final dir = cut < 0 ? '.' : original.path.substring(0, cut);
     final file = original.path.substring(cut + 1);
     final dot = file.lastIndexOf('.');
@@ -1337,17 +1336,18 @@ class AppState extends ChangeNotifier {
     late final String path;
     late final String name;
     try {
-      final sep = Platform.pathSeparator;
+      final sep = dir.contains('/') ? '/' : Platform.pathSeparator;
+      final base = (dir.endsWith('/') || dir.endsWith(r'\')) ? dir : '$dir$sep';
       var n = 1;
       String next() => '${stem}_remix$n.${image.extension}';
-      while (await File('$dir$sep${next()}').exists()) {
+      while (await File('$base${next()}').exists()) {
         n++;
       }
       name = next();
-      path = '$dir$sep$name';
+      path = '$base$name';
       // Written aside and renamed, so the folder watcher never sees half a
       // picture.
-      final part = File('$dir$sep.$name.part');
+      final part = File('$base.$name.part');
       await part.writeAsBytes(image.bytes, flush: true);
       await part.rename(path);
     } catch (e) {
@@ -1422,22 +1422,26 @@ class AppState extends ChangeNotifier {
   }
 
   static String _parentOf(String path) {
-    final cut = path.lastIndexOf(Platform.pathSeparator);
+    final norm = normalizePath(path);
+    final cut = norm.lastIndexOf('/');
     if (cut < 0) return '.';
-    return cut == 0 ? Platform.pathSeparator : path.substring(0, cut);
+    if (cut == 0) return '/';
+    if (cut == 2 && norm[1] == ':' && RegExp(r'^[A-Za-z]').hasMatch(norm)) {
+      return norm.substring(0, 3);
+    }
+    return norm.substring(0, cut);
   }
 
   /// The deepest folder holding both [a] and [b].
   static String _commonDir(String a, String b) {
-    final sep = Platform.pathSeparator;
-    final x = a.split(sep);
-    final y = b.split(sep);
+    final x = normalizePath(a).split('/');
+    final y = normalizePath(b).split('/');
     var n = 0;
     while (n < x.length && n < y.length && x[n] == y[n]) {
       n++;
     }
-    final common = x.take(n).join(sep);
-    return common.isEmpty ? sep : common;
+    final common = x.take(n).join('/');
+    return common.isEmpty ? '/' : common;
   }
 
   /// Put away the remixes that have come back, without going to them.

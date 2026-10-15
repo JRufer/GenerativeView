@@ -35,12 +35,24 @@ class _Row {
   final IconData icon;
 }
 
-String _baseName(String path) => path == '/' ? '/' : path.split('/').last;
+String _baseName(String path) {
+  if (path == '/' || RegExp(r'^[A-Za-z]:/?$').hasMatch(path)) return path;
+  final clean = path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+  final idx = clean.lastIndexOf('/');
+  return idx >= 0 ? clean.substring(idx + 1) : clean;
+}
 
 String _parentOf(String path) {
-  final cut = path.lastIndexOf('/');
-  return cut <= 0 ? '/' : path.substring(0, cut);
+  final clean = (path.length > 3 && path.endsWith('/')) ? path.substring(0, path.length - 1) : path;
+  final cut = clean.lastIndexOf('/');
+  if (cut < 0) return '/';
+  if (cut == 0) return '/';
+  if (cut == 2 && clean[1] == ':' && RegExp(r'^[A-Za-z]').hasMatch(clean)) {
+    return clean.substring(0, 3);
+  }
+  return clean.substring(0, cut);
 }
+
 
 class _FolderPanelState extends State<FolderPanel> {
   final ScrollController _scroll = ScrollController();
