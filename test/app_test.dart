@@ -1323,11 +1323,11 @@ void main() {
     await pumpUntil(tester, () => copied.last == lighthouse, what: 'the prompt');
 
     // ---- Ctrl+Shift+C copies the selected image -------------------------------
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(primaryModifier);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyUpEvent(primaryModifier);
     await settle(tester);
     expect(files, [path, path]);
 

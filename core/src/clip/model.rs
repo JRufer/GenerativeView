@@ -16,8 +16,39 @@ use rayon::prelude::*;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
-use std::os::unix::fs::FileExt;
 use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::fs::FileExt;
+
+#[cfg(windows)]
+trait FileExt {
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> std::io::Result<()>;
+}
+
+#[cfg(windows)]
+impl FileExt for File {
+    fn read_exact_at(&self, mut buf: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+        use std::os::windows::fs::FileExt as WinFileExt;
+        while !buf.is_empty() {
+            match self.seek_read(buf, offset) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "failed to fill whole buffer",
+                    ))
+                }
+                Ok(n) => {
+                    buf = &mut buf[n..];
+                    offset += n as u64;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+}
 
 // ---------------------------------------------------------------- weights
 

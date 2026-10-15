@@ -735,9 +735,9 @@ void main() {
 
     // ---- nothing on the clipboard ---------------------------------------------
     pasteAnswer = null;
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(primaryModifier);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyUpEvent(primaryModifier);
     await pumpUntil(tester, () => find.textContaining('Nothing to paste').evaluate().isNotEmpty, what: 'nothing to paste');
 
     // ---- a copied file arrives whole, beside its namesake --------------------

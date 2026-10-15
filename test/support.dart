@@ -217,13 +217,29 @@ Future<void> loadAppFonts() async {
     if (any) await loader.load();
   }
 
-  await load('Roboto', [
+  const robotoFiles = [
     'Roboto-Regular.ttf',
     'Roboto-Medium.ttf',
     'Roboto-Bold.ttf',
-  ]);
+  ];
+  for (final family in [
+    'Roboto',
+    '.AppleSystemUIFont',
+    '.SF Pro Text',
+    '.SF Pro Display',
+    '.SF UI Text',
+    '.SF UI Display',
+    'Helvetica Neue',
+    'Segoe UI',
+  ]) {
+    await load(family, robotoFiles);
+  }
   await load('MaterialIcons', ['MaterialIcons-Regular.otf']);
 }
+
+/// The primary modifier key for keyboard shortcuts (`Cmd` on macOS, `Ctrl` elsewhere).
+LogicalKeyboardKey get primaryModifier =>
+    Platform.isMacOS ? LogicalKeyboardKey.metaLeft : LogicalKeyboardKey.controlLeft;
 
 /// Let real time pass (for the core and for file IO), advance the test
 /// clock (for the app's debounce timers), and rebuild — until [done].

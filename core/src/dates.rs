@@ -18,11 +18,22 @@ extern "C" {
 
 #[cfg(windows)]
 extern "C" {
-    // Windows Universal CRT (ucrtbase) exposes `_tzset` and `localtime_s`
-    // (with `(tm*, time_t*)` parameter order) instead of POSIX `tzset` and
-    // `localtime_r`.
+    // Windows Universal CRT (ucrtbase) exposes `_tzset`, `localtime_s`
+    // (with `(tm*, time_t*)` parameter order), and `_mktime64` instead of
+    // POSIX `tzset`, `localtime_r`, and `mktime`.
     fn _tzset();
     fn localtime_s(tm: *mut libc::tm, time: *const libc::time_t) -> libc::c_int;
+    fn _mktime64(tm: *mut libc::tm) -> libc::time_t;
+}
+
+#[cfg(unix)]
+unsafe fn sys_mktime(tm: *mut libc::tm) -> libc::time_t {
+    libc::mktime(tm)
+}
+
+#[cfg(windows)]
+unsafe fn sys_mktime(tm: *mut libc::tm) -> libc::time_t {
+    _mktime64(tm)
 }
 
 fn init_zone() {
@@ -109,13 +120,17 @@ pub fn local_day(ms: i64) -> Day {
 pub fn local_midnight_ms(day: Day) -> i64 {
     init_zone();
     let (y, m, d) = civil_from_days(day);
-    // SAFETY: as above; `mktime` normalises the fields it is given.
+    #[cfg(windows)]
+    if day < 0 || y < 1970 {
+        return day as i64 * 86_400_000;
+    }
+    // SAFETY: as above; `mktime` / `_mktime64` normalises the fields it is given.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     tm.tm_year = y - 1900;
     tm.tm_mon = m as i32 - 1;
     tm.tm_mday = d as i32;
     tm.tm_isdst = -1;
-    let secs = unsafe { libc::mktime(&mut tm) };
+    let secs = unsafe { sys_mktime(&mut tm) };
     if secs == -1 {
         return day as i64 * 86_400_000;
     }
