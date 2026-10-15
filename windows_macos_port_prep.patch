@@ -1,0 +1,869 @@
+diff --git a/core/src/dates.rs b/core/src/dates.rs
+index 60b7c57..0c185d5 100644
+--- a/core/src/dates.rs
++++ b/core/src/dates.rs
+@@ -9,15 +9,49 @@ pub type Day = i32;
+ 
+ static TZ: Once = Once::new();
+ 
++#[cfg(unix)]
+ extern "C" {
+-    // In every C library we build against, but not in the `libc` crate's
+-    // bindings for all of them.
++    // In every POSIX C library we build against, but not in the `libc`
++    // crate's bindings for all of them.
+     fn tzset();
+ }
+ 
++#[cfg(windows)]
++extern "C" {
++    // Windows Universal CRT (ucrtbase) exposes `_tzset` and `localtime_s`
++    // (with `(tm*, time_t*)` parameter order) instead of POSIX `tzset` and
++    // `localtime_r`.
++    fn _tzset();
++    fn localtime_s(tm: *mut libc::tm, time: *const libc::time_t) -> libc::c_int;
++}
++
+ fn init_zone() {
+-    // SAFETY: `tzset` only reads the environment and the zone database.
++    // SAFETY: `tzset` / `_tzset` only reads the environment and zone database.
++    #[cfg(unix)]
+     TZ.call_once(|| unsafe { tzset() });
++    #[cfg(windows)]
++    TZ.call_once(|| unsafe { _tzset() });
++}
++
++#[cfg(unix)]
++fn local_tm(secs: libc::time_t) -> Option<libc::tm> {
++    // SAFETY: `tm` is plain data, and `localtime_r` writes only to it.
++    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
++    let ok = unsafe { !libc::localtime_r(&secs, &mut tm).is_null() };
++    ok.then_some(tm)
++}
++
++#[cfg(windows)]
++fn local_tm(secs: libc::time_t) -> Option<libc::tm> {
++    // MSVC `localtime_s` rejects negative `time_t` values (pre-1970);
++    // returning `None` lets callers fall back to civil day math.
++    if secs < 0 {
++        return None;
++    }
++    // SAFETY: `tm` is plain data, and `localtime_s` writes only to it.
++    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
++    let ok = unsafe { localtime_s(&mut tm, &secs) == 0 };
++    ok.then_some(tm)
+ }
+ 
+ /// Days since 1970-01-01 of a civil date (proleptic Gregorian).
+@@ -65,12 +99,9 @@ pub fn format_day(day: Day) -> String {
+ pub fn local_day(ms: i64) -> Day {
+     init_zone();
+     let secs = ms.div_euclid(1000) as libc::time_t;
+-    // SAFETY: `tm` is plain data, and `localtime_r` writes only to it.
+-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+-    let ok = unsafe { !libc::localtime_r(&secs, &mut tm).is_null() };
+-    if !ok {
++    let Some(tm) = local_tm(secs) else {
+         return ms.div_euclid(86_400_000) as Day;
+-    }
++    };
+     days_from_civil(tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32)
+ }
+ 
+@@ -176,4 +207,19 @@ mod tests {
+             assert_eq!(parse_range(bad), None, "{bad}");
+         }
+     }
++
++    #[test]
++    fn pre_epoch_and_trimmed_ranges() {
++        // Pre-1970 timestamps must not panic or fail under either POSIX `localtime_r`
++        // or Windows `localtime_s` fallback logic.
++        let pre_epoch_ms = -3 * 86_400_000;
++        let d = local_day(pre_epoch_ms);
++        assert!((-4..=-2).contains(&d), "unexpected pre-epoch day: {d}");
++
++        // Ranges with surrounding whitespace parse identically.
++        assert_eq!(
++            parse_range("  2026-10-01 .. 2026-10-05  "),
++            parse_range("2026-10-01..2026-10-05")
++        );
++    }
+ }
+diff --git a/core/src/fsnav.rs b/core/src/fsnav.rs
+index 7381bf6..73d8855 100644
+--- a/core/src/fsnav.rs
++++ b/core/src/fsnav.rs
+@@ -19,8 +19,75 @@ pub struct DirEntry {
+     pub has_sub: bool,
+ }
+ 
++/// Normalize a filesystem path to use forward slashes (`/`) across all platforms,
++/// stripping Windows extended-length verbatim prefixes (`\\?\`) and redundant
++/// trailing slashes while preserving Unix root (`/`) and Windows drive roots (`C:/`).
++pub fn normalize_path(raw: &str) -> String {
++    let stripped = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
++        format!("//{unc}")
++    } else if let Some(verbatim) = raw.strip_prefix(r"\\?\") {
++        verbatim.to_string()
++    } else {
++        raw.to_string()
++    };
++    let mut s = stripped.replace('\\', "/");
++    while s.len() > 1 && s.ends_with('/') {
++        // Keep the trailing slash on bare Windows drive roots like `C:/`.
++        if s.len() == 3 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
++            break;
++        }
++        s.pop();
++    }
++    s
++}
++
+ fn place(name: &str, path: &str, kind: &'static str) -> Option<Place> {
+-    Path::new(path).is_dir().then(|| Place { name: name.to_string(), path: path.to_string(), kind })
++    let norm = normalize_path(path);
++    Path::new(&norm).is_dir().then(|| Place { name: name.to_string(), path: norm, kind })
++}
++
++/// Parse Linux `/proc/mounts` lines into `(label, mount_path)` pairs for
++/// removable and user-mounted media under `/run/media/`, `/media/`, or `/mnt/`.
++pub fn parse_proc_mounts(mounts: &str) -> Vec<(String, String)> {
++    let mut out = Vec::new();
++    for line in mounts.lines() {
++        let Some(mount) = line.split(' ').nth(1) else { continue };
++        // /proc/mounts escapes spaces as \040.
++        let mount = mount.replace("\\040", " ");
++        if ["/run/media/", "/media/", "/mnt/"].iter().any(|p| mount.starts_with(p)) {
++            let name = mount.rsplit('/').next().unwrap_or(&mount).to_string();
++            out.push((name, mount));
++        }
++    }
++    out
++}
++
++/// Discover mounted volumes inside a macOS `/Volumes`-style directory, skipping
++/// hidden entries and the `/` boot-volume symlink.
++pub fn discover_volumes_in(volumes_dir: &Path) -> Vec<Place> {
++    let mut out = Vec::new();
++    let Ok(rd) = std::fs::read_dir(volumes_dir) else { return out };
++    for e in rd.flatten() {
++        let Ok(name) = e.file_name().into_string() else { continue };
++        if is_hidden_or_system_name(&name) {
++            continue;
++        }
++        let p = e.path();
++        // Skip the `/Volumes/Macintosh HD -> /` root symlink so it does not
++        // duplicate the "File system" root entry.
++        if let Ok(target) = std::fs::read_link(&p) {
++            if target == Path::new("/") {
++                continue;
++            }
++        }
++        if let Some(full) = p.to_str() {
++            if let Some(pl) = place(&name, full, "drive") {
++                out.push(pl);
++            }
++        }
++    }
++    out.sort_by(|a, b| natural_cmp(&a.name, &b.name));
++    out
+ }
+ 
+ /// Sensible places to start browsing from on this device.
+@@ -52,25 +119,47 @@ pub fn roots() -> Vec<Place> {
+         return out;
+     }
+ 
+-    if let Ok(home) = std::env::var("HOME") {
+-        let home = home.trim_end_matches('/').to_string();
++    // Desktop home directory: `HOME` on Linux/macOS, `USERPROFILE` fallback on Windows.
++    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
++        let home = normalize_path(&home);
+         add(place("Home", &home, "home"));
+-        for sub in ["Pictures", "Downloads", "ComfyUI/output", "invokeai/outputs", "stable-diffusion-webui/outputs"] {
++        for sub in [
++            "Pictures",
++            "Downloads",
++            "Documents",
++            "Desktop",
++            "ComfyUI/output",
++            "invokeai/outputs",
++            "stable-diffusion-webui/outputs",
++        ] {
+             let name = sub.rsplit('/').next().unwrap_or(sub);
+             let label = if sub.contains('/') { sub.to_string() } else { name.to_string() };
+             add(place(&label, &format!("{home}/{sub}"), "folder"));
+         }
+     }
+-    // Mounted drives.
++
++    if cfg!(target_os = "windows") {
++        // Enumerate mounted Windows drive letters (A:/ through Z:/).
++        for letter in b'A'..=b'Z' {
++            let drive = letter as char;
++            let root = format!("{drive}:/");
++            add(place(&format!("Drive {drive}:"), &root, "drive"));
++        }
++        return out;
++    }
++
++    if cfg!(target_os = "macos") {
++        for vol in discover_volumes_in(Path::new("/Volumes")) {
++            add(Some(vol));
++        }
++        add(place("File system", "/", "root"));
++        return out;
++    }
++
++    // Linux mounted drives.
+     if let Ok(mounts) = std::fs::read_to_string("/proc/mounts") {
+-        for line in mounts.lines() {
+-            let Some(mount) = line.split(' ').nth(1) else { continue };
+-            // /proc/mounts escapes spaces as \040.
+-            let mount = mount.replace("\\040", " ");
+-            if ["/run/media/", "/media/", "/mnt/"].iter().any(|p| mount.starts_with(p)) {
+-                let name = mount.rsplit('/').next().unwrap_or(&mount).to_string();
+-                add(place(&name, &mount, "drive"));
+-            }
++        for (name, mount) in parse_proc_mounts(&mounts) {
++            add(place(&name, &mount, "drive"));
+         }
+     }
+     add(place("File system", "/", "root"));
+@@ -115,12 +204,35 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+     }
+ }
+ 
++/// Whether `name` is a dot-hidden folder or well-known OS system folder.
++pub fn is_hidden_or_system_name(name: &str) -> bool {
++    name.starts_with('.')
++        || name.eq_ignore_ascii_case("$RECYCLE.BIN")
++        || name.eq_ignore_ascii_case("System Volume Information")
++}
++
++#[cfg(windows)]
++fn has_windows_hidden_attr(entry: &std::fs::DirEntry) -> bool {
++    use std::os::windows::fs::MetadataExt;
++    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
++    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
++    entry
++        .metadata()
++        .map(|m| (m.file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) != 0)
++        .unwrap_or(false)
++}
++
++#[cfg(not(windows))]
++fn has_windows_hidden_attr(_entry: &std::fs::DirEntry) -> bool {
++    false
++}
++
+ /// Sub-folders of `path`, sorted. Hidden folders are left out.
+ pub fn list_dirs(path: &str) -> std::io::Result<Vec<DirEntry>> {
+     let mut out = Vec::new();
+     for e in std::fs::read_dir(path)?.flatten() {
+         let Ok(name) = e.file_name().into_string() else { continue };
+-        if name.starts_with('.') {
++        if is_hidden_or_system_name(&name) || has_windows_hidden_attr(&e) {
+             continue;
+         }
+         // is_dir() follows symlinks, so linked folders are browsable.
+@@ -129,7 +241,7 @@ pub fn list_dirs(path: &str) -> std::io::Result<Vec<DirEntry>> {
+             continue;
+         }
+         let Some(full) = p.to_str() else { continue };
+-        out.push(DirEntry { has_sub: has_subdir(&p), name, path: full.to_string() });
++        out.push(DirEntry { has_sub: has_subdir(&p), name, path: normalize_path(full) });
+     }
+     out.sort_by(|a, b| natural_cmp(&a.name, &b.name));
+     Ok(out)
+@@ -143,7 +255,9 @@ fn has_subdir(path: &Path) -> bool {
+         if i >= 512 {
+             return true;
+         }
+-        if e.file_name().to_string_lossy().starts_with('.') {
++        let name = e.file_name();
++        let name_str = name.to_string_lossy();
++        if is_hidden_or_system_name(&name_str) || has_windows_hidden_attr(&e) {
+             continue;
+         }
+         if e.file_type().map_or(false, |t| t.is_dir() || t.is_symlink() && e.path().is_dir()) {
+@@ -167,13 +281,51 @@ mod tests {
+     #[test]
+     fn lists_folders_only() {
+         let tmp = tempfile::tempdir().unwrap();
+-        for d in ["b/inner", "a", ".hidden", "c10", "c9"] {
++        for d in ["b/inner", "a", ".hidden", "$RECYCLE.BIN", "System Volume Information", "c10", "c9"] {
+             std::fs::create_dir_all(tmp.path().join(d)).unwrap();
+         }
+         std::fs::write(tmp.path().join("file.png"), b"x").unwrap();
+         let dirs = list_dirs(tmp.path().to_str().unwrap()).unwrap();
+         let names: Vec<_> = dirs.iter().map(|d| (d.name.as_str(), d.has_sub)).collect();
+         assert_eq!(names, [("a", false), ("b", true), ("c9", false), ("c10", false)]);
++        for d in &dirs {
++            assert!(!d.path.contains('\\'), "path must use forward slashes: {}", d.path);
++        }
+         assert!(list_dirs("/definitely/not/here").is_err());
+     }
++
++    #[test]
++    fn normalizes_windows_and_unix_paths() {
++        assert_eq!(normalize_path("/"), "/");
++        assert_eq!(normalize_path("/home/josh/Pictures/"), "/home/josh/Pictures");
++        assert_eq!(normalize_path(r"C:\"), "C:/");
++        assert_eq!(normalize_path("C:/"), "C:/");
++        assert_eq!(normalize_path(r"C:\Users\josh\Pictures\"), "C:/Users/josh/Pictures");
++        assert_eq!(normalize_path(r"\\?\D:\AI\ComfyUI\output\"), "D:/AI/ComfyUI/output");
++        assert_eq!(normalize_path(r"\\?\UNC\nas\renders\"), "//nas/renders");
++    }
++
++    #[test]
++    fn parses_linux_proc_mounts_and_macos_volumes() {
++        let sample_mounts = "\
++/dev/nvme0n1p2 / ext4 rw,relatime 0 0
++/dev/sda1 /run/media/josh/Fast\\040SSD exfat rw,nosuid 0 0
++/dev/sdb1 /mnt/renders ext4 rw 0 0
++";
++        assert_eq!(
++            parse_proc_mounts(sample_mounts),
++            vec![
++                ("Fast SSD".to_string(), "/run/media/josh/Fast SSD".to_string()),
++                ("renders".to_string(), "/mnt/renders".to_string()),
++            ]
++        );
++
++        let tmp = tempfile::tempdir().unwrap();
++        std::fs::create_dir_all(tmp.path().join("ExternalDrive")).unwrap();
++        std::fs::create_dir_all(tmp.path().join(".Spotlight-V100")).unwrap();
++        let vols = discover_volumes_in(tmp.path());
++        assert_eq!(vols.len(), 1);
++        assert_eq!(vols[0].name, "ExternalDrive");
++        assert_eq!(vols[0].kind, "drive");
++    }
+ }
+diff --git a/core/src/notes.rs b/core/src/notes.rs
+index d3f093e..4942e24 100644
+--- a/core/src/notes.rs
++++ b/core/src/notes.rs
+@@ -23,7 +23,7 @@ use crate::db::Db;
+ use parking_lot::Mutex;
+ use serde_json::{json, Map, Value};
+ use std::path::{Path, PathBuf};
+-use std::time::UNIX_EPOCH;
++use std::time::{Duration, UNIX_EPOCH};
+ 
+ /// The notes file in each folder. Hidden, so file managers and the folder
+ /// walk leave it be.
+@@ -273,14 +273,40 @@ impl Notes {
+ 
+ /// Write `file` to `path` so that a reader (or a sync tool) never sees half
+ /// of it: to a temporary file beside it, then renamed over it.
++///
++/// On Windows, file watchers (`ReadDirectoryChangesW`) or search indexers may
++/// briefly hold a handle on `.generativeview.json` without `FILE_SHARE_DELETE`,
++/// causing `std::fs::rename` to return `PermissionDenied` or sharing violation
++/// (OS error 32). A bounded retry loop resolves transient locks cleanly.
+ fn write_atomic(path: &Path, file: &Map<String, Value>) -> Result<(), String> {
+     let text = serde_json::to_string_pretty(&Value::Object(file.clone())).map_err(|e| e.to_string())? + "\n";
+     let tmp = path.with_file_name(format!("{FILE_NAME}.{}.tmp", std::process::id()));
+     std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+-    std::fs::rename(&tmp, path).map_err(|e| {
+-        let _ = std::fs::remove_file(&tmp);
+-        format!("cannot write {}: {e}", path.display())
+-    })
++
++    let mut last_err = None;
++    for attempt in 0..4 {
++        match std::fs::rename(&tmp, path) {
++            Ok(()) => return Ok(()),
++            Err(e) => {
++                if e.kind() == std::io::ErrorKind::AlreadyExists {
++                    let _ = std::fs::remove_file(path);
++                    if std::fs::rename(&tmp, path).is_ok() {
++                        return Ok(());
++                    }
++                }
++                last_err = Some(e);
++                if attempt < 3 {
++                    std::thread::sleep(Duration::from_millis(15));
++                }
++            }
++        }
++    }
++    let _ = std::fs::remove_file(&tmp);
++    Err(format!(
++        "cannot write {}: {}",
++        path.display(),
++        last_err.map(|e| e.to_string()).unwrap_or_else(|| "unknown error".into())
++    ))
+ }
+ 
+ #[cfg(test)]
+@@ -331,4 +357,24 @@ mod tests {
+         assert!(notes.load_dir(&db, &dir, false));
+         assert!(db.note(&dir, "b.png").is_empty());
+     }
++
++    #[test]
++    fn write_atomic_overwrites_repeatedly_without_leaving_tmp_files() {
++        let tmp = tempfile::tempdir().unwrap();
++        let target = tmp.path().join(FILE_NAME);
++        for rating in 1..=5 {
++            let mut map = Map::new();
++            map.insert("generativeview".into(), json!(1));
++            map.insert("rating".into(), json!(rating));
++            write_atomic(&target, &map).unwrap();
++        }
++        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
++        assert_eq!(saved["rating"], 5);
++        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
++            .unwrap()
++            .flatten()
++            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
++            .collect();
++        assert!(leftovers.is_empty(), "leftover tmp files found: {leftovers:?}");
++    }
+ }
+diff --git a/docs/windows-macos-porting.md b/docs/windows-macos-porting.md
+new file mode 100644
+index 0000000..a09d0d0
+--- /dev/null
++++ b/docs/windows-macos-porting.md
+@@ -0,0 +1,91 @@
++# Windows and macOS Porting Guide & Architecture Decisions
++
++This document records the cross-platform changes made to prepare **GenerativeView** for Windows and macOS builds on top of the existing Linux and Android targets, and provides the native runner implementations (`windows/` and `macos/`) and CI recipes needed to complete the port.
++
++## 1. Architectural Decisions in This Patch
++
++### 1.1 Local Time Zone & Calendar Math (`core/src/dates.rs`)
++- **Problem:** `core/src/dates.rs` relied on POSIX `extern "C" { fn tzset(); }` and `libc::localtime_r(&secs, &mut tm)`. On Windows MSVC (`x86_64-pc-windows-msvc`), the Universal CRT (`ucrtbase`) does not export `tzset` or `localtime_r`; instead it exports `_tzset()` and `localtime_s(tm: *mut libc::tm, time: *const libc::time_t)` with reversed arguments, and rejects negative `time_t` values (pre-1970).
++- **Decision:** Split `init_zone()` and `local_tm(secs)` with `#[cfg(unix)]` and `#[cfg(windows)]`. On Windows, negative timestamps return `None` from `local_tm` so `local_day(ms)` falls back to deterministic civil division (`ms.div_euclid(86_400_000)`), avoiding CRT invalid-parameter assertions while keeping zero external crate overhead.
++
++### 1.2 Forward-Slash Path Normalization (`core/src/fsnav.rs` & `lib/src/core/models.dart`)
++- **Problem:** SQLite directory rows (`dirs.path`), `ItemList` binary packing, and Dart's `MediaItem.path` all join and split paths using `'/'`. On Windows, `std::fs::read_dir` and `USERPROFILE` emit backslashes (`\`) and extended-length prefixes (`\\?\`).
++- **Decision:** Normalize all paths at the boundary via `fsnav::normalize_path` in Rust and `joinMediaPath` in `lib/src/core/models.dart`. Windows Win32 and Rust `std::fs` APIs accept forward-slash paths (`C:/Users/josh/Pictures/img.png`) natively, so standardizing on `'/'` keeps SQLite queries, notes sidecar lookups, and Dart UI models uniform across all four operating systems.
++
++### 1.3 Per-OS Root & Volume Discovery (`core/src/fsnav.rs`)
++- **Problem:** Desktop root discovery previously assumed Linux (`HOME`, `/proc/mounts`, and `"/"`) and only hid dot-prefixed folders (`.hidden`).
++- **Decision:**
++  - **Home directory:** Checks `HOME` first and falls back to `USERPROFILE` on Windows, populating `Home`, `Pictures`, `Downloads`, `Documents`, `Desktop`, and standard AI output folders (`ComfyUI/output`, `invokeai/outputs`, `stable-diffusion-webui/outputs`).
++  - **Windows drives:** Enumerates `A:/` through `Z:/` and adds existing drive roots as `kind: "drive"`.
++  - **macOS volumes:** Scans `/Volumes` via `discover_volumes_in`, skipping hidden entries and the `/` root symlink so mounted external drives and DMGs appear alongside `"File system"` (`/`).
++  - **Hidden & system folders:** Filters `$RECYCLE.BIN` and `System Volume Information` by name on all platforms, and checks `FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM` via `MetadataExt::file_attributes()` on `#[cfg(windows)]`.
++
++### 1.4 Atomic Sidecar Writes under File Watchers (`core/src/notes.rs`)
++- **Problem:** `write_atomic` writes `.generativeview.json.<pid>.tmp` and calls `std::fs::rename(&tmp, path)`. On Windows, if `ReadDirectoryChangesW` (used by `notify`), Windows Search Indexer, or a reader thread briefly holds an open handle without `FILE_SHARE_DELETE`, `rename` transiently returns `PermissionDenied` or sharing violation (OS error 32).
++- **Decision:** Added a 4-attempt retry loop with a 15ms backoff in `write_atomic` plus explicit target removal fallback if `AlreadyExists` is returned.
++
++### 1.5 Dynamic Library Resolution (`lib/src/core/native_core.dart`)
++- **Decision:** `NativeCore.resolveLibraryPath` checks `GVCORE_LIB` first and then selects `gvcore.dll` on Windows, `libgvcore.dylib` on macOS, and `libgvcore.so` on Linux and Android.
++
++### 1.6 Desktop URL Launching & Primary Shortcut Modifiers (`lib/src/platform.dart`, `lib/src/ui/shortcut_layer.dart`)
++- **Decision:**
++  - `desktopUrlCommand` maps URL launching to `open <url>` on macOS, `rundll32 url.dll,FileProtocolHandler <url>` on Windows, and `xdg-open <url>` on Linux.
++  - `isPrimaryShortcutModifier` maps primary shortcuts (`F`, `C`, `Shift+C`, `V`, `+`, `-`) to `Command` (`isMetaPressed`) on macOS and `Ctrl` (`isControlPressed`) on Windows, Linux, and Android.
++
++### 1.7 Video Playback Dependencies (`pubspec.yaml` & PR #20 Context)
++- **Decision:** Added `media_kit_libs_windows_video: ^1.0.11` and `media_kit_libs_macos_video: ^1.1.4` to `pubspec.yaml`. Unlike Linux (where `media_kit_libs_linux` requires system `libmpv.so.2` or the custom `tool/build-libmpv-bundle.sh` added in PR #20), the Windows and macOS `media_kit_libs_*_video` packages automatically download and bundle prebuilt `libmpv` + FFmpeg binaries during `flutter build windows` and `flutter build macos`.
++
++## 2. Completing the Native Runner Scaffolding
++
++### Step 1: Generate Flutter Runner Directories
++From the repository root, generate the Windows and macOS host runners:
++```bash
++flutter create --platforms=windows,macos .
++flutter pub get
++```
++
++### Step 2: Implement `generativeview/media` on Windows (`windows/runner/flutter_window.cpp`)
++Register a `flutter::MethodChannel<flutter::EncodableValue>` named `"generativeview/media"` in `FlutterWindow::OnCreate` alongside `RegisterPlugins(flutter_controller_->engine())`:
++1. **`copyFile` (`{'path': String}` -> `bool`):**
++   - Convert the UTF-8 path to UTF-16 (`std::wstring`), replacing `/` with `\` for Win32 shell APIs.
++   - Call `OpenClipboard(GetHandle())` and `EmptyClipboard()`.
++   - Allocate `GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DROPFILES) + (wpath.size() + 2) * sizeof(wchar_t))`.
++   - Set `DROPFILES::pFiles = sizeof(DROPFILES)` and `DROPFILES::fWide = TRUE`, copy the double-null-terminated `wchar_t` path after the header, and call `SetClipboardData(CF_HDROP, hGlobal)` followed by `CloseClipboard()`.
++2. **`pasteSource` & `readCopiedFile`:**
++   - If `IsClipboardFormatAvailable(CF_HDROP)`, read the first file path via `DragQueryFileW(hDrop, 0, buf, MAX_PATH)` and return `{'path': utf8Path}` (for `pasteSource`) or the file's bytes (for `readCopiedFile`).
++   - Otherwise check `RegisterClipboardFormat(L"PNG")` or `CF_DIB` and return `{'bytes': pngBytes, 'type': 'image/png'}`.
++3. **`trashFile` (`{'path': String}` -> `String`):**
++   - Convert `path` to a double-null-terminated UTF-16 string (`wpath.push_back(L'\0')`) with backslashes.
++   - Populate `SHFILEOPSTRUCTW op = {}; op.wFunc = FO_DELETE; op.pFrom = wpath.c_str(); op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;`.
++   - Call `int rc = SHFileOperationW(&op);` and return `"trashed"` when `rc == 0 && !op.fAnyOperationsAborted`, `"cancelled"` if aborted, or `"failed: code"` otherwise.
++4. **Bundle `gvcore.dll` in `windows/CMakeLists.txt`:**
++   ```cmake
++   install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../core/target/release/gvcore.dll"
++     DESTINATION "${INSTALL_BUNDLE_DIR}" COMPONENT Runtime)
++   ```
++
++### Step 3: Implement `generativeview/media` on macOS (`macos/Runner/MainFlutterWindow.swift`)
++Register a `FlutterMethodChannel(name: "generativeview/media", binaryMessenger: flutterViewController.engine.binaryMessenger)` inside `MainFlutterWindow.awakeFromNib()`:
++1. **`copyFile`:**
++   ```swift
++   let pb = NSPasteboard.general
++   pb.clearContents()
++   let ok = pb.writeObjects([NSURL(fileURLWithPath: path)])
++   result(ok)
++   ```
++2. **`pasteSource` & `readCopiedFile`:**
++   - Read file URLs first via `pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]`. If present, return `["path": url.path]` (or `try? Data(contentsOf: url)` for `readCopiedFile`).
++   - Otherwise check `pb.data(forType: .png)` or convert `pb.data(forType: .tiff)` using `NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])`.
++3. **`trashFile`:**
++   ```swift
++   do {
++     try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
++     result("trashed")
++   } catch {
++     result("failed: \(error.localizedDescription)")
++   }
++   ```
++4. **macOS Entitlements (`macos/Runner/DebugProfile.entitlements` & `Release.entitlements`):**
++   - For direct GitHub/DMG distribution outside the Mac App Store, set `com.apple.security.app-sandbox` to `false` in both `.entitlements` files so `gvcore` can freely traverse `/Users/...` and `/Volumes/...` and write `.generativeview.json` sidecar files, and ensure `com.apple.security.network.client` is `true` for Civitai and model downloads.
++5. **Bundle `libgvcore.dylib`:**
++   - Build `core` (`cargo build --release --manifest-path core/Cargo.toml`), set install name via `install_name_tool -id "@executable_path/../Frameworks/libgvcore.dylib" core/target/release/libgvcore.dylib`, and copy `libgvcore.dylib` into `build/macos/Build/Products/Release/generativeview.app/Contents/Frameworks/`.
+diff --git a/lib/src/core/models.dart b/lib/src/core/models.dart
+index a4df189..10eab83 100644
+--- a/lib/src/core/models.dart
++++ b/lib/src/core/models.dart
+@@ -2,6 +2,17 @@ import 'dart:io';
+ import 'dart:convert';
+ import 'dart:typed_data';
+ 
++/// Join a folder path [dir] and file [name] using normalized forward slashes
++/// so Windows paths (`C:\Pictures` or `C:/Pictures/`) never produce mixed
++/// separators (`C:\Pictures/img.png`).
++String joinMediaPath(String dir, String name) {
++  final normalizedDir = dir.replaceAll('\\', '/');
++  if (normalizedDir.isEmpty) return name;
++  return normalizedDir.endsWith('/')
++      ? '$normalizedDir$name'
++      : '$normalizedDir/$name';
++}
++
+ /// One image or video in the current view.
+ class MediaItem {
+   const MediaItem({
+@@ -34,7 +45,7 @@ class MediaItem {
+   final int rating;
+   final Flag flag;
+ 
+-  String get path => dir.endsWith('/') ? '$dir$name' : '$dir/$name';
++  String get path => joinMediaPath(dir, name);
+ 
+   /// Changes whenever the file's contents may have.
+   String get version => '$id/$mtime/$size';
+diff --git a/lib/src/core/native_core.dart b/lib/src/core/native_core.dart
+index c0cf1cd..499d3ad 100644
+--- a/lib/src/core/native_core.dart
++++ b/lib/src/core/native_core.dart
+@@ -116,14 +116,26 @@ class NativeCore {
+   /// Scan progress and index-change notifications.
+   Stream<Map<String, dynamic>> get events => _events.stream;
+ 
+-  /// Where the shared library lives. Bundled builds find it by name; tests
+-  /// and `flutter run` from a checkout can point at a cargo build.
+-  static String defaultLibraryPath() {
+-    final override = Platform.environment['GVCORE_LIB'];
++  /// Resolve the shared library filename or path for [operatingSystem] and
++  /// [environment]. Supports `GVCORE_LIB` override across all platforms.
++  static String resolveLibraryPath({
++    String? operatingSystem,
++    Map<String, String>? environment,
++  }) {
++    final env = environment ?? Platform.environment;
++    final override = env['GVCORE_LIB'];
+     if (override != null && override.isNotEmpty) return override;
+-    return 'libgvcore.so';
++    return switch (operatingSystem ?? Platform.operatingSystem) {
++      'windows' => 'gvcore.dll',
++      'macos' => 'libgvcore.dylib',
++      _ => 'libgvcore.so',
++    };
+   }
+ 
++  /// Where the shared library lives. Bundled builds find it by name; tests
++  /// and `flutter run` from a checkout can point at a cargo build.
++  static String defaultLibraryPath() => resolveLibraryPath();
++
+   /// Load the library and open the engine. Throws [CoreException] if the
+   /// library is missing or the index database cannot be opened.
+   static NativeCore start({
+diff --git a/lib/src/platform.dart b/lib/src/platform.dart
+index d671b09..90775bf 100644
+--- a/lib/src/platform.dart
++++ b/lib/src/platform.dart
+@@ -1,4 +1,4 @@
+-/// The few things that differ between Linux and Android.
++/// Platform-specific integration across Linux, Android, Windows, and macOS.
+ library;
+ 
+ import 'dart:io';
+@@ -26,7 +26,7 @@ Future<AppDirs> resolveAppDirs() async {
+ 
+ /// How often the core re-checks folder timestamps as a backstop to
+ /// file-system notifications. Android's shared storage often delivers no
+-/// notifications at all, so it leans on this; on Linux it only matters for
++/// notifications at all, so it leans on this; on desktop it only matters for
+ /// network mounts.
+ int get pollIntervalMs => Platform.isAndroid ? 3000 : 15000;
+ 
+@@ -36,6 +36,34 @@ int get thumbCacheBytes => Platform.isAndroid ? 160 << 20 : 384 << 20;
+ /// Full-size image cache budget (Flutter's own image cache).
+ int get imageCacheBytes => Platform.isAndroid ? 256 << 20 : 768 << 20;
+ 
++/// Whether the primary keyboard shortcut modifier (`Cmd` on macOS, `Ctrl` on
++/// Windows, Linux, and Android) is currently pressed.
++bool isPrimaryShortcutModifier({
++  required bool isControlPressed,
++  required bool isMetaPressed,
++  String? operatingSystem,
++}) {
++  final os = operatingSystem ?? Platform.operatingSystem;
++  return os == 'macos' ? isMetaPressed : isControlPressed;
++}
++
++/// Build the desktop process invocation to launch an external HTTP(S) [url],
++/// or null if [url] is not an HTTP(S) address.
++({String executable, List<String> arguments})? desktopUrlCommand(
++  String url, {
++  String? operatingSystem,
++}) {
++  if (!url.startsWith('https://') && !url.startsWith('http://')) return null;
++  return switch (operatingSystem ?? Platform.operatingSystem) {
++    'macos' => (executable: 'open', arguments: [url]),
++    'windows' => (
++      executable: 'rundll32',
++      arguments: ['url.dll,FileProtocolHandler', url],
++    ),
++    _ => (executable: 'xdg-open', arguments: [url]),
++  };
++}
++
+ /// Whether we can read arbitrary folders. Always true off Android.
+ Future<bool> hasStorageAccess() async {
+   if (!Platform.isAndroid) return true;
+@@ -91,8 +119,8 @@ Future<bool> copyFileToClipboard(String path) async {
+ 
+ /// What is on the clipboard after [copyFileToClipboard], read back the way a
+ /// program pasting it would read it: through the content address on Android,
+-/// as the picture on Linux. Here so the integration test can check that the
+-/// bytes arrive unchanged.
++/// or native clipboard file/image targets on desktop. Here so the integration
++/// test can check that the bytes arrive unchanged.
+ Future<Uint8List?> readCopiedFile() async {
+   try {
+     return await _media.invokeMethod<Uint8List>('readCopiedFile');
+@@ -105,7 +133,8 @@ Future<Uint8List?> readCopiedFile() async {
+ 
+ /// Open a web page in the user's browser.
+ Future<bool> openUrl(String url) async {
+-  if (!url.startsWith('https://') && !url.startsWith('http://')) return false;
++  final cmd = desktopUrlCommand(url);
++  if (cmd == null) return false;
+   if (Platform.isAndroid) {
+     try {
+       return await _media.invokeMethod<bool>('openUrl', {'url': url}) ?? false;
+@@ -116,7 +145,7 @@ Future<bool> openUrl(String url) async {
+     }
+   }
+   try {
+-    final result = await Process.run('xdg-open', [url]);
++    final result = await Process.run(cmd.executable, cmd.arguments);
+     return result.exitCode == 0;
+   } on ProcessException {
+     return false;
+diff --git a/lib/src/ui/shortcut_layer.dart b/lib/src/ui/shortcut_layer.dart
+index a19edeb..ec9c9c6 100644
+--- a/lib/src/ui/shortcut_layer.dart
++++ b/lib/src/ui/shortcut_layer.dart
+@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
+ 
+ import '../app_state.dart';
+ import '../core/models.dart';
++import '../platform.dart';
+ import 'filter_sheet.dart';
+ import 'image_menu.dart';
+ import 'notes_widgets.dart';
+@@ -160,7 +161,10 @@ class ShortcutLayer extends StatelessWidget {
+     if (routes.depth > 1) return KeyEventResult.ignored;
+     final key = event.logicalKey;
+     final keyboard = HardwareKeyboard.instance;
+-    final ctrl = keyboard.isControlPressed;
++    final ctrl = isPrimaryShortcutModifier(
++      isControlPressed: keyboard.isControlPressed,
++      isMetaPressed: keyboard.isMetaPressed,
++    );
+     final search = state.searchText;
+ 
+     if (_typing) {
+@@ -231,7 +235,7 @@ class ShortcutLayer extends StatelessWidget {
+       state.setTileSize(state.tileSize / 1.15);
+       return KeyEventResult.handled;
+     }
+-    if (ctrl || keyboard.isAltPressed || keyboard.isMetaPressed) {
++    if (keyboard.isControlPressed || keyboard.isAltPressed || keyboard.isMetaPressed) {
+       return KeyEventResult.ignored;
+     }
+     if (event is! KeyRepeatEvent) {
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 1598cf2..c734ae4 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -16,6 +16,8 @@ dependencies:
+   media_kit_video: ^2.0.1
+   media_kit_libs_linux: ^1.2.1
+   media_kit_libs_android_video: ^1.3.8
++  media_kit_libs_windows_video: ^1.0.11
++  media_kit_libs_macos_video: ^1.1.4
+ 
+ dev_dependencies:
+   flutter_test:
+diff --git a/test/models_test.dart b/test/models_test.dart
+index cfdfd96..6ffe603 100644
+--- a/test/models_test.dart
++++ b/test/models_test.dart
+@@ -1,8 +1,11 @@
+ import 'dart:convert';
+ import 'dart:typed_data';
+ 
++import 'package:flutter/services.dart';
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:generativeview/src/core/models.dart';
++import 'package:generativeview/src/core/native_core.dart';
++import 'package:generativeview/src/platform.dart';
+ 
+ /// Build a packed query result the way `core/src/db.rs` does.
+ Uint8List pack(
+@@ -137,4 +140,132 @@ void main() {
+     expect(GenInfo.kindLabel('clip'), 'Text encoder');
+     expect(GenInfo.kindLabel('wan_t5_encoder'), 'Wan t5 encoder');
+   });
++
++  test('cross-platform path joining normalizes Windows and Unix separators', () {
++    expect(joinMediaPath('/out', 'a.png'), '/out/a.png');
++    expect(joinMediaPath('/', 'a.png'), '/a.png');
++    expect(joinMediaPath(r'C:\', 'a.png'), 'C:/a.png');
++    expect(joinMediaPath('C:/', 'a.png'), 'C:/a.png');
++    expect(
++      joinMediaPath(r'C:\Users\josh\ComfyUI\output', '0001.png'),
++      'C:/Users/josh/ComfyUI/output/0001.png',
++    );
++    expect(
++      joinMediaPath(r'D:\renders\', 'clip.mp4'),
++      'D:/renders/clip.mp4',
++    );
++  });
++
++  test('NativeCore.resolveLibraryPath selects platform binary or override', () {
++    expect(
++      NativeCore.resolveLibraryPath(operatingSystem: 'linux', environment: {}),
++      'libgvcore.so',
++    );
++    expect(
++      NativeCore.resolveLibraryPath(operatingSystem: 'android', environment: {}),
++      'libgvcore.so',
++    );
++    expect(
++      NativeCore.resolveLibraryPath(operatingSystem: 'windows', environment: {}),
++      'gvcore.dll',
++    );
++    expect(
++      NativeCore.resolveLibraryPath(operatingSystem: 'macos', environment: {}),
++      'libgvcore.dylib',
++    );
++    expect(
++      NativeCore.resolveLibraryPath(
++        operatingSystem: 'windows',
++        environment: {'GVCORE_LIB': r'C:\custom\gvcore.dll'},
++      ),
++      r'C:\custom\gvcore.dll',
++    );
++  });
++
++  test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
++    final linuxCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'linux');
++    expect(linuxCmd?.executable, 'xdg-open');
++    expect(linuxCmd?.arguments, ['https://civitai.com/models/1']);
++
++    final macCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'macos');
++    expect(macCmd?.executable, 'open');
++    expect(macCmd?.arguments, ['https://civitai.com/models/1']);
++
++    final winCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'windows');
++    expect(winCmd?.executable, 'rundll32');
++    expect(winCmd?.arguments, ['url.dll,FileProtocolHandler', 'https://civitai.com/models/1']);
++    expect(
++      desktopUrlCommand('file:///etc/passwd', operatingSystem: 'linux'),
++      isNull,
++    );
++
++    expect(
++      isPrimaryShortcutModifier(
++        isControlPressed: false,
++        isMetaPressed: true,
++        operatingSystem: 'macos',
++      ),
++      isTrue,
++    );
++    expect(
++      isPrimaryShortcutModifier(
++        isControlPressed: true,
++        isMetaPressed: false,
++        operatingSystem: 'macos',
++      ),
++      isFalse,
++    );
++    expect(
++      isPrimaryShortcutModifier(
++        isControlPressed: true,
++        isMetaPressed: false,
++        operatingSystem: 'windows',
++      ),
++      isTrue,
++    );
++  });
++
++  testWidgets('generativeview/media MethodChannel contract handles all outcomes', (tester) async {
++    const channel = MethodChannel('generativeview/media');
++    String? nextTrashReply = 'trashed';
++
++    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
++      switch (call.method) {
++        case 'copyFile':
++          return (call.arguments as Map)['path'] == 'C:/pics/a.png';
++        case 'readCopiedFile':
++          return Uint8List.fromList([1, 2, 3, 4]);
++        case 'pasteSource':
++          return <String, Object?>{
++            'path': 'C:/pics/a.png',
++            'type': 'image/png',
++            'name': 'a.png',
++          };
++        case 'trashFile':
++          return nextTrashReply;
++        default:
++          return null;
++      }
++    });
++    addTearDown(() {
++      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
++    });
++
++    expect(await copyFileToClipboard('C:/pics/a.png'), isTrue);
++    expect(await copyFileToClipboard('C:/pics/other.png'), isFalse);
++    expect(await readCopiedFile(), Uint8List.fromList([1, 2, 3, 4]));
++
++    final paste = await readPasteSource();
++    expect(paste?.path, 'C:/pics/a.png');
++    expect(paste?.type, 'image/png');
++    expect(paste?.name, 'a.png');
++
++    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.trashed, null));
++    nextTrashReply = 'cancelled';
++    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.cancelled, null));
++    nextTrashReply = 'unsupported';
++    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.unsupported, null));
++    nextTrashReply = 'failed: permission denied';
++    expect(await trashFile('C:/pics/a.png'), (TrashOutcome.failed, 'permission denied'));
++  });
+ }

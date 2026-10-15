@@ -4,6 +4,8 @@ name: build
 #   core      Rust unit and integration tests
 #   linux     analyzer, UI tests against the real core, release bundle, and
 #             the built app driven inside a virtual display
+#   windows   Rust core build, UI tests, and release zip
+#   macos     Universal Rust core build, UI tests, and release zip
 #   android   release APKs for arm64-v8a, armeabi-v7a and x86_64
 #   emulator  the app installed and driven on an emulated Android tablet
 #
@@ -373,10 +375,82 @@ jobs:
           path: ${{ runner.temp }}/emulator
           if-no-files-found: ignore
 
+  windows:
+    name: Windows app
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+          key: windows
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Rust core for Windows
+        working-directory: core
+        run: cargo build --release --lib
+      - run: flutter pub get
+      - name: Test
+        run: flutter test
+      - name: Build Windows release
+        run: flutter build windows --release --build-number="${{ github.run_number }}"
+      - name: Package Windows ZIP
+        shell: bash
+        run: |
+          mkdir -p dist
+          bundle="build/windows/x64/runner/Release"
+          cp LICENSE "$bundle/"
+          cd "$bundle"
+          7z a -tzip "$GITHUB_WORKSPACE/dist/GenerativeView-windows-x64.zip" *
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generativeview-windows-x64
+          path: dist/
+          if-no-files-found: error
+
+  macos:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+          key: macos
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build universal Rust core for macOS
+        run: tool/build-macos-core.sh
+      - run: flutter pub get
+      - name: Test
+        run: flutter test
+      - name: Build macOS release
+        run: flutter build macos --release --build-number="${{ github.run_number }}"
+      - name: Package macOS application
+        run: |
+          mkdir -p dist
+          app="build/macos/Build/Products/Release/generativeview.app"
+          mkdir -p "$app/Contents/Frameworks"
+          cp core/target/release/libgvcore.dylib "$app/Contents/Frameworks/"
+          install_name_tool -id "@rpath/libgvcore.dylib" "$app/Contents/Frameworks/libgvcore.dylib"
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --keepParent "$app" dist/GenerativeView-macos-universal.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generativeview-macos-universal
+          path: dist/
+          if-no-files-found: error
+
   release:
     name: Publish release
     if: github.event_name == 'push'
-    needs: [core, libmpv, linux, android, emulator]
+    needs: [core, libmpv, linux, android, emulator, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -398,6 +472,8 @@ jobs:
             abi=$(basename "$apk" | sed -E 's/^app-(.*)-release\.apk$/\1/')
             cp "$apk" "out/GenerativeView-$abi.apk"
           done
+          cp dist/generativeview-windows-x64/GenerativeView-windows-x64.zip out/
+          cp dist/generativeview-macos-universal/GenerativeView-macos-universal.zip out/
           ls -la out
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -410,6 +486,8 @@ jobs:
             echo "Automatic build of \`${GITHUB_SHA::7}\`: $(echo "$COMMIT_SUBJECT" | head -1)"
             echo
             echo "- **Linux**: \`GenerativeView-x86_64.AppImage\` — \`chmod +x\` it and run. Runs on Ubuntu 22.04, Debian 12, Arch and newer, on Wayland or X11. Needs GTK 3, and \`ffmpeg\` for video thumbnails; it brings its own video player library where \`mpv\` isn't installed. The \`.tar.gz\` is the same app as a plain folder with an \`install.sh\`."
+            echo "- **Windows**: \`GenerativeView-windows-x64.zip\` — unzip and run \`generativeview.exe\`."
+            echo "- **macOS**: \`GenerativeView-macos-universal.zip\` — unzip and run \`generativeview.app\` (Universal binary for Apple Silicon and Intel Macs)."
             echo "- **Android**: \`GenerativeView-arm64-v8a.apk\` for tablets and phones."
             echo
             echo "GenerativeView is released under the [MIT License](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/LICENSE). Third-party licences are listed in the app under ⋮ → About → Open-source licences."

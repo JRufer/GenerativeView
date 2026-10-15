@@ -137,6 +137,21 @@ class NativeCore {
   /// and `flutter run` from a checkout can point at a cargo build.
   static String defaultLibraryPath() => resolveLibraryPath();
 
+  static DynamicLibrary _openLibrary(String path) {
+    try {
+      return DynamicLibrary.open(path);
+    } catch (_) {
+      if (Platform.isMacOS && !path.contains('/')) {
+        for (final candidate in ['@rpath/$path', '@executable_path/../Frameworks/$path']) {
+          try {
+            return DynamicLibrary.open(candidate);
+          } catch (_) {}
+        }
+      }
+      rethrow;
+    }
+  }
+
   /// Load the library and open the engine. Throws [CoreException] if the
   /// library is missing or the index database cannot be opened.
   static NativeCore start({
@@ -146,7 +161,7 @@ class NativeCore {
   }) {
     final DynamicLibrary lib;
     try {
-      lib = DynamicLibrary.open(libraryPath ?? defaultLibraryPath());
+      lib = _openLibrary(libraryPath ?? defaultLibraryPath());
     } on ArgumentError catch (e) {
       throw CoreException('Could not load the GenerativeView core: $e');
     }

@@ -1,6 +1,6 @@
 # GenerativeView
 
-A fast image browser for folders of AI-generated images, for Linux and Android.
+A fast image browser for folders of AI-generated images, for Linux, Windows, macOS and Android.
 
 Point it at an output folder and it shows a resizable grid of everything in it, reads the generation metadata out of each file (ComfyUI, InvokeAI, A1111/Forge), and lets you search the folder by prompt, model, LoRA, seed or file name. Tap any value to copy it; press and hold one to see every image that shares it.
 
@@ -212,6 +212,23 @@ tool/build-appimage.sh             # optional: wrap the bundle as a single-file 
 ```
 
 `generativeview /path/to/folder` opens that folder directly.
+
+### Windows
+
+```sh
+flutter build windows --release    # CMake automatically builds gvcore.dll
+```
+
+The release bundle is produced in `build/windows/x64/runner/Release/` with `generativeview.exe` and `gvcore.dll`.
+
+### macOS
+
+```sh
+tool/build-macos-core.sh           # builds universal (arm64 + x86_64) libgvcore.dylib
+flutter build macos --release
+```
+
+The release bundle is produced in `build/macos/Build/Products/Release/generativeview.app`.
 
 ### Android
 
