@@ -279,6 +279,8 @@ xvfb-run -a flutter test integration_test -d linux       # the built app in a vi
 
 Set `GV_SCREENSHOT_DIR` to have the tests save a PNG of each stage, and `GV_SAMPLE_DIR` to point `test/gallery_test.dart` at a folder of your own images.
 
+For guidelines on keeping features, path logic, native runners, and tests synchronized across Linux, Windows, macOS, and Android, see the [Cross-Platform Architecture & Synchronization Guide](docs/cross-platform-sync-guide.md).
+
 ## Known limits
 
 - Dark theme only.
