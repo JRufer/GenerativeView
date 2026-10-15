@@ -459,7 +459,14 @@ class AppState extends ChangeNotifier {
           target.startsWith(pPath.endsWith('/') ? pPath : '$pPath/');
       if (under && (best == null || pPath.length > best.path.length)) best = p;
     }
-    if (best == null) return;
+    if (best == null) {
+      final root = target.contains('/')
+          ? target.substring(0, target.indexOf('/') + 1)
+          : target;
+      final p = Place(root, root, 'drive');
+      places.add(p);
+      best = p;
+    }
     var current = normalizePath(best.path);
     final rest = target
         .substring(current.length)
@@ -468,10 +475,15 @@ class AppState extends ChangeNotifier {
         .toList();
     for (final segment in rest) {
       expanded.add(current);
-      children[current] ??= await _list(current);
-      current = current.endsWith('/')
+      final list = (children[current] ?? await _list(current)).toList();
+      final nextCurrent = current.endsWith('/')
           ? '$current$segment'
           : '$current/$segment';
+      if (!list.any((d) => normalizePath(d.path) == normalizePath(nextCurrent))) {
+        list.add(DirNode(segment, nextCurrent, true));
+      }
+      children[current] = list;
+      current = nextCurrent;
     }
     // ...and open the folder itself, so its sub-folders are one tap away.
     final own = await _list(current);

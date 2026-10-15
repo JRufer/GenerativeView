@@ -214,11 +214,10 @@ pub fn is_hidden_or_system_name(name: &str) -> bool {
 #[cfg(windows)]
 fn has_windows_hidden_attr(entry: &std::fs::DirEntry) -> bool {
     use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
     const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
     entry
         .metadata()
-        .map(|m| (m.file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) != 0)
+        .map(|m| (m.file_attributes() & FILE_ATTRIBUTE_SYSTEM) != 0)
         .unwrap_or(false)
 }
 

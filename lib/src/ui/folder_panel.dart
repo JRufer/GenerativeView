@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
-import '../core/models.dart' show exactTerm;
+import '../core/models.dart' show exactTerm, normalizePath;
 import '../theme.dart';
 import 'context_menu.dart';
 import 'sheet.dart';
@@ -67,10 +67,13 @@ class _FolderPanelState extends State<FolderPanel> {
   /// row into view (it can be hundreds of rows down in a big tree).
   void _scrollToCurrent(List<_Row> rows) {
     if (state.treeRevealTick == _seenReveal) return;
-    final index = rows.indexWhere((r) => r.path == state.folder && r.depth > 0);
+    final target = normalizePath(state.folder ?? '');
+    final index = rows.indexWhere(
+      (r) => normalizePath(r.path) == target && r.depth > 0,
+    );
     final fallback = index >= 0
         ? index
-        : rows.indexWhere((r) => r.path == state.folder);
+        : rows.indexWhere((r) => normalizePath(r.path) == target);
     if (fallback < 0) return;
     _seenReveal = state.treeRevealTick;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -109,7 +112,10 @@ class _FolderPanelState extends State<FolderPanel> {
   List<_Row> _rows() {
     final rows = <_Row>[];
     void addChildren(String parent, int depth) {
-      for (final child in state.children[parent] ?? const <DirNode>[]) {
+      final childrenList = state.children[parent] ??
+          state.children[normalizePath(parent)] ??
+          const <DirNode>[];
+      for (final child in childrenList) {
         rows.add(
           _Row(
             child.name,
@@ -119,7 +125,9 @@ class _FolderPanelState extends State<FolderPanel> {
             Icons.folder_outlined,
           ),
         );
-        if (state.expanded.contains(child.path)) {
+        final childNorm = normalizePath(child.path);
+        if (state.expanded.contains(child.path) ||
+            state.expanded.contains(childNorm)) {
           addChildren(child.path, depth + 1);
         }
       }
@@ -127,7 +135,11 @@ class _FolderPanelState extends State<FolderPanel> {
 
     for (final place in state.places) {
       rows.add(_Row(place.name, place.path, 0, true, _placeIcon(place.kind)));
-      if (state.expanded.contains(place.path)) addChildren(place.path, 1);
+      final placeNorm = normalizePath(place.path);
+      if (state.expanded.contains(place.path) ||
+          state.expanded.contains(placeNorm)) {
+        addChildren(place.path, 1);
+      }
     }
     return rows;
   }
@@ -220,11 +232,13 @@ class _FolderPanelState extends State<FolderPanel> {
                       itemCount: rows.length,
                       itemBuilder: (context, index) {
                         final row = rows[index];
+                        final rowNorm = normalizePath(row.path);
                         return _FolderRow(
                           row: row,
-                          current: row.path == state.folder,
+                          current: rowNorm == normalizePath(state.folder ?? ''),
                           pinned: state.isFolderPinned(row.path),
-                          expanded: state.expanded.contains(row.path),
+                          expanded: state.expanded.contains(row.path) ||
+                              state.expanded.contains(rowNorm),
                           onOpen: () => _pick(row.path),
                           onToggle: () => state.toggleExpanded(row.path),
                           onMenu: (position) => _menu(row.path, position),
