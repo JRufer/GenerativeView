@@ -276,6 +276,7 @@ class AppState extends ChangeNotifier {
 
   /// Bumped when the tree has been opened down to the current folder.
   int treeRevealTick = 0;
+  Future<void>? treeRevealing;
 
   // ---------------------------------------------------------------- pins
 
@@ -367,6 +368,7 @@ class AppState extends ChangeNotifier {
     final start = initialFolder ?? saved['folder'] as String?;
     if (start != null && start.isNotEmpty) {
       await openFolder(start, remember: initialFolder == null);
+      await treeRevealing;
     } else {
       notifyListeners();
     }
@@ -438,13 +440,16 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> toggleExpanded(String path) async {
-    if (expanded.remove(path)) {
+    final norm = normalizePath(path);
+    if (expanded.remove(norm) || expanded.remove(path)) {
       notifyListeners();
       return;
     }
-    expanded.add(path);
+    expanded.add(norm);
     notifyListeners();
-    children[path] = await _list(path);
+    final list = await _list(norm);
+    children[norm] = list;
+    children[path] = list;
     if (!_disposed) notifyListeners();
   }
 
@@ -520,7 +525,9 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       scan.value = ScanStatus(error: '$e');
     }
-    unawaited(revealInTree(dir));
+    final rev = revealInTree(dir);
+    treeRevealing = rev;
+    unawaited(rev);
     await _reload();
     if (contentSearch) unawaited(refreshContent());
   }
@@ -792,7 +799,10 @@ class AppState extends ChangeNotifier {
 
   void _onEvent(Map<String, dynamic> e) {
     if (e['t'] == 'upscale') return _onUpscaleEvent(e);
-    if (e['root'] != folder) return;
+    if (normalizePath(e['root'] as String? ?? '') !=
+        normalizePath(folder ?? '')) {
+      return;
+    }
     switch (e['t']) {
       case 'content':
         _onContentEvent(e);

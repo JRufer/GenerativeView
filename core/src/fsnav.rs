@@ -31,12 +31,25 @@ pub fn normalize_path(raw: &str) -> String {
         raw.to_string()
     };
     let mut s = stripped.replace('\\', "/");
+    if s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_lowercase() {
+        let mut bytes = s.into_bytes();
+        bytes[0] = bytes[0].to_ascii_uppercase();
+        s = String::from_utf8(bytes).unwrap();
+    }
+    if s.starts_with("/private/var/") || s == "/private/var" {
+        s = s[8..].to_string();
+    } else if s.starts_with("/private/tmp/") || s == "/private/tmp" {
+        s = s[8..].to_string();
+    }
     while s.len() > 1 && s.ends_with('/') {
         // Keep the trailing slash on bare Windows drive roots like `C:/`.
         if s.len() == 3 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
             break;
         }
         s.pop();
+    }
+    if s.len() == 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
+        s.push('/');
     }
     s
 }
@@ -302,6 +315,9 @@ mod tests {
         assert_eq!(normalize_path(r"C:\Users\josh\Pictures\"), "C:/Users/josh/Pictures");
         assert_eq!(normalize_path(r"\\?\D:\AI\ComfyUI\output\"), "D:/AI/ComfyUI/output");
         assert_eq!(normalize_path(r"\\?\UNC\nas\renders\"), "//nas/renders");
+        assert_eq!(normalize_path("d:/foo"), "D:/foo");
+        assert_eq!(normalize_path("/private/var/folders/xyz"), "/var/folders/xyz");
+        assert_eq!(normalize_path("/private/tmp"), "/tmp");
     }
 
     #[test]

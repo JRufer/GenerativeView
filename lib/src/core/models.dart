@@ -778,11 +778,22 @@ String normalizePath(String raw) {
     stripped = stripped.substring(4);
   }
   var s = stripped.replaceAll(r'\', '/');
+  if (s.length >= 2 && s[1] == ':' && RegExp(r'^[a-z]').hasMatch(s)) {
+    s = '${s[0].toUpperCase()}${s.substring(1)}';
+  }
+  if (s.startsWith('/private/var/') || s == '/private/var') {
+    s = s.substring(8);
+  } else if (s.startsWith('/private/tmp/') || s == '/private/tmp') {
+    s = s.substring(8);
+  }
   while (s.length > 1 && s.endsWith('/')) {
     if (s.length == 3 && s[1] == ':' && RegExp(r'^[A-Za-z]').hasMatch(s)) {
       break;
     }
     s = s.substring(0, s.length - 1);
+  }
+  if (s.length == 2 && s[1] == ':' && RegExp(r'^[A-Za-z]').hasMatch(s)) {
+    s = '$s/';
   }
   return s;
 }

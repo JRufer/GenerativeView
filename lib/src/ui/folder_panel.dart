@@ -75,7 +75,6 @@ class _FolderPanelState extends State<FolderPanel> {
         ? index
         : rows.indexWhere((r) => normalizePath(r.path) == target);
     if (fallback < 0) return;
-    _seenReveal = state.treeRevealTick;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
       final position = _scroll.position;
@@ -84,11 +83,16 @@ class _FolderPanelState extends State<FolderPanel> {
           top >= position.pixels &&
           top + _rowHeight * 3 <= position.pixels + position.viewportDimension;
       if (!visible) {
-        _scroll.jumpTo(
-          (top - position.viewportDimension / 4)
-              .clamp(0.0, position.maxScrollExtent)
-              .toDouble(),
-        );
+        if (position.maxScrollExtent > 0 || fallback == 0) {
+          _scroll.jumpTo(
+            (top - position.viewportDimension / 4)
+                .clamp(0.0, position.maxScrollExtent)
+                .toDouble(),
+          );
+          _seenReveal = state.treeRevealTick;
+        }
+      } else {
+        _seenReveal = state.treeRevealTick;
       }
     });
   }

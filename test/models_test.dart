@@ -154,6 +154,10 @@ void main() {
       joinMediaPath(r'D:\renders\', 'clip.mp4'),
       'D:/renders/clip.mp4',
     );
+    expect(normalizePath('c:/foo/bar/'), 'C:/foo/bar');
+    expect(normalizePath(r'd:\foo\bar'), 'D:/foo/bar');
+    expect(normalizePath('/private/var/folders/xyz'), '/var/folders/xyz');
+    expect(normalizePath('/private/tmp'), '/tmp');
   });
 
   test('NativeCore.resolveLibraryPath selects platform binary or override', () {
