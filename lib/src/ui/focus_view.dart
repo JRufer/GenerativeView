@@ -14,8 +14,10 @@ import 'video_page.dart';
 
 /// One image at a time. Swipe (or use the keyboard) to move through the
 /// folder; zoom with a pinch, the wheel or the up and down keys, and drag
-/// to look around while zoomed in. Double tap to go
-/// back to the grid, right-click or press and hold for the image's menu.
+/// to look around while zoomed in. Tap to switch to full screen and back
+/// (F11 does the same); in full screen, pinching out past the fitted size
+/// drops back to the focus view. Double tap to go back to the grid,
+/// right-click or press and hold for the image's menu.
 class FocusView extends StatefulWidget {
   const FocusView({super.key, required this.state});
   final AppState state;
@@ -176,6 +178,13 @@ const double _zoomSlack = 0.05;
 /// zoomed no further than fitted.
 const double maxZoomPercent = 200;
 
+/// In full screen a pinch may shrink the picture to this share of the
+/// smallest it otherwise goes...
+const double _fullScreenMinScale = 0.5;
+
+/// ...and letting go below this share leaves full screen.
+const double _popOutScale = 0.85;
+
 /// Zoom works in percentages of the image's real size: 100 % is one image
 /// pixel per screen pixel. The wheel moves from one multiple of ten to the
 /// next; a pinch is free while the fingers are down and settles on the
@@ -202,6 +211,10 @@ class _FocusPageState extends State<_FocusPage>
   int _pointers = 0;
   double _glideFrom = 1;
   double _glideTo = 1;
+
+  /// The glide under way is to the fitted size, wherever that ends up while
+  /// the view around the picture is still growing or shrinking.
+  bool _glideFit = false;
   Timer? _settle;
   Timer? _chipTimer;
 
@@ -270,6 +283,9 @@ class _FocusPageState extends State<_FocusPage>
 
   bool get _zoomed => _scale > _fitScale * 1.01;
 
+  /// In full screen a pinch may take the picture below fitted, to leave.
+  bool get _canPopOut => widget.state.fullScreen && _fit != null;
+
   /// The zoom as a percentage of the image's real size, when that is known.
   double? get _percent => _fit == null ? null : _scale * _unit;
 
@@ -304,6 +320,7 @@ class _FocusPageState extends State<_FocusPage>
   void _reset() {
     _settle?.cancel();
     _glide.stop();
+    _glideFit = false;
     _set(_centred(_fitScale));
     _chipShown.value = false;
     _noteZoomed();
@@ -325,6 +342,12 @@ class _FocusPageState extends State<_FocusPage>
   /// Called while laying out, with the room there is for the image.
   void _layout(Size view, double pixelRatio) {
     if (view == _view && pixelRatio == _pixelRatio) return;
+    if (_glideFit && _glide.isAnimating) {
+      // Already on its way to fitted; the glide aims at the new size.
+      _view = view;
+      _pixelRatio = pixelRatio;
+      return;
+    }
     final fitted = _view.isEmpty || (_scale - _fitScale).abs() < 1e-3;
     final percent = _scale * _unit;
     _view = view;
@@ -413,6 +436,7 @@ class _FocusPageState extends State<_FocusPage>
     GestureBinding.instance.pointerSignalResolver.register(event, (_) {
       if (!mounted) return;
       _glide.stop();
+      _glideFit = false;
       _transform.value = _matrix(
         scale,
         focal.dx - scale * scene.dx,
@@ -431,6 +455,7 @@ class _FocusPageState extends State<_FocusPage>
   void _settleNow() {
     _settle = null;
     if (!mounted || _pointers > 0 || _glide.isAnimating || item.isVideo) return;
+    if (widget.state.fullScreen && _scale < _popOutScale) return;
     final unit = _unit;
     final percent = _scale * unit;
     final fitted = _fitScale * unit;
@@ -445,7 +470,25 @@ class _FocusPageState extends State<_FocusPage>
 
   void _onGlide() {
     final t = Curves.easeOut.transform(_glide.value);
-    _zoomAboutMiddle(_glideFrom + (_glideTo - _glideFrom) * t);
+    final to = _glideFit ? _fitScale : _glideTo;
+    _zoomAboutMiddle(_glideFrom + (to - _glideFrom) * t);
+    if (_glide.isCompleted) _glideFit = false;
+  }
+
+  /// A pinch let go of. In full screen, shrunk past the smallest the
+  /// picture normally goes: back to the focus view, the picture gliding to
+  /// fit it as the bars and panels come back.
+  void _onInteractionEnd(ScaleEndDetails _) {
+    if (widget.state.fullScreen &&
+        !item.isVideo &&
+        _scale < _popOutScale) {
+      _settle?.cancel();
+      _glideFit = true;
+      _glideFrom = _scale;
+      _glide.forward(from: 0);
+      widget.state.exitFullScreen();
+    }
+    widget.onZoomChanged(_zoomed);
   }
 
   /// Sets the zoom to [scale], keeping what is in the middle of the view
@@ -464,6 +507,7 @@ class _FocusPageState extends State<_FocusPage>
   void _glideToScale(double scale) {
     scale = scale.clamp(1.0, _maxScale).toDouble();
     _settle?.cancel();
+    _glideFit = false;
     _glideFrom = _scale;
     _glideTo = scale;
     if ((_glideTo - _glideFrom).abs() < 1e-4) {
@@ -577,6 +621,7 @@ class _FocusPageState extends State<_FocusPage>
               onPointerCancel: _pointerGone,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                onTap: widget.state.toggleFullScreen,
                 onDoubleTap: widget.state.closeFocus,
                 onSecondaryTapUp: (details) => showImageMenu(
                   context,
@@ -592,11 +637,17 @@ class _FocusPageState extends State<_FocusPage>
                 ),
                 child: InteractiveViewer(
                   transformationController: _transform,
-                  minScale: 1,
+                  minScale: _canPopOut ? _fullScreenMinScale : 1,
+                  // The viewer will not shrink its child smaller than the
+                  // view inside a tight boundary; where it may, the bounds
+                  // are lifted and [_onTransform] keeps the picture centred.
+                  boundaryMargin: _canPopOut
+                      ? const EdgeInsets.all(double.infinity)
+                      : EdgeInsets.zero,
                   maxScale: _maxScale,
                   panEnabled: _zoomed,
                   scaleEnabled: !item.isVideo,
-                  onInteractionEnd: (_) => widget.onZoomChanged(_zoomed),
+                  onInteractionEnd: _onInteractionEnd,
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerSignal: _onPointerSignal,

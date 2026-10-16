@@ -547,6 +547,66 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
+    // ---- a tap goes full screen and back ----------------------------------
+    Future<void> settleMotion() async {
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+    }
+
+    final framed = tester.getRect(find.byType(FocusView));
+    await tester.tap(find.byType(FocusView));
+    await pumpUntil(tester, () => state.fullScreen, what: 'full screen');
+    // Partway through, the bars are on their way out.
+    await settleMotion();
+    final whole = tester.getRect(find.byType(FocusView));
+    expect(whole.top, 0, reason: 'the top bar folds away');
+    expect(whole.height, greaterThan(framed.height));
+    expect(state.selectedIndex, 7, reason: 'the same picture');
+    await screenshot(tester, boundary, '04b-full-screen');
+    await tester.tap(find.byType(FocusView));
+    await pumpUntil(tester, () => !state.fullScreen, what: 'back from full screen');
+    await settleMotion();
+    expect(state.mode, ViewMode.focus);
+    expect(tester.getRect(find.byType(FocusView)), framed);
+
+    // F11 toggles it too, and Esc steps back to the focus view, not the grid.
+    await tester.sendKeyEvent(LogicalKeyboardKey.f11);
+    await settleMotion();
+    expect(state.fullScreen, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settleMotion();
+    expect(state.fullScreen, isFalse);
+    expect(state.mode, ViewMode.focus);
+
+    // ---- in full screen, pinching out past fitted pops back -----------------
+    await tester.sendKeyEvent(LogicalKeyboardKey.f11);
+    await settleMotion();
+    expect(state.fullScreen, isTrue);
+    final pinchAt = tester.getCenter(find.byType(FocusView));
+    // Up and down, so the pager does not take it for a swipe.
+    final top = await tester.startGesture(pinchAt - const Offset(0, 160));
+    final bottom = await tester.startGesture(
+      pinchAt + const Offset(0, 160),
+      pointer: 42,
+    );
+    for (var i = 1; i <= 10; i++) {
+      final gap = 160 - 14.0 * i;
+      await top.moveTo(pinchAt - Offset(0, gap));
+      await bottom.moveTo(pinchAt + Offset(0, gap));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(state.fullScreen, isTrue, reason: 'nothing changes until let go');
+    await top.up();
+    await bottom.up();
+    await pumpUntil(tester, () => !state.fullScreen, what: 'the pinch out');
+    await settleMotion();
+    expect(state.mode, ViewMode.focus);
+    expect(tester.getRect(find.byType(FocusView)), framed);
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     // ---- double tap returns to the grid ------------------------------------
     await tester.tap(find.byType(FocusView));
     await tester.pump(const Duration(milliseconds: 60));

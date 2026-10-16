@@ -12,6 +12,7 @@ struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   FlMethodChannel* media_channel;
+  GtkWindow* window;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -279,6 +280,24 @@ static void media_method_call_cb(FlMethodChannel* channel,
                                     ? trash_file(path)
                                     : fl_value_new_string("failed: no path");
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (g_str_equal(method, "setFullScreen")) {
+    // The focus view's full-screen mode: the window drops its frame and
+    // fills the monitor it is on, or goes back to how it was.
+    MyApplication* self = MY_APPLICATION(user_data);
+    FlValue* args = fl_method_call_get_args(method_call);
+    FlValue* on = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      on = fl_value_lookup_string(args, "on");
+    }
+    if (self->window != nullptr && on != nullptr &&
+        fl_value_get_type(on) == FL_VALUE_TYPE_BOOL) {
+      if (fl_value_get_bool(on)) {
+        gtk_window_fullscreen(self->window);
+      } else {
+        gtk_window_unfullscreen(self->window);
+      }
+    }
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (g_str_equal(method, "pasteSource")) {
     g_autoptr(FlValue) result = paste_source();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
@@ -298,6 +317,7 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
