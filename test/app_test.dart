@@ -583,17 +583,17 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.f11);
     await settleMotion();
     expect(state.fullScreen, isTrue);
-    final middle = tester.getCenter(find.byType(FocusView));
+    final pinchAt = tester.getCenter(find.byType(FocusView));
     // Up and down, so the pager does not take it for a swipe.
-    final top = await tester.startGesture(middle - const Offset(0, 160));
+    final top = await tester.startGesture(pinchAt - const Offset(0, 160));
     final bottom = await tester.startGesture(
-      middle + const Offset(0, 160),
+      pinchAt + const Offset(0, 160),
       pointer: 42,
     );
     for (var i = 1; i <= 10; i++) {
       final gap = 160 - 14.0 * i;
-      await top.moveTo(middle - Offset(0, gap));
-      await bottom.moveTo(middle + Offset(0, gap));
+      await top.moveTo(pinchAt - Offset(0, gap));
+      await bottom.moveTo(pinchAt + Offset(0, gap));
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(state.fullScreen, isTrue, reason: 'nothing changes until let go');
