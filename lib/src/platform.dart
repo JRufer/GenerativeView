@@ -131,6 +131,27 @@ Future<Uint8List?> readCopiedFile() async {
   }
 }
 
+/// Put the system's own furniture away for the full-screen view, or bring
+/// it back: the status and navigation bars on Android, the window frame on
+/// Linux (the window fills its monitor). Elsewhere the app's own chrome is
+/// hidden and the window is left as it is.
+Future<void> setSystemFullScreen(bool on) async {
+  if (Platform.isAndroid) {
+    await SystemChrome.setEnabledSystemUIMode(
+      on ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    );
+    return;
+  }
+  if (!Platform.isLinux) return;
+  try {
+    await _media.invokeMethod<void>('setFullScreen', {'on': on});
+  } on PlatformException catch (e) {
+    debugPrint('full screen failed: $e');
+  } on MissingPluginException {
+    // An older runner, or a test: the app's own chrome is still hidden.
+  }
+}
+
 /// Open a web page in the user's browser.
 Future<bool> openUrl(String url) async {
   final cmd = desktopUrlCommand(url);

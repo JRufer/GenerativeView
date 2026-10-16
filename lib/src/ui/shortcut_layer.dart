@@ -108,7 +108,9 @@ class MouseNavigation with WidgetsBindingObserver {
   }
 
   void back() {
-    if (state.mode == ViewMode.focus) {
+    if (state.exitFullScreen()) {
+      // Full screen steps back to the focus view first.
+    } else if (state.mode == ViewMode.focus) {
       state.closeFocus();
     } else if (!state.leftOpen) {
       state.toggleLeft();
@@ -260,6 +262,10 @@ class ShortcutLayer extends StatelessWidget {
       state.rescan();
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.f11) {
+      if (event is! KeyRepeatEvent) state.toggleFullScreen();
+      return KeyEventResult.handled;
+    }
 
     final focus = state.mode == ViewMode.focus;
     final columns = focus ? 1 : state.gridColumns;
@@ -303,7 +309,9 @@ class ShortcutLayer extends StatelessWidget {
         state.openFocus();
       }
     } else if (key == LogicalKeyboardKey.escape) {
-      if (focus) {
+      if (state.exitFullScreen()) {
+        // Full screen steps back to the focus view first.
+      } else if (focus) {
         state.closeFocus();
       } else if (state.leftFloats || state.rightFloats) {
         state.closeOverlays();

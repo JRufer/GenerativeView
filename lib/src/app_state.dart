@@ -306,6 +306,33 @@ class AppState extends ChangeNotifier {
       ? items[selectedIndex]
       : null;
 
+  bool _fullScreen = false;
+
+  /// The focus view's picture has the whole screen to itself: no top bar,
+  /// no panels, and the system's own bars and window frame put away too.
+  /// Only ever true in the focus view; leaving it, however it is left,
+  /// leaves full screen as well.
+  bool get fullScreen => _fullScreen && mode == ViewMode.focus;
+
+  /// Between the focus view and full screen: a tap on the picture, or F11.
+  /// From the grid, F11 opens the selected picture full screen.
+  void toggleFullScreen() {
+    if (mode != ViewMode.focus) {
+      openFocus();
+      if (mode != ViewMode.focus) return;
+    }
+    _fullScreen = !_fullScreen;
+    notifyListeners();
+  }
+
+  /// Back from full screen to the focus view. False if not in full screen.
+  bool exitFullScreen() {
+    if (!fullScreen) return false;
+    _fullScreen = false;
+    notifyListeners();
+    return true;
+  }
+
   /// The folder panel is showing, slid over the content.
   bool get leftFloats => leftOpen && narrowLayout && mode != ViewMode.focus;
 
@@ -1004,12 +1031,14 @@ class AppState extends ChangeNotifier {
     selectedIndex = i;
     _selectedId = items.idAt(i);
     mode = ViewMode.focus;
+    _fullScreen = false;
     notifyListeners();
   }
 
   void closeFocus() {
     if (mode != ViewMode.focus) return;
     mode = ViewMode.grid;
+    _fullScreen = false;
     revealTick++;
     notifyListeners();
   }

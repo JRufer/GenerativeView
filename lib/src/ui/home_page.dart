@@ -36,6 +36,12 @@ const double _sideHandleWidth = 14;
 const Duration _panelMotion = Duration(milliseconds: 220);
 const Curve _panelCurve = Curves.easeOutCubic;
 
+/// How long the move between the focus view and full screen takes: the top
+/// bar, panels and safe-area margins fold away (or back) while the picture
+/// grows to fill the room, all in one quick movement.
+const Duration _fullScreenMotion = Duration(milliseconds: 180);
+const Curve _fullScreenCurve = Curves.easeOutCubic;
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.state});
   final AppState state;
@@ -53,6 +59,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final GlobalKey _metaKey = GlobalKey(debugLabel: 'metadata');
   bool _storageOk = true;
   late final StreamSubscription<String> _notices;
+
+  /// Whether the system's bars / window frame were last put away.
+  bool _systemFullScreen = false;
 
   AppState get state => widget.state;
 
@@ -73,11 +82,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     state.removeListener(_onState);
     _notices.cancel();
+    if (_systemFullScreen) setSystemFullScreen(false);
     super.dispose();
   }
 
   void _onState() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    final full = state.fullScreen;
+    if (full != _systemFullScreen) {
+      _systemFullScreen = full;
+      setSystemFullScreen(full);
+    }
   }
 
   @override
@@ -121,52 +137,101 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final focus = state.mode == ViewMode.focus;
+    final full = state.fullScreen;
     return LayoutBuilder(
       builder: (context, constraints) {
         state.narrowLayout = constraints.maxWidth < _sideBySideWidth;
         // The whole window, so the soft keyboard coming up changes nothing.
         state.portraitLayout = constraints.maxWidth < constraints.maxHeight;
         final overlayOpen = state.leftFloats || state.rightFloats;
+        final time = motion(context, _fullScreenMotion);
+        // Built once, not once per frame of the full-screen movement.
+        final chrome = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TopBar(state: state),
+            _ScanBar(state: state),
+            if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
+            if ((state.contentSearch || state.lookingAlike) && !focus)
+              _ContentBanner(state: state),
+          ],
+        );
+        final content = Stack(
+          fit: StackFit.expand,
+          children: [
+            _body(constraints.maxWidth),
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: _FadeAway(
+                gone: full,
+                time: time,
+                child: UpscaleJobs(state: state),
+              ),
+            ),
+            // Over the grid, top and centre where it is seen. In
+            // the focus view it sits in the top bar instead, so
+            // nothing covers the picture.
+            if (!focus)
+              Positioned(
+                top: 12,
+                left: 0,
+                right: 0,
+                child: Center(child: RemixStatus(state: state)),
+              ),
+          ],
+        );
         return PopScope(
           canPop: !focus && !overlayOpen,
           onPopInvokedWithResult: (didPop, _) {
             if (didPop) return;
             if (overlayOpen) {
               _closeOverlays();
-            } else {
+            } else if (!state.exitFullScreen()) {
               state.closeFocus();
             }
           },
           child: Scaffold(
             backgroundColor: Palette.canvas,
-            body: SafeArea(
-              child: Column(
-                children: [
-                  TopBar(state: state),
-                  _ScanBar(state: state),
-                  if (!_storageOk) _StorageBanner(onGrant: _grantStorage),
-                  if ((state.contentSearch || state.lookingAlike) && !focus)
-                    _ContentBanner(state: state),
-                  Expanded(
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        _body(constraints.maxWidth),
-                        Positioned(right: 12, bottom: 12, child: UpscaleJobs(state: state)),
-                        // Over the grid, top and centre where it is seen. In
-                        // the focus view it sits in the top bar instead, so
-                        // nothing covers the picture.
-                        if (!focus)
-                          Positioned(
-                            top: 12,
-                            left: 0,
-                            right: 0,
-                            child: Center(child: RemixStatus(state: state)),
+            // The system's insets (as the scaffold hands them to its body)
+            // are kept clear of, except in full screen, where the picture
+            // runs to the very edges. Easing to and from them keeps the bars
+            // coming and going on Android from making the layout jump.
+            body: Builder(
+              builder: (context) => AnimatedPadding(
+                duration: time,
+                curve: _fullScreenCurve,
+                padding: full ? EdgeInsets.zero : MediaQuery.paddingOf(context),
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeLeft: true,
+                  removeTop: true,
+                  removeRight: true,
+                  removeBottom: true,
+                  child: Column(
+                    children: [
+                      TweenAnimationBuilder<double>(
+                        tween: Tween<double>(end: full ? 0 : 1),
+                        duration: time,
+                        curve: _fullScreenCurve,
+                        child: chrome,
+                        builder: (context, shown, bar) => _Reveal(
+                          amount: shown,
+                          axis: Axis.vertical,
+                          alignment: Alignment.bottomCenter,
+                          child: IgnorePointer(
+                            ignoring: full,
+                            child: Opacity(
+                              opacity: shown.clamp(0.0, 1.0).toDouble(),
+                              child: bar,
+                            ),
                           ),
-                      ],
-                    ),
+                        ),
+                      ),
+                      Expanded(child: content),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -220,8 +285,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final showLeft = state.leftOpen && !focus;
     // Lying over the content, the panels take turns: folders first.
     final floating = state.narrowLayout && !state.portraitLayout;
-    final showRight = state.rightOpen && !(floating && showLeft);
-    final time = motion(context, _panelMotion);
+    final full = state.fullScreen;
+    final showRight =
+        state.rightOpen && !full && !(floating && showLeft);
+    // Going to or from full screen the panel moves with everything else.
+    final time = motion(
+      context,
+      full || state.mode == ViewMode.focus ? _fullScreenMotion : _panelMotion,
+    );
     // Built once, not once per frame of the panels' movement.
     final content = _content();
     final folders = ColoredBox(
@@ -420,6 +491,27 @@ class _Reveal extends StatelessWidget {
         alignment: alignment,
         widthFactor: axis == Axis.horizontal ? amount : null,
         heightFactor: axis == Axis.vertical ? amount : null,
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Fades [child] out, and stops it taking taps, while [gone].
+class _FadeAway extends StatelessWidget {
+  const _FadeAway({required this.gone, required this.time, required this.child});
+  final bool gone;
+  final Duration time;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: gone,
+      child: AnimatedOpacity(
+        opacity: gone ? 0 : 1,
+        duration: time,
+        curve: _fullScreenCurve,
         child: child,
       ),
     );
