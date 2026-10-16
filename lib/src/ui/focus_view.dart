@@ -283,6 +283,9 @@ class _FocusPageState extends State<_FocusPage>
 
   bool get _zoomed => _scale > _fitScale * 1.01;
 
+  /// In full screen a pinch may take the picture below fitted, to leave.
+  bool get _canPopOut => widget.state.fullScreen && _fit != null;
+
   /// The zoom as a percentage of the image's real size, when that is known.
   double? get _percent => _fit == null ? null : _scale * _unit;
 
@@ -634,9 +637,13 @@ class _FocusPageState extends State<_FocusPage>
                 ),
                 child: InteractiveViewer(
                   transformationController: _transform,
-                  minScale: widget.state.fullScreen && _fit != null
-                      ? _fullScreenMinScale
-                      : 1,
+                  minScale: _canPopOut ? _fullScreenMinScale : 1,
+                  // The viewer will not shrink its child smaller than the
+                  // view inside a tight boundary; where it may, the bounds
+                  // are lifted and [_onTransform] keeps the picture centred.
+                  boundaryMargin: _canPopOut
+                      ? const EdgeInsets.all(double.infinity)
+                      : EdgeInsets.zero,
                   maxScale: _maxScale,
                   panEnabled: _zoomed,
                   scaleEnabled: !item.isVideo,
