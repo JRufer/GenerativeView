@@ -26,9 +26,36 @@ class FocusView extends StatefulWidget {
   State<FocusView> createState() => _FocusViewState();
 }
 
+/// How far a finger has to travel sideways, as a share of the view's width,
+/// before the pager takes it for a swipe. Until then the touch is left to the
+/// image, so a pinch has room to get going without turning the page.
+const double _swipeDeadZone = 0.18;
+
+/// The dead zone never shrinks below this, nor grows past the larger one, in
+/// logical pixels, so it stays usable on small phones and big unfolded ones.
+const double _swipeDeadZoneMin = 64;
+const double _swipeDeadZoneMax = 200;
+
+/// The swipe dead zone for a view of this size, in logical pixels.
+double _swipeSlop(MediaQueryData media) => (media.size.width * _swipeDeadZone)
+    .clamp(_swipeDeadZoneMin, _swipeDeadZoneMax)
+    .toDouble();
+
+/// [media] with the touch slop set to the swipe dead zone.
+MediaQueryData _withSwipeSlop(MediaQueryData media) => media.copyWith(
+  gestureSettings: DeviceGestureSettings(touchSlop: _swipeSlop(media)),
+);
+
 class _FocusViewState extends State<FocusView> {
   late final PageController _pages;
   bool _zoomed = false;
+
+  /// Fingers on the screen. With two or more down it is a pinch, and the
+  /// pager is held still.
+  int _touches = 0;
+
+  /// The picture [_zoomed] is about.
+  int _shownIndex = -1;
 
   AppState get state => widget.state;
 
@@ -38,6 +65,7 @@ class _FocusViewState extends State<FocusView> {
     _pages = PageController(
       initialPage: state.selectedIndex < 0 ? 0 : state.selectedIndex,
     );
+    _shownIndex = state.selectedIndex;
     state.addListener(_onState);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _precacheAround(state.selectedIndex);
@@ -53,6 +81,14 @@ class _FocusViewState extends State<FocusView> {
 
   void _onState() {
     if (!mounted) return;
+    // A new picture starts fitted: the one left behind resets itself, but
+    // it is no longer the active page by then, so its word that it is no
+    // longer zoomed never reaches us. Without this the pager would stay
+    // held after zooming in and stepping on with the keys.
+    if (state.selectedIndex != _shownIndex) {
+      _shownIndex = state.selectedIndex;
+      _zoomed = false;
+    }
     setState(() {});
     // Keyboard navigation, or the list shifting under us as files arrive:
     // either way make the pager show the selected item again.
@@ -81,38 +117,71 @@ class _FocusViewState extends State<FocusView> {
     }
   }
 
+  void _touchDown(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.touch) return;
+    _touches++;
+    if (_touches == 2) setState(() {});
+  }
+
+  void _touchGone(PointerEvent event) {
+    if (event.kind != PointerDeviceKind.touch || _touches == 0) return;
+    _touches--;
+    if (_touches == 1) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = state.items;
     if (items.isEmpty) return const SizedBox.expand();
+    final media = MediaQuery.of(context);
+    final held = _zoomed || _touches >= 2;
     return ColoredBox(
       color: Palette.canvas,
-      child: PageView.builder(
-        controller: _pages,
-        allowImplicitScrolling: true,
-        physics: _zoomed
-            ? const NeverScrollableScrollPhysics()
-            : const PageScrollPhysics(),
-        itemCount: items.length,
-        onPageChanged: (index) {
-          if (index != state.selectedIndex) state.select(index);
-          _precacheAround(index);
-        },
-        itemBuilder: (context, index) {
-          if (index >= items.length) return const SizedBox.shrink();
-          final item = items[index];
-          final active = index == state.selectedIndex;
-          return _FocusPage(
+      child: Listener(
+        onPointerDown: _touchDown,
+        onPointerUp: _touchGone,
+        onPointerCancel: _touchGone,
+        // The pager reads its drag threshold from here; the pages put the
+        // usual one back, so pinching and panning the image start at once.
+        child: MediaQuery(
+          data: _withSwipeSlop(media),
+          child: _pager(items, media, held),
+        ),
+      ),
+    );
+  }
+
+  Widget _pager(ItemList items, MediaQueryData media, bool held) {
+    return PageView.builder(
+      controller: _pages,
+      allowImplicitScrolling: true,
+      physics: held
+          ? const NeverScrollableScrollPhysics()
+          : const PageScrollPhysics(),
+      itemCount: items.length,
+      onPageChanged: (index) {
+        if (index != state.selectedIndex) state.select(index);
+        _precacheAround(index);
+      },
+      itemBuilder: (context, index) {
+        if (index >= items.length) return const SizedBox.shrink();
+        final item = items[index];
+        final active = index == state.selectedIndex;
+        return MediaQuery(
+          data: media,
+          child: _FocusPage(
             key: ValueKey<int>(item.id),
             state: state,
             item: item,
             active: active,
             onZoomChanged: (zoomed) {
-              if (active && zoomed != _zoomed) setState(() => _zoomed = zoomed);
+              if (active && zoomed != _zoomed) {
+                setState(() => _zoomed = zoomed);
+              }
             },
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -564,6 +633,7 @@ class _FocusPageState extends State<_FocusPage>
   @override
   Widget build(BuildContext context) {
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final media = MediaQuery.of(context);
     return LayoutBuilder(
       builder: (context, box) {
         _layout(box.biggest, pixelRatio);
@@ -635,23 +705,34 @@ class _FocusPageState extends State<_FocusPage>
                   item,
                   details.globalPosition,
                 ),
-                child: InteractiveViewer(
-                  transformationController: _transform,
-                  minScale: _canPopOut ? _fullScreenMinScale : 1,
-                  // The viewer will not shrink its child smaller than the
-                  // view inside a tight boundary; where it may, the bounds
-                  // are lifted and [_onTransform] keeps the picture centred.
-                  boundaryMargin: _canPopOut
-                      ? const EdgeInsets.all(double.infinity)
-                      : EdgeInsets.zero,
-                  maxScale: _maxScale,
-                  panEnabled: _zoomed,
-                  scaleEnabled: !item.isVideo,
-                  onInteractionEnd: _onInteractionEnd,
-                  child: Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerSignal: _onPointerSignal,
-                    child: SizedBox.expand(child: content),
+                // The viewer's one-finger pan has to go further than the
+                // pager's dead zone before it claims the touch, or it would
+                // take every swipe; a pinch (fingers spreading or closing)
+                // still starts at the usual few pixels. Inside, the usual
+                // settings again.
+                child: MediaQuery(
+                  data: _withSwipeSlop(media),
+                  child: InteractiveViewer(
+                    transformationController: _transform,
+                    minScale: _canPopOut ? _fullScreenMinScale : 1,
+                    // The viewer will not shrink its child smaller than the
+                    // view inside a tight boundary; where it may, the bounds
+                    // are lifted and [_onTransform] keeps the picture centred.
+                    boundaryMargin: _canPopOut
+                        ? const EdgeInsets.all(double.infinity)
+                        : EdgeInsets.zero,
+                    maxScale: _maxScale,
+                    panEnabled: _zoomed,
+                    scaleEnabled: !item.isVideo,
+                    onInteractionEnd: _onInteractionEnd,
+                    child: MediaQuery(
+                      data: media,
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerSignal: _onPointerSignal,
+                        child: SizedBox.expand(child: content),
+                      ),
+                    ),
                   ),
                 ),
               ),

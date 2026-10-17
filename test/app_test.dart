@@ -547,6 +547,47 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
+    // A short sideways drag stays inside the swipe dead zone: no page turn,
+    // and having moved, it is no tap either.
+    final dragAt = tester.getCenter(find.byType(FocusView));
+    final nudge = await tester.startGesture(dragAt);
+    for (var i = 1; i <= 5; i++) {
+      await nudge.moveTo(dragAt + Offset(-10.0 * i, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await nudge.up();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(state.selectedIndex, 7, reason: 'a short drag is not a swipe');
+    expect(state.fullScreen, isFalse, reason: 'nor a tap');
+
+    // Zoomed in, the pager is held so a drag pans the picture. Stepping to
+    // another picture with the keys must let go of it again.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await pumpUntil(
+      tester,
+      () => state.selectedIndex == 6,
+      what: 'previous image by key',
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.fling(find.byType(FocusView), const Offset(-500, 0), 2000);
+    await pumpUntil(
+      tester,
+      () => state.selectedIndex == 7,
+      what: 'a swipe after zooming in and stepping on with the keys',
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     // ---- a tap goes full screen and back ----------------------------------
     Future<void> settleMotion() async {
       for (var i = 0; i < 6; i++) {
@@ -584,22 +625,29 @@ void main() {
     await settleMotion();
     expect(state.fullScreen, isTrue);
     final pinchAt = tester.getCenter(find.byType(FocusView));
-    // Up and down, so the pager does not take it for a swipe.
-    final top = await tester.startGesture(pinchAt - const Offset(0, 160));
-    final bottom = await tester.startGesture(
-      pinchAt + const Offset(0, 160),
+    // Side to side, the way a pager could mistake it for a swipe, and with
+    // the first finger drifting sideways before the second lands, as real
+    // fingers do. The swipe dead zone leaves the pinch to the image.
+    final left = await tester.startGesture(pinchAt - const Offset(160, 0));
+    for (var i = 1; i <= 4; i++) {
+      await left.moveTo(pinchAt - Offset(160 - 10.0 * i, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final right = await tester.startGesture(
+      pinchAt + const Offset(160, 0),
       pointer: 42,
     );
-    for (var i = 1; i <= 10; i++) {
-      final gap = 160 - 14.0 * i;
-      await top.moveTo(pinchAt - Offset(0, gap));
-      await bottom.moveTo(pinchAt + Offset(0, gap));
+    for (var i = 1; i <= 8; i++) {
+      final gap = 120 - 12.0 * i;
+      await left.moveTo(pinchAt - Offset(gap, 0));
+      await right.moveTo(pinchAt + Offset(gap + 40, 0));
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(state.fullScreen, isTrue, reason: 'nothing changes until let go');
-    await top.up();
-    await bottom.up();
+    await left.up();
+    await right.up();
     await pumpUntil(tester, () => !state.fullScreen, what: 'the pinch out');
+    expect(state.selectedIndex, 7, reason: 'the pinch turned no page');
     await settleMotion();
     expect(state.mode, ViewMode.focus);
     expect(tester.getRect(find.byType(FocusView)), framed);
