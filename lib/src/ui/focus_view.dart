@@ -54,6 +54,9 @@ class _FocusViewState extends State<FocusView> {
   /// pager is held still.
   int _touches = 0;
 
+  /// The picture [_zoomed] is about.
+  int _shownIndex = -1;
+
   AppState get state => widget.state;
 
   @override
@@ -62,6 +65,7 @@ class _FocusViewState extends State<FocusView> {
     _pages = PageController(
       initialPage: state.selectedIndex < 0 ? 0 : state.selectedIndex,
     );
+    _shownIndex = state.selectedIndex;
     state.addListener(_onState);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _precacheAround(state.selectedIndex);
@@ -77,6 +81,14 @@ class _FocusViewState extends State<FocusView> {
 
   void _onState() {
     if (!mounted) return;
+    // A new picture starts fitted: the one left behind resets itself, but
+    // it is no longer the active page by then, so its word that it is no
+    // longer zoomed never reaches us. Without this the pager would stay
+    // held after zooming in and stepping on with the keys.
+    if (state.selectedIndex != _shownIndex) {
+      _shownIndex = state.selectedIndex;
+      _zoomed = false;
+    }
     setState(() {});
     // Keyboard navigation, or the list shifting under us as files arrive:
     // either way make the pager show the selected item again.

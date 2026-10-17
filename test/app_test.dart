@@ -562,6 +562,32 @@ void main() {
     expect(state.selectedIndex, 7, reason: 'a short drag is not a swipe');
     expect(state.fullScreen, isFalse, reason: 'nor a tap');
 
+    // Zoomed in, the pager is held so a drag pans the picture. Stepping to
+    // another picture with the keys must let go of it again.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await pumpUntil(
+      tester,
+      () => state.selectedIndex == 6,
+      what: 'previous image by key',
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.fling(find.byType(FocusView), const Offset(-500, 0), 2000);
+    await pumpUntil(
+      tester,
+      () => state.selectedIndex == 7,
+      what: 'a swipe after zooming in and stepping on with the keys',
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     // ---- a tap goes full screen and back ----------------------------------
     Future<void> settleMotion() async {
       for (var i = 0; i < 6; i++) {
