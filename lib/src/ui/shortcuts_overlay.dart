@@ -23,7 +23,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
     'Moving around',
     [
       ('Arrows  or  W A S D', 'Move the selection; previous / next in the focus view'),
-      ('↑  /  ↓', 'Zoom in or out in the focus view (up to 200%)'),
+      ('↑  /  ↓', 'Zoom in or out in the focus view (up to 400%)'),
       ('Pinch  or  wheel', 'Zoom in the focus view; drag to look around'),
       ('Tap  or  F11', 'Full screen and back, in the focus view'),
       ('Pinch out', 'In full screen, past fitted: back to the focus view'),

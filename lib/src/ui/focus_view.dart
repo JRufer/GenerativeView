@@ -245,7 +245,7 @@ const double _zoomSlack = 0.05;
 /// The furthest in the image can be zoomed, as a percentage of its real
 /// size. An image so small that it is fitted to the view above this is
 /// zoomed no further than fitted.
-const double maxZoomPercent = 200;
+const double maxZoomPercent = 400;
 
 /// In full screen a pinch may shrink the picture to this share of the
 /// smallest it otherwise goes...

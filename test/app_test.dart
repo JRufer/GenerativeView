@@ -481,8 +481,7 @@ void main() {
     final middle = tester.getCenter(find.byType(FocusView));
     await tester.sendEventToBinding(mouse.hover(middle));
     final fitted = zoomLabels(tester);
-    // This picture is small enough to be fitted above 200%, as far in as
-    // zoom goes, so out first and then back in.
+    // Zoom out a notch, then back in to the fitted size.
     await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
     await tester.pump();
     expect(zoomLabels(tester), isNot(fitted), reason: 'wheel down zooms out');
@@ -1562,14 +1561,14 @@ void main() {
     expect(chip().label, '${fit.round()}%');
     expect(state.items[state.selectedIndex].name, 'large.png');
 
-    // ---- 200% is as far in as it goes -----------------------------------------
+    // ---- 400% is as far in as it goes -----------------------------------------
     for (var i = 0; i < 40; i++) {
       await wheel(-120);
     }
-    expect(chip().label, '200%');
+    expect(chip().label, '400%');
     await wheel(-120);
-    expect(chip().label, '200%', reason: 'the wheel stops at 200%');
-    await screenshot(tester, boundary, '18b-zoom-200');
+    expect(chip().label, '400%', reason: 'the wheel stops at 400%');
+    await screenshot(tester, boundary, '18b-zoom-400');
 
     // ---- up and down zoom in the focus view, and leave the picture alone ----
     final picture = state.selectedIndex;
@@ -1581,14 +1580,14 @@ void main() {
     }
 
     await key(LogicalKeyboardKey.arrowDown);
-    expect(chip().label, '190%');
+    expect(chip().label, '390%');
     await key(LogicalKeyboardKey.arrowUp);
-    expect(chip().label, '200%');
+    expect(chip().label, '400%');
     await key(LogicalKeyboardKey.arrowUp);
-    expect(chip().label, '200%', reason: 'up stops at 200%');
+    expect(chip().label, '400%', reason: 'up stops at 400%');
     await key(LogicalKeyboardKey.arrowDown);
     await key(LogicalKeyboardKey.arrowDown);
-    expect(chip().label, '180%');
+    expect(chip().label, '380%');
     expect(state.selectedIndex, picture, reason: 'up and down only zoom');
 
     // Away from 100% the chip fades once the zooming stops.
@@ -1609,14 +1608,23 @@ void main() {
     // ---- an image smaller than the view: fitted is above 100% ---------------
     view = await show('ComfyUI_00001_.png');
     fit = math.min(view.width, view.height) / 384 * 100;
-    expect(fit, greaterThan(200));
+    expect(fit, greaterThan(100));
+    expect(fit, lessThan(400));
     expect(chip().label, '${fit.round()}%');
-    // Fitted is already past 200%, so that is as far in as it goes.
-    await wheel(-120);
-    expect(chip().label, '${fit.round()}%');
-    // Down carries on to 100%, where it stops for good.
+    // In from fitted, ten at a time, up to 400% and no further.
     final next = (fit / 10).floor() * 10 + 10;
-    for (var percent = next - 10; percent >= 100; percent -= 10) {
+    for (var percent = next; percent <= 400; percent += 10) {
+      await wheel(-120);
+      expect(chip().label, '$percent%');
+    }
+    await wheel(-120);
+    expect(chip().label, '400%', reason: 'the wheel stops at 400%');
+    // Down carries on to 100%, past fitted, where it stops for good.
+    for (var percent = 390; percent >= 100; percent -= 10) {
+      if (percent < fit && percent + 10 > fit) {
+        await wheel(120);
+        expect(chip().label, '${fit.round()}%');
+      }
       await wheel(120);
       expect(chip().label, '$percent%');
     }
