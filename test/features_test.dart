@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
 import 'package:generativeview/src/core/backends.dart' show RemixImage;
+import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/prompt_weights.dart';
@@ -27,6 +28,7 @@ import 'package:generativeview/src/ui/about_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
+import 'package:generativeview/src/ui/remix_dialog.dart';
 import 'package:generativeview/src/ui/thumb_image.dart';
 
 import 'support.dart';
@@ -882,6 +884,162 @@ void main() {
     expect(width.center.dy, height.center.dy);
     expect(height.left, greaterThan(width.right));
     await screenshot(tester, boundary, '45-remix-controls');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    await close(tester, state);
+  });
+
+  testWidgets('locked, width and height keep the picture\'s shape and say so', (tester) async {
+    final width = TextEditingController(text: '832');
+    final height = TextEditingController(text: '1216');
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: Center(child: SizeField(width: width, height: height, aspect: 832 / 1216))),
+    ));
+    BoxDecoration glow(String side) =>
+        tester.widget<AnimatedContainer>(find.byKey(ValueKey('remix-$side-glow'))).decoration! as BoxDecoration;
+    Icon lock() => tester.widget<Icon>(find.descendant(of: find.byKey(const ValueKey('remix-size-lock')), matching: find.byType(Icon)));
+
+    // Locked to start with, and blue.
+    expect(lock().icon, Icons.lock);
+    expect(lock().color, isNot(Colors.white));
+    // The lock sits above the swap button, between the two sides.
+    final lockAt = tester.getCenter(find.byKey(const ValueKey('remix-size-lock')));
+    final swapAt = tester.getCenter(find.byKey(const ValueKey('remix-size-swap')));
+    expect(lockAt.dy, lessThan(swapAt.dy));
+    expect(lockAt.dx, closeTo(swapAt.dx, 1));
+    expect(lockAt.dx, greaterThan(tester.getRect(find.byKey(const ValueKey('remix-width'))).right));
+    expect(lockAt.dx, lessThan(tester.getRect(find.byKey(const ValueKey('remix-height'))).left));
+
+    // A new width brings the height along, and the height glows for a moment.
+    await tester.enterText(find.byKey(const ValueKey('remix-width')), '1024');
+    await tester.pump();
+    expect(height.text, '${(1024 * 1216 / 832).round()}');
+    expect((glow('height').border! as Border).top.color, isNot(Colors.transparent));
+    expect((glow('width').border! as Border).top.color, Colors.transparent);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect((glow('height').border! as Border).top.color, Colors.transparent);
+    // And the other way.
+    await tester.enterText(find.byKey(const ValueKey('remix-height')), '608');
+    await tester.pump();
+    expect(width.text, '${(608 * 832 / 1216).round()}');
+    expect((glow('width').border! as Border).top.color, isNot(Colors.transparent));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    // Turned on its side, it keeps the turned shape.
+    await tester.tap(find.byKey(const ValueKey('remix-size-swap')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const ValueKey('remix-width')), '1216');
+    await tester.pump();
+    expect(height.text, '832');
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    // Unlocked (white), each side is its own.
+    await tester.tap(find.byKey(const ValueKey('remix-size-lock')));
+    await tester.pump();
+    expect(lock().icon, Icons.lock_open);
+    expect(lock().color, Colors.white);
+    await tester.enterText(find.byKey(const ValueKey('remix-width')), '500');
+    await tester.pump();
+    expect(height.text, '832');
+    expect((glow('height').border! as Border).top.color, Colors.transparent);
+    // An empty side brings nothing along.
+    await tester.tap(find.byKey(const ValueKey('remix-size-lock')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const ValueKey('remix-width')), '');
+    await tester.pump();
+    expect(height.text, '832');
+  });
+
+  testWidgets('a LoRA weight slider starts at the picture\'s weight and shows how far it moved', (tester) async {
+    final choice = LoraChoice(const LoraRef('loras/fur_detail.safetensors', 0.8, null, ''));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(width: 424, child: LoraSection(loras: [choice])),
+        ),
+      ),
+    ));
+    // Folded away to start with.
+    expect(find.byKey(const ValueKey('remix-lora-slider-0')), findsNothing);
+    expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('remix-loras')));
+    await tester.pumpAndSettle();
+    expect(find.text('fur_detail'), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-lora-switch-0')), findsOneWidget);
+    expect(find.text('0.8'), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-lora-offset-0')), findsNothing);
+    // The slider is below the name.
+    final slider = find.byKey(const ValueKey('remix-lora-slider-0'));
+    expect(tester.getRect(slider).top, greaterThan(tester.getRect(find.text('fur_detail')).bottom));
+
+    // A tap where 1.5 is: -1 to 2 across the track, inside 12 at each end.
+    final rect = tester.getRect(slider);
+    final track = rect.width - 24;
+    Offset at(double v) => Offset(rect.left + 12 + (v + 1) / 3 * track, rect.center.dy);
+    await tester.tapAt(at(1.5));
+    await tester.pump();
+    expect(choice.weight, closeTo(1.5, 1e-9));
+    expect(find.text('1.5'), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('remix-lora-offset-0'))).data, '+0.7');
+    // Dragged down below zero: the offset goes the other way.
+    await tester.dragFrom(at(1.5), Offset(at(-0.5).dx - at(1.5).dx, 0));
+    await tester.pump();
+    expect(choice.weight, closeTo(-0.5, 1e-9));
+    expect(tester.widget<Text>(find.byKey(const ValueKey('remix-lora-offset-0'))).data, '−1.3');
+    // Not past the ends.
+    await tester.dragFrom(at(-0.5), const Offset(-400, 0));
+    await tester.pump();
+    expect(choice.weight, -1);
+    // The arrow keys step it.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(choice.weight, closeTo(-0.95, 1e-9));
+    // Back to where the picture had it.
+    await tester.tap(find.byKey(const ValueKey('remix-lora-reset-0')));
+    await tester.pump();
+    expect(choice.weight, 0.8);
+    expect(find.byKey(const ValueKey('remix-lora-offset-0')), findsNothing);
+
+    // Off: left out of the remix, and the slider will not move.
+    await tester.tap(find.byKey(const ValueKey('remix-lora-switch-0')));
+    await tester.pump();
+    expect(choice.enabled, isFalse);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('remix-loras-summary'))).data, '1 · 1 off');
+    await tester.tapAt(at(2));
+    await tester.pump();
+    expect(choice.weight, 0.8);
+  });
+
+  testWidgets('the remix panel lists the picture\'s LoRAs, folded away', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    state.select(indexOf(state, 'fox_01.png'));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('remix-loras')).evaluate().isNotEmpty, what: 'the LoRAs');
+    await settle(tester);
+    expect(find.byKey(const ValueKey('remix-lora-slider-0')), findsNothing);
+    await tester.ensureVisible(find.byKey(const ValueKey('remix-loras')));
+    await tester.tap(find.byKey(const ValueKey('remix-loras')));
+    await settle(tester);
+    expect(find.descendant(of: find.byType(LoraSection), matching: find.text('fur_detail')), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-lora-slider-0')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('remix-lora-slider-0')));
+    await settle(tester);
+    final slider = tester.getRect(find.byKey(const ValueKey('remix-lora-slider-0')));
+    await tester.tapAt(Offset(slider.left + 12 + (1.2 + 1) / 3 * (slider.width - 24), slider.center.dy));
+    await settle(tester);
+    await screenshot(tester, boundary, '47-remix-loras');
+    // A picture without LoRAs has no such section.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    state.select(indexOf(state, 'fox_03.png'));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('remix-random')).evaluate().isNotEmpty, what: 'the remix panel');
+    await settle(tester);
+    expect(find.byKey(const ValueKey('remix-loras')), findsNothing);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await settle(tester);
     await close(tester, state);

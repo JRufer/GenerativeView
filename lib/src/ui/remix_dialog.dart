@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/backends.dart';
+import '../core/lora_edits.dart';
 import '../core/models.dart';
 import '../core/spelling.dart';
 import '../theme.dart';
@@ -60,6 +62,12 @@ class _RemixPanelState extends State<RemixPanel> {
   late final TextEditingController _seed = TextEditingController(text: widget.info.seed);
   late final TextEditingController _width;
   late final TextEditingController _height;
+
+  /// Width over height, as the picture is: kept while the size is locked.
+  late final double _aspect;
+
+  /// The picture's LoRAs, as the user sets them.
+  late final List<LoraChoice> _loras = [for (final l in widget.info.loras) LoraChoice(l)];
   bool _random = false;
   int _count = 1;
   String? _backend;
@@ -74,6 +82,7 @@ class _RemixPanelState extends State<RemixPanel> {
     final (w, h) = recipeSize(info);
     _width = TextEditingController(text: w > 0 ? '$w' : '1024');
     _height = TextEditingController(text: h > 0 ? '$h' : '1024');
+    _aspect = w > 0 && h > 0 ? w / h : 1;
     final support = backendSupport(info);
     // The program that made it, if it is set up and can take it; else the
     // first that can.
@@ -142,6 +151,7 @@ class _RemixPanelState extends State<RemixPanel> {
           count: _count,
           width: int.tryParse(_width.text) ?? 1024,
           height: int.tryParse(_height.text) ?? 1024,
+          loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
         ),
       );
       // Waited for in the background, panel or no panel.
@@ -229,7 +239,7 @@ class _RemixPanelState extends State<RemixPanel> {
               ),
               // Width and height are one control, kept on one line: when
               // they don't fit beside the seed they move down together.
-              _SizeField(width: _width, height: _height),
+              SizeField(width: _width, height: _height, aspect: _aspect),
               _Stepper(value: _count, min: 1, max: 16, label: _count == 1 ? 'picture' : 'pictures', onChanged: (v) => setState(() => _count = v)),
             ],
           ),
@@ -238,6 +248,7 @@ class _RemixPanelState extends State<RemixPanel> {
               padding: EdgeInsets.only(top: 6),
               child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
             ),
+          if (_loras.isNotEmpty) LoraSection(loras: _loras),
           PanelHeading(
             'Send to',
             trailing: TextButton.icon(
@@ -326,47 +337,510 @@ InputDecoration _box(String label) => InputDecoration(
   border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
 );
 
-/// Width, a swap button, and height, in one box.
-class _SizeField extends StatelessWidget {
-  const _SizeField({required this.width, required this.height});
+/// Width and height in one box, with a lock above the swap button between
+/// them. Locked (blue, the default), a new width brings the height along so
+/// the picture keeps its shape, [aspect] (width over height), and the
+/// reverse; the side brought along glows for a moment to say so. Unlocked
+/// (white), either side is set freely.
+class SizeField extends StatefulWidget {
+  const SizeField({super.key, required this.width, required this.height, required this.aspect});
   final TextEditingController width;
   final TextEditingController height;
+  final double aspect;
+
+  @override
+  State<SizeField> createState() => _SizeFieldState();
+}
+
+class _SizeFieldState extends State<SizeField> {
+  bool _locked = true;
+  late double _aspect = widget.aspect > 0 ? widget.aspect : 1;
+
+  /// The side most recently brought along, while it glows.
+  String? _glowing;
+  Timer? _glow;
+
+  @override
+  void dispose() {
+    _glow?.cancel();
+    super.dispose();
+  }
+
+  void _typed(bool isWidth, String text) {
+    if (!_locked) return;
+    final v = int.tryParse(text);
+    if (v == null || v <= 0) return;
+    final other = math.max(1, (isWidth ? v / _aspect : v * _aspect).round());
+    (isWidth ? widget.height : widget.width).text = '$other';
+    _flash(isWidth ? 'height' : 'width');
+  }
+
+  void _flash(String side) {
+    _glow?.cancel();
+    setState(() => _glowing = side);
+    _glow = Timer(const Duration(milliseconds: 650), () {
+      if (mounted) setState(() => _glowing = null);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    Widget field(TextEditingController controller, String label, String key) => SizedBox(
-          width: 76,
-          child: TextField(
-            key: ValueKey<String>(key),
-            controller: controller,
-            keyboardType: TextInputType.number,
-            textAlign: TextAlign.center,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: _box(label).copyWith(fillColor: Colors.transparent),
+    final still = MediaQuery.of(context).disableAnimations;
+    Widget field(TextEditingController controller, String label, String side) {
+      final glow = _glowing == side;
+      return AnimatedContainer(
+        key: ValueKey<String>('remix-$side-glow'),
+        duration: still ? Duration.zero : Duration(milliseconds: glow ? 120 : 420),
+        curve: Curves.easeOut,
+        width: 76,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: glow ? Palette.accent : Colors.transparent, width: 1.5),
+          boxShadow: [
+            if (glow) BoxShadow(color: Palette.accent.withValues(alpha: 0.45), blurRadius: 8),
+          ],
+        ),
+        child: TextField(
+          key: ValueKey<String>('remix-$side'),
+          controller: controller,
+          keyboardType: TextInputType.number,
+          textAlign: TextAlign.center,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: _box(label).copyWith(fillColor: Colors.transparent),
+          onChanged: (text) => _typed(side == 'width', text),
+        ),
+      );
+    }
+
+    Widget small({required Key key, required IconData icon, required String tooltip, required Color color, required VoidCallback onTap}) =>
+        Tooltip(
+          message: tooltip,
+          child: InkResponse(
+            key: key,
+            onTap: onTap,
+            radius: 18,
+            child: SizedBox(width: 34, height: 26, child: Icon(icon, size: 18, color: color)),
           ),
         );
+
     return Container(
       key: const ValueKey<String>('remix-size'),
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          field(width, 'Width', 'remix-width'),
-          IconButton(
-            tooltip: 'Swap width and height',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.swap_horiz, size: 20),
-            onPressed: () {
-              final w = width.text;
-              width.text = height.text;
-              height.text = w;
-            },
+          field(widget.width, 'Width', 'width'),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              small(
+                key: const ValueKey<String>('remix-size-lock'),
+                icon: _locked ? Icons.lock : Icons.lock_open,
+                color: _locked ? Palette.accent : Colors.white,
+                tooltip: _locked
+                    ? 'Shape locked: changing one side changes the other. Tap to unlock'
+                    : 'Shape unlocked: either side changes freely. Tap to lock',
+                onTap: () => setState(() => _locked = !_locked),
+              ),
+              small(
+                key: const ValueKey<String>('remix-size-swap'),
+                icon: Icons.swap_horiz,
+                color: Palette.text,
+                tooltip: 'Swap width and height',
+                onTap: () {
+                  final w = widget.width.text;
+                  widget.width.text = widget.height.text;
+                  widget.height.text = w;
+                  // Turned on its side, the shape kept is too.
+                  _aspect = 1 / _aspect;
+                },
+              ),
+            ],
           ),
-          field(height, 'Height', 'remix-height'),
+          field(widget.height, 'Height', 'height'),
         ],
       ),
     );
   }
+}
+
+/// The picture's LoRAs, folded away until opened: each with a switch to
+/// leave it out of the remix and a slider for its weight, from −1 to 2,
+/// that starts where the picture had it and shows in grey how far it has
+/// been moved.
+class LoraSection extends StatefulWidget {
+  const LoraSection({super.key, required this.loras});
+  final List<LoraChoice> loras;
+
+  @override
+  State<LoraSection> createState() => _LoraSectionState();
+}
+
+class _LoraSectionState extends State<LoraSection> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final still = MediaQuery.of(context).disableAnimations;
+    final loras = widget.loras;
+    final changed = loras.where((l) => l.changed).length;
+    final off = loras.where((l) => !l.enabled).length;
+    final summary = [
+      '${loras.length}',
+      if (off > 0) '$off off',
+      if (changed - off > 0) '${changed - off} changed',
+    ].join(' · ');
+    final rows = !_open
+        ? const SizedBox(width: double.infinity)
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < loras.length; i++)
+                _LoraRow(
+                  key: ValueKey<String>('remix-lora-$i'),
+                  index: i,
+                  choice: loras[i],
+                  onChanged: () => setState(() {}),
+                ),
+            ],
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        InkWell(
+          key: const ValueKey<String>('remix-loras'),
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                AnimatedRotation(
+                  turns: _open ? 0.25 : 0,
+                  duration: still ? Duration.zero : const Duration(milliseconds: 180),
+                  child: const Icon(Icons.chevron_right, size: 18, color: Palette.faint),
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  'LORAS',
+                  style: TextStyle(fontSize: 10.5, letterSpacing: 0.9, fontWeight: FontWeight.w600, color: Palette.faint),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  summary,
+                  key: const ValueKey<String>('remix-loras-summary'),
+                  style: TextStyle(fontSize: 11.5, color: changed > 0 ? Palette.accent : Palette.faint),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // AnimatedSize cannot take a zero duration, so with motion turned
+        // down the list simply appears.
+        if (still)
+          rows
+        else
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: rows,
+          ),
+      ],
+    );
+  }
+}
+
+class _LoraRow extends StatelessWidget {
+  const _LoraRow({super.key, required this.index, required this.choice, required this.onChanged});
+  final int index;
+  final LoraChoice choice;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = choice;
+    var name = c.original.name.split(RegExp(r'[/\\]')).last;
+    name = name.replaceFirst(RegExp(r'\.(safetensors|ckpt|pt|pth|bin)$', caseSensitive: false), '');
+    final offset = c.offset;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 4, 6, 6),
+      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Tooltip(
+                  message: c.original.name,
+                  child: Text(
+                    name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: c.enabled ? Palette.text : Palette.faint,
+                      decoration: c.enabled ? null : TextDecoration.lineThrough,
+                    ),
+                  ),
+                ),
+              ),
+              if (c.enabled) ...[
+                Text(
+                  weightText(c.weight),
+                  key: ValueKey<String>('remix-lora-weight-$index'),
+                  style: const TextStyle(fontSize: 12.5, fontFeatures: [FontFeature.tabularFigures()]),
+                ),
+                if (c.reweighted)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: Text(
+                      '${offset > 0 ? '+' : '−'}${weightText(offset.abs())}',
+                      key: ValueKey<String>('remix-lora-offset-$index'),
+                      style: const TextStyle(fontSize: 11.5, color: Palette.muted, fontFeatures: [FontFeature.tabularFigures()]),
+                    ),
+                  ),
+              ],
+              SizedBox(
+                width: 34,
+                child: c.reweighted
+                    ? IconButton(
+                        key: ValueKey<String>('remix-lora-reset-$index'),
+                        tooltip: 'Back to ${weightText(c.originalWeight)}, as the picture had it',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.undo, size: 16),
+                        onPressed: () {
+                          c.weight = c.originalWeight;
+                          onChanged();
+                        },
+                      )
+                    : null,
+              ),
+              Switch(
+                key: ValueKey<String>('remix-lora-switch-$index'),
+                value: c.enabled,
+                onChanged: (v) {
+                  c.enabled = v;
+                  onChanged();
+                },
+              ),
+            ],
+          ),
+          WeightSlider(
+            key: ValueKey<String>('remix-lora-slider-$index'),
+            value: c.weight,
+            origin: c.originalWeight,
+            enabled: c.enabled,
+            onChanged: (v) {
+              c.weight = v;
+              onChanged();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A slider for a LoRA weight, from [loraWeightMin] to [loraWeightMax] in
+/// steps of 0.05 (or wider, for a picture made outside that). A tick marks
+/// [origin], the weight the picture was made with, and a grey band runs
+/// from there to the thumb: how far it has been moved, and which way.
+/// Drag or tap it; the arrow keys move it a step.
+class WeightSlider extends StatefulWidget {
+  const WeightSlider({
+    super.key,
+    required this.value,
+    required this.origin,
+    required this.onChanged,
+    this.enabled = true,
+  });
+  final double value;
+  final double origin;
+  final ValueChanged<double> onChanged;
+  final bool enabled;
+
+  static const double step = 0.05;
+
+  @override
+  State<WeightSlider> createState() => _WeightSliderState();
+}
+
+class _WeightSliderState extends State<WeightSlider> {
+  final FocusNode _focus = FocusNode(debugLabel: 'weight slider');
+  bool _focused = false;
+  bool _dragging = false;
+
+  double get _min => math.min(loraWeightMin, widget.origin);
+  double get _max => math.max(loraWeightMax, widget.origin);
+
+  static const double _pad = 12;
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  double _snap(double v) {
+    final snapped = (v / WeightSlider.step).round() * WeightSlider.step;
+    // The picture's own weight is a stop too, wherever it falls.
+    final near = (v - widget.origin).abs() < WeightSlider.step / 2 ? widget.origin : snapped;
+    return double.parse(near.clamp(_min, _max).toStringAsFixed(4));
+  }
+
+  void _toX(double dx, double width) {
+    final track = width - 2 * _pad;
+    if (track <= 0) return;
+    final t = ((dx - _pad) / track).clamp(0.0, 1.0);
+    final v = _snap(_min + t * (_max - _min));
+    if (v != widget.value) widget.onChanged(v);
+  }
+
+  void _nudge(int steps) {
+    final v = _snap(widget.value + steps * WeightSlider.step);
+    if (v != widget.value) widget.onChanged(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.enabled;
+    return Semantics(
+      slider: true,
+      enabled: enabled,
+      value: weightText(widget.value),
+      increasedValue: weightText(_snap(widget.value + WeightSlider.step)),
+      decreasedValue: weightText(_snap(widget.value - WeightSlider.step)),
+      onIncrease: enabled ? () => _nudge(1) : null,
+      onDecrease: enabled ? () => _nudge(-1) : null,
+      child: Focus(
+        focusNode: _focus,
+        canRequestFocus: enabled,
+        onFocusChange: (f) => setState(() => _focused = f),
+        onKeyEvent: (node, event) {
+          if (!enabled || event is KeyUpEvent) return KeyEventResult.ignored;
+          final k = event.logicalKey;
+          if (k == LogicalKeyboardKey.arrowRight || k == LogicalKeyboardKey.arrowUp) {
+            _nudge(1);
+            return KeyEventResult.handled;
+          }
+          if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.arrowDown) {
+            _nudge(-1);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final width = box.maxWidth;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: enabled
+                  ? (d) {
+                      _focus.requestFocus();
+                      _toX(d.localPosition.dx, width);
+                    }
+                  : null,
+              onHorizontalDragStart: enabled
+                  ? (d) {
+                      _focus.requestFocus();
+                      setState(() => _dragging = true);
+                      _toX(d.localPosition.dx, width);
+                    }
+                  : null,
+              onHorizontalDragUpdate: enabled ? (d) => _toX(d.localPosition.dx, width) : null,
+              onHorizontalDragEnd: enabled ? (_) => setState(() => _dragging = false) : null,
+              onHorizontalDragCancel: enabled ? () => setState(() => _dragging = false) : null,
+              child: SizedBox(
+                height: 36,
+                width: width,
+                child: CustomPaint(
+                  painter: _WeightPainter(
+                    min: _min,
+                    max: _max,
+                    value: widget.value,
+                    origin: widget.origin,
+                    enabled: enabled,
+                    active: _focused || _dragging,
+                    pad: _pad,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _WeightPainter extends CustomPainter {
+  _WeightPainter({
+    required this.min,
+    required this.max,
+    required this.value,
+    required this.origin,
+    required this.enabled,
+    required this.active,
+    required this.pad,
+  });
+  final double min;
+  final double max;
+  final double value;
+  final double origin;
+  final bool enabled;
+  final bool active;
+  final double pad;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final y = size.height / 2;
+    final left = pad;
+    final right = size.width - pad;
+    double x(double v) => left + (v - min) / (max - min) * (right - left);
+    final dim = enabled ? 1.0 : 0.4;
+
+    // The track.
+    canvas.drawRRect(
+      RRect.fromLTRBR(left, y - 2, right, y + 2, const Radius.circular(2)),
+      Paint()..color = Palette.line.withValues(alpha: dim),
+    );
+    // Zero, faintly: below it a LoRA works against itself.
+    canvas.drawRect(
+      Rect.fromLTWH(x(0) - 0.5, y - 4, 1, 8),
+      Paint()..color = Palette.faint.withValues(alpha: 0.6 * dim),
+    );
+    // How far it has moved from where the picture had it.
+    final ox = x(origin);
+    final vx = x(value);
+    if ((vx - ox).abs() > 0.5) {
+      canvas.drawRRect(
+        RRect.fromLTRBR(math.min(ox, vx), y - 4, math.max(ox, vx), y + 4, const Radius.circular(3)),
+        Paint()..color = const Color(0xFF8A8A96).withValues(alpha: 0.55 * dim),
+      );
+    }
+    // Where the picture had it.
+    canvas.drawRRect(
+      RRect.fromLTRBR(ox - 1.5, y - 8, ox + 1.5, y + 8, const Radius.circular(1.5)),
+      Paint()..color = Palette.muted.withValues(alpha: dim),
+    );
+    // The thumb.
+    if (active && enabled) {
+      canvas.drawCircle(Offset(vx, y), 14, Paint()..color = Palette.accent.withValues(alpha: 0.18));
+    }
+    canvas.drawCircle(
+      Offset(vx, y),
+      8,
+      Paint()..color = enabled ? Palette.accent : Palette.faint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_WeightPainter old) =>
+      old.value != value || old.origin != origin || old.enabled != enabled || old.active != active || old.min != min || old.max != max;
 }
 
 class _Stepper extends StatelessWidget {

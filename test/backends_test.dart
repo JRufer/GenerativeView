@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/src/core/backends.dart';
+import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/recipe_graphs.dart';
 
@@ -492,6 +493,208 @@ void main() {
       () => invokeGraph(recipe, 1, [flux], const []),
       throwsA(isA<StateError>().having((e) => e.message, 'message', contains('flux'))),
     );
+  });
+
+  // ------------------------------------------------ LoRAs set in the panel
+
+  LoraChoice choice(String name, double? weight, {bool enabled = true, double? to, double? clip}) =>
+      LoraChoice(LoraRef(name, weight, clip, ''), enabled: enabled, weight: to);
+
+  test('LoRA tags in a prompt follow the switches and sliders', () {
+    const prompt = 'a red fox, <lora:fur_detail:0.8>, snow <lora:xl/glow.safetensors:1:0.5>, <lora:untouched:0.3>';
+    final out = retagPrompt(prompt, [
+      choice('loras/fur_detail.safetensors', 0.8, enabled: false),
+      choice('glow', 1, to: 1.25),
+    ]);
+    expect(out, 'a red fox, snow <lora:xl/glow.safetensors:1.25:0.75>, <lora:untouched:0.3>');
+    // At the very start, or alone on a line, nothing is left dangling.
+    expect(retagPrompt('<lora:a:1>, a fox', [choice('a', 1, enabled: false)]), 'a fox');
+    expect(retagPrompt('a fox\n<lora:a:1>\nsnow', [choice('a', 1, enabled: false)]), 'a fox\n\nsnow');
+    // Nothing changed, nothing touched.
+    expect(retagPrompt(prompt, [choice('fur_detail', 0.8)]), prompt);
+    // For Forge, a LoRA left on that the prompt never named is named; one the
+    // user took out of the prompt stays out.
+    expect(
+      retagPrompt('a fox', [choice('xl/fur_detail.safetensors', 0.8, to: 0.6), choice('off', 1, enabled: false)], addTo: 'a fox'),
+      'a fox, <lora:fur_detail:0.6>',
+    );
+    expect(retagPrompt('a fox', [choice('fur_detail', 0.8)], addTo: 'a fox <lora:fur_detail:0.8>'), 'a fox');
+  });
+
+  test('a LoRA choice knows how far it has moved, CLIP weight and all', () {
+    final c = choice('fur', 0.8, clip: 0.5, to: 1.1);
+    expect(c.offset, closeTo(0.3, 1e-9));
+    expect(c.clipWeight, closeTo(0.8, 1e-9));
+    expect(c.ref.weight, 1.1);
+    expect(choice('plain', null).weight, 1, reason: 'no weight given means 1');
+    c.reset();
+    expect(c.changed, isFalse);
+    final remixed = Remix(
+      info: info(source: 'a1111'),
+      prompt: 'a red fox <lora:fur:0.8>',
+      negative: 'blurry',
+      seed: 1,
+      randomSeed: false,
+      count: 1,
+      width: 512,
+      height: 512,
+      loras: [choice('fur', 0.8, enabled: false), choice('glow', 1, to: 0.5)],
+    );
+    expect(remixed.sentPrompt, 'a red fox');
+    expect(remixed.sentLoras.map((l) => (l.name, l.weight)), [('glow', 0.5)]);
+  });
+
+  test('ComfyUI: a LoRA turned off leaves the workflow, one moved is reweighted', () {
+    final graph = <String, dynamic>{
+      '3': {'class_type': 'KSampler', 'inputs': {'model': ['11', 0], 'seed': 1}},
+      '4': {'class_type': 'CheckpointLoaderSimple', 'inputs': {'ckpt_name': 'm.safetensors'}},
+      '6': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'fox', 'clip': ['11', 1]}},
+      '10': {'class_type': 'LoraLoader', 'inputs': {'lora_name': 'fur.safetensors', 'strength_model': 0.8, 'strength_clip': 0.8, 'model': ['4', 0], 'clip': ['4', 1]}},
+      '11': {'class_type': 'LoraLoader', 'inputs': {'lora_name': 'glow.safetensors', 'strength_model': 0.5, 'strength_clip': 0.4, 'model': ['10', 0], 'clip': ['10', 1]}},
+      '20': {
+        'class_type': 'Power Lora Loader (rgthree)',
+        'inputs': {
+          'lora_1': {'on': true, 'lora': 'sub/spark.safetensors', 'strength': 1.0},
+          'lora_2': {'on': true, 'lora': 'keep.safetensors', 'strength': 0.7},
+        },
+      },
+      '30': {
+        'class_type': 'LoRA Stacker',
+        'inputs': {'lora_name_1': 'stacked.safetensors', 'lora_wt_1': 0.6, 'lora_name_2': 'keep2.safetensors', 'lora_wt_2': 0.9},
+      },
+    };
+    editComfyLoras(graph, [
+      choice('fur', 0.8, enabled: false),
+      choice('glow', 0.5, clip: 0.4, to: 1.2),
+      choice('spark', 1, enabled: false),
+      choice('stacked', 0.6, enabled: false),
+    ]);
+    expect(graph.containsKey('10'), isFalse);
+    final glow = graph['11']['inputs'] as Map;
+    expect(glow['model'], ['4', 0], reason: 'joined to what came before the one taken out');
+    expect(glow['clip'], ['4', 1]);
+    expect(glow['strength_model'], 1.2);
+    expect(glow['strength_clip'], closeTo(1.1, 1e-9));
+    expect(graph['3']['inputs']['model'], ['11', 0]);
+    expect(graph['20']['inputs']['lora_1']['on'], isFalse);
+    expect(graph['20']['inputs']['lora_2']['on'], isTrue);
+    expect(graph['30']['inputs']['lora_wt_1'], 0);
+    expect(graph['30']['inputs']['lora_wt_2'], 0.9);
+
+    // Both loaders of a chain out: the sampler goes straight to the model.
+    final chain = jsonDecode(jsonEncode(graph)) as Map<String, dynamic>;
+    chain['10'] = {'class_type': 'LoraLoader', 'inputs': {'lora_name': 'fur.safetensors', 'strength_model': 0.8, 'strength_clip': 0.8, 'model': ['4', 0], 'clip': ['4', 1]}};
+    (chain['11']['inputs'] as Map)['model'] = ['10', 0];
+    (chain['11']['inputs'] as Map)['clip'] = ['10', 1];
+    editComfyLoras(chain, [choice('glow', 0.5, enabled: false), choice('fur', 0.8, enabled: false)]);
+    expect(chain['3']['inputs']['model'], ['4', 0]);
+    expect(chain['6']['inputs']['clip'], ['4', 1]);
+  });
+
+  test('InvokeAI: a LoRA turned off leaves the graph and its metadata', () {
+    Map<String, dynamic> edge(String from, String out, String to, String into) => {
+          'source': {'node_id': from, 'field': out},
+          'destination': {'node_id': to, 'field': into},
+        };
+    final graph = <String, dynamic>{
+      'nodes': {
+        'model_loader': {'id': 'model_loader', 'type': 'sdxl_model_loader'},
+        'lora_a': {'id': 'lora_a', 'type': 'sdxl_lora_loader', 'lora': {'name': 'fur'}, 'weight': 0.8},
+        'lora_b': {'id': 'lora_b', 'type': 'sdxl_lora_loader', 'lora': {'name': 'glow'}, 'weight': 0.5},
+        'denoise': {'id': 'denoise', 'type': 'denoise_latents'},
+        'metadata': {
+          'id': 'metadata',
+          'type': 'core_metadata',
+          'loras': [
+            {'model': {'name': 'fur'}, 'weight': 0.8},
+            {'model': {'name': 'glow'}, 'weight': 0.5},
+          ],
+        },
+      },
+      'edges': [
+        for (final f in ['unet', 'clip', 'clip2']) ...[
+          edge('model_loader', f, 'lora_a', f),
+          edge('lora_a', f, 'lora_b', f),
+        ],
+        edge('lora_b', 'unet', 'denoise', 'unet'),
+      ],
+    };
+    editInvokeLoras(graph, [choice('fur', 0.8, enabled: false), choice('glow', 0.5, to: 1.5)]);
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    final edges = (graph['edges'] as List).cast<Map>();
+    expect(nodes.containsKey('lora_a'), isFalse);
+    expect(nodes['lora_b']['weight'], 1.5);
+    for (final f in ['unet', 'clip', 'clip2']) {
+      expect(
+        edges.any((e) => e['source']['node_id'] == 'model_loader' && e['destination']['node_id'] == 'lora_b' && e['destination']['field'] == f),
+        isTrue,
+        reason: f,
+      );
+    }
+    for (final e in edges) {
+      expect(nodes.containsKey(e['source']['node_id']), isTrue, reason: '$e');
+      expect(nodes.containsKey(e['destination']['node_id']), isTrue, reason: '$e');
+    }
+    expect(nodes['metadata']['loras'], [
+      {'model': {'name': 'glow'}, 'weight': 1.5},
+    ]);
+  });
+
+  test('Forge: the LoRAs as set go in the prompt it is sent', () async {
+    late Map<String, dynamic> payload;
+    final (server, base) = await serve((request) async {
+      payload = jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>;
+      json(request, {'images': <String>[], 'info': '{}'});
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = await sendRemix(
+      'forge',
+      base,
+      Remix(
+        info: info(source: 'comfyui'),
+        prompt: 'a red fox, <lora:fur:0.8>',
+        negative: 'blurry',
+        seed: 7,
+        randomSeed: false,
+        count: 1,
+        width: 512,
+        height: 512,
+        loras: [choice('fur', 0.8, enabled: false), choice('loras/glow.safetensors', 1, to: 0.7)],
+      ),
+    );
+    await ticket.results.toList();
+    expect(payload['prompt'], 'a red fox, <lora:glow:0.7>');
+  });
+
+  test('ComfyUI: a graph built from settings leaves out a LoRA turned off', () {
+    final remixed = Remix(
+      info: GenInfo.fromJson({
+        'source': 'a1111',
+        'prompt': 'a fox',
+        'model': 'm',
+        'loras': [
+          {'name': 'fur', 'weight': 0.8},
+          {'name': 'glow', 'weight': 0.5},
+        ],
+      }),
+      prompt: 'a fox',
+      negative: '',
+      seed: 1,
+      randomSeed: false,
+      count: 1,
+      width: 512,
+      height: 512,
+      loras: [
+        choice('fur', 0.8, enabled: false),
+        choice('glow', 0.5, to: 1.5),
+      ],
+    );
+    final recipe = Recipe.from(remixed.info, prompt: remixed.sentPrompt, negative: '', width: 512, height: 512, loras: remixed.sentLoras);
+    final graph = comfyGraph(recipe, 1, const ComfyModels(['m.safetensors'], ['fur.safetensors', 'glow.safetensors']));
+    final loaders = graph.values.cast<Map<String, dynamic>>().where((n) => n['class_type'] == 'LoraLoader').toList();
+    expect(loaders, hasLength(1));
+    expect(loaders.single['inputs']['lora_name'], 'glow.safetensors');
+    expect(loaders.single['inputs']['strength_model'], 1.5);
   });
 }
 
