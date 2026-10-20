@@ -29,7 +29,7 @@ class MainFlutterWindow: NSWindow, NSDraggingSource {
       items.append(item)
     }
     if items.isEmpty { return false }
-    view.beginDraggingSession(with: items, event: event, source: self)
+    _ = view.beginDraggingSession(with: items, event: event, source: self)
     return true
   }
 

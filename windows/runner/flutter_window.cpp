@@ -154,7 +154,7 @@ bool CopyFileToClipboard(HWND hwnd, const std::string& path) {
 
 // The drag's say on how it goes: it ends when the button comes up, and is
 // called off by Escape.
-class FileDropSource : public IDropSource {
+class FileDropSource final : public IDropSource {
  public:
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
                                            void** object) override {
@@ -212,11 +212,10 @@ bool DragFiles(const std::vector<std::string>& paths) {
   }
   bool dropped = false;
   if (!pidls.empty()) {
+    std::vector<PCIDLIST_ABSOLUTE> ids(pidls.begin(), pidls.end());
     IShellItemArray* items = nullptr;
     if (SUCCEEDED(SHCreateShellItemArrayFromIDLists(
-            static_cast<UINT>(pidls.size()),
-            reinterpret_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()),
-            &items))) {
+            static_cast<UINT>(ids.size()), ids.data(), &items))) {
       IDataObject* data = nullptr;
       if (SUCCEEDED(items->BindToHandler(nullptr, BHID_DataObject,
                                          IID_PPV_ARGS(&data)))) {
