@@ -201,6 +201,7 @@ void main() {
     await screenshot(tester, boundary, '36a-real-phone-filtered');
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await pumpUntil(tester, () => find.byKey(const ValueKey('filters-done')).evaluate().isNotEmpty, what: 'the filter sheet');
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-stars-4')).evaluate().length >= 1 && find.byType(CircularProgressIndicator).evaluate().isEmpty, what: 'the sheet counted');
     await settle(tester);
     await settle(tester);
     await screenshot(tester, boundary, '36b-real-phone-filters');
