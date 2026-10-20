@@ -1082,6 +1082,8 @@ void main() {
     expect(tester.widget<Text>(find.byKey(const ValueKey('selection-count'))).data, '2 selected');
     await screenshot(tester, boundary, '48-ticked');
 
+    final owlFlag = item('owl_01.png').flag;
+    final foxRating = item('fox_03.png').rating;
     // The menu on a ticked picture is for both, and has only what can be
     // done to both at once.
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
@@ -1100,12 +1102,12 @@ void main() {
     await screenshot(tester, boundary, '49-many-menu');
     await tester.tap(find.text('Keep all (P)'));
     await pumpUntil(tester, () => item('fox_01.png').flag == Flag.keep && item('fox_02.png').flag == Flag.keep, what: 'both kept');
-    expect(item('owl_01.png').flag, Flag.none);
+    expect(item('owl_01.png').flag, owlFlag, reason: 'unticked: left alone');
 
     // Keys act on them all too.
     await tester.sendKeyEvent(LogicalKeyboardKey.digit4);
     await pumpUntil(tester, () => item('fox_01.png').rating == 4 && item('fox_02.png').rating == 4, what: 'both rated');
-    expect(item('fox_03.png').rating, 0);
+    expect(item('fox_03.png').rating, foxRating);
     await tester.sendKeyDownEvent(primaryModifier);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
