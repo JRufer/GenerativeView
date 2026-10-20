@@ -4,7 +4,7 @@
 name: ci-report
 on:
   push:
-    branches: [smart-collections]
+    branches: [feature/ratings-filters-upscale]
 permissions:
   contents: write
 env:
