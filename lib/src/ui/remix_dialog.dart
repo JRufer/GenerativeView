@@ -491,6 +491,20 @@ class _LoraSectionState extends State<LoraSection> {
       if (off > 0) '$off off',
       if (changed - off > 0) '${changed - off} changed',
     ].join(' · ');
+    final rows = !_open
+        ? const SizedBox(width: double.infinity)
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < loras.length; i++)
+                _LoraRow(
+                  key: ValueKey<String>('remix-lora-$i'),
+                  index: i,
+                  choice: loras[i],
+                  onChanged: () => setState(() {}),
+                ),
+            ],
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -523,25 +537,17 @@ class _LoraSectionState extends State<LoraSection> {
             ),
           ),
         ),
-        AnimatedSize(
-          duration: still ? Duration.zero : const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.topCenter,
-          child: !_open
-              ? const SizedBox(width: double.infinity)
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (var i = 0; i < loras.length; i++)
-                      _LoraRow(
-                        key: ValueKey<String>('remix-lora-$i'),
-                        index: i,
-                        choice: loras[i],
-                        onChanged: () => setState(() {}),
-                      ),
-                  ],
-                ),
-        ),
+        // AnimatedSize cannot take a zero duration, so with motion turned
+        // down the list simply appears.
+        if (still)
+          rows
+        else
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: rows,
+          ),
       ],
     );
   }
