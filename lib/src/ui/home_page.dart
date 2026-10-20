@@ -9,6 +9,7 @@ import '../app_state.dart';
 import '../core/models.dart';
 import '../platform.dart';
 import '../theme.dart';
+import 'filter_bar.dart';
 import 'focus_view.dart';
 import 'folder_panel.dart';
 import 'media_grid.dart';
@@ -256,7 +257,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             // The grid stays alive under the focus view so it keeps its place.
             Offstage(
               offstage: focus,
-              child: MediaGrid(state: state),
+              child: Column(
+                children: [
+                  // Always the first child, so the grid below keeps its
+                  // place (and its scroll) as the bar comes and goes.
+                  if (FilterBar.wanted(state)) FilterBar(state: state) else const SizedBox.shrink(),
+                  Expanded(child: MediaGrid(state: state)),
+                ],
+              ),
             ),
             if (focus) FocusView(state: state),
           ],

@@ -602,3 +602,50 @@ fn near_duplicates_are_found_and_grouped() {
     assert_eq!(h.names(&root, false, "is:dupes"), ["a.png", "c.png", "d.png", "e.png"]);
     assert_eq!(h.names(&root, false, "").len(), 5);
 }
+
+#[test]
+fn smart_collections_are_saved_beside_the_pictures() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    let sub = root.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    for (i, name) in ["a.png", "b.png", "sub/c.png"].iter().enumerate() {
+        let model = if i == 1 { "sdxl.safetensors" } else { "flux.safetensors" };
+        write_png(&root.join(name), i as u32, &[("prompt", &comfy_prompt("a fox", i as u64, model))]);
+    }
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+    h.call("notes_set", json!({ "paths": [path("a.png"), path("sub/c.png")], "rating": 5, "add": ["Mine"] }));
+    h.expect_names(&root, true, "rating:5", &["a.png", "c.png"]);
+
+    h.call("smart_set", json!({ "dir": dir, "name": "Flux five", "query": "model:=flux.safetensors rating:>=5" }));
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
+    assert_eq!(file["smart"], json!([{ "name": "Flux five", "query": "model:=flux.safetensors rating:>=5" }]));
+
+    // Listed with how many pictures in view match it now.
+    let list = h.call("smart_list", json!({ "dir": dir, "recursive": true }));
+    assert_eq!(list, json!([{ "name": "Flux five", "query": "model:=flux.safetensors rating:>=5", "dir": dir, "count": 2 }]));
+    assert_eq!(h.call("count", json!({ "dir": dir, "recursive": false, "text": "model:=flux.safetensors rating:>=5" })), json!({ "count": 1 }));
+
+    // A sub-folder sees the ones saved above it; its own come first and win a shared name.
+    let sub_dir = sub.to_str().unwrap().to_string();
+    h.call("smart_set", json!({ "dir": sub_dir, "name": "flux FIVE", "query": "rating:5" }));
+    h.call("smart_set", json!({ "dir": sub_dir, "name": "Sub only", "query": "fox" }));
+    let list = h.call("smart_list", json!({ "dir": sub_dir, "recursive": false }));
+    let names: Vec<&str> = list.as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["flux FIVE", "Sub only"]);
+    assert_eq!(list[0]["dir"], json!(sub_dir));
+
+    // Rename in place, then delete; ratings and collections in the file stay.
+    h.call("smart_set", json!({ "dir": dir, "name": "Best flux", "query": "model:=flux.safetensors", "old_name": "flux five" }));
+    assert_eq!(h.call("smart_list", json!({ "dir": dir, "recursive": true }))[0]["name"], "Best flux");
+    assert!(h.engine.call("smart_set", &json!({ "dir": dir, "name": "", "query": "x" })).is_err());
+    h.call("collection_delete", json!({ "name": "Mine" }));
+    assert_eq!(h.call("smart_list", json!({ "dir": dir, "recursive": true }))[0]["count"], 2, "deleting a collection leaves smart ones");
+    h.call("smart_delete", json!({ "dir": dir, "name": "BEST FLUX" }));
+    assert_eq!(h.call("smart_list", json!({ "dir": dir, "recursive": true })), json!([]));
+    assert_eq!(h.call("notes_get", json!({ "path": path("a.png") }))["rating"], 5);
+}

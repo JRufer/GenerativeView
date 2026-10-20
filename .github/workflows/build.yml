@@ -465,6 +465,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           COMMIT_SUBJECT: ${{ github.event.head_commit.message }}
+          # Whether the APKs carry the repository's own key (and so install
+          # over the last build) or a throwaway one.
+          SIGNED: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         run: |
           set -euo pipefail
           mkdir out
@@ -491,6 +494,11 @@ jobs:
             echo "- **Windows**: \`GenerativeView-windows-x64.zip\` — unzip and run \`generativeview.exe\`."
             echo "- **macOS**: \`GenerativeView-macos-universal.zip\` — unzip and run \`generativeview.app\` (Universal binary for Apple Silicon and Intel Macs)."
             echo "- **Android**: \`GenerativeView-arm64-v8a.apk\` for tablets and phones."
+            if [ "$SIGNED" = "true" ]; then
+              echo "  Installs straight over an earlier build: open the APK and tap Update."
+            else
+              echo "  ⚠️ Signed with a one-off key, so Android will not install it over an earlier build: uninstall that first. Setting up the repository's own key once fixes this for every later build; see [Signing key](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/README.md#signing-key)."
+            fi
             echo
             echo "GenerativeView is released under the [MIT License](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/LICENSE). Third-party licences are listed in the app under ⋮ → About → Open-source licences."
           } > notes.md

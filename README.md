@@ -20,6 +20,9 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 - **Usage** (the bar-chart button; in a narrow window it is in the sort menu): which models, LoRAs, samplers, schedulers, step counts, CFG values, sizes and prompt words the folder's images use most, how each one's use is spread over time, and a timeline of images per day, week, month or year. Click anything to go back to the grid showing only the images behind that number.
 - **Ratings, flags and collections**: give a picture one to five stars (keys `1`–`5`, or the stars in the metadata panel), flag it to keep (`P`) or reject (`X`), and put it in any number of collections (`B`). Stars and flags show on the tiles; rejected pictures fade back. They are saved in a small `.generativeview.json` file in each picture's own folder, not inside the app, so a folder synced between machines carries them along: rate on the tablet, see the stars on the desktop. Edits made elsewhere show up as soon as the file changes. Collections are listed in the folder panel; tap one to see its pictures. See [Notes files](#notes-files).
 - **Filters** (the sliders button, or `F`): every model, LoRA, collection, prompt, prompt word, sampler, scheduler, step count, CFG, size and tool the folder's pictures used, with how many each, as chips to tap; plus a minimum star rating and keep / reject. Chips in one group widen the selection (this model or that one), groups narrow it (this model and that sampler). The filters are written into the search box as ordinary search text, so a typed search and filters work together, and the whole thing can be pinned. The button shows how many filters are on.
+- **Filters beside the grid**: the folder panel has two tabs, **Folders** and **Filters**. The Filters tab is the same filter panel, docked, so the grid it narrows stays in sight; the tab shows how many filters are on. While any filter is on, a bar over the grid lists each one as a chip with a cross to take it off, **Clear all**, how many pictures are showing, and **Save as smart collection**.
+- **Smart collections**: filters or a search kept under a name, from the bar over the grid, the filter panel, or the **+** beside *Smart collections* in the folder panel. Each is a few rules that must all match (model is…, LoRA contains…, rating at least…, prompt word…, flag, sampler, steps, CFG, size, date, or any search text), with a live count and a strip of the pictures they match as you edit them. They are listed in the folder panel with how many pictures each matches now, which keeps up as pictures arrive, are rated or are deleted. Tap one to show it (and again to go back); right-click or press and hold it to edit or delete it. While one is showing, the bar over the grid names it, with **Edit**. They are saved in the `.generativeview.json` notes file of the folder they were made in (see [Notes files](#notes-files)), so they sync with the folder like ratings do, and they apply to that folder and every folder below it.
+- **Comes back where you left off**: on a fresh start the app reopens the folder, the search, filters, collection or smart collection that was showing, and the folder panel's tab. A folder given on the command line opens on its own, with no search.
 - **Filter by prompt** like any other value: right-click or press and hold the prompt (or the negative prompt) in the metadata panel and choose "Show only images with this prompt".
 - **More like this** (`L`, or from the image menu or the metadata panel): the pictures that look like the selected one, most alike first, using the content-search model. It can be combined with any other search, `rating:4+ similar:"…"`.
 - **Remix** (`R`): the picture's prompt and negative prompt in an editor, with its seed (or a random one each time), size and a count, and a button that queues them on **ComfyUI**, **InvokeAI** or **Forge / A1111**. ComfyUI and InvokeAI get the picture's own workflow with those values changed in place when it carries one; a picture from another program gets a standard text-to-image workflow built from its settings instead (the same model and LoRAs, matched by name against what that server has installed, with its prompt, seed, steps, CFG, sampler and size; InvokeAI builds for SD 1.x, SD 2.x and SDXL). Forge gets the settings as values. So any picture with generation data can go to any of the three. Width and height are locked to the picture's shape by default (the blue lock above the swap button): a new width brings the height along, and the side that changed glows for a moment; unlock it (white) to set each freely. A folded **LoRAs** section lists each LoRA the picture was made with, with a switch to leave it out and a slider from −1 to 2 that starts at the picture's weight and shows in grey how far it has been moved. **Check trigger words** there looks each LoRA up on Civitai (by its name and hash, only when pressed) and lists the words that trigger it under it: those already in the prompt ticked, the others a tap away from being added to the start of the prompt. A LoRA left on with none of its trigger words in the prompt is outlined, and the heading says so even while the section is folded. What was found is remembered while the app is open. The remix is made with those settings: ComfyUI and InvokeAI workflows have the LoRA nodes of those turned off taken out and the rest reweighted, and `<lora:…>` tags in the prompt follow suit (Forge is given tags for LoRAs it would otherwise not load). Server addresses are set once, under ⋮ › Generation servers, each with a Test button. Nothing is sent until Send is pressed. While a remix is out, a blue **Remix Running** chip moves at the top of the grid (in the top bar in the focus view); as each comes back a **Remix Done** chip appears beside it (**3 Remixes Done** when several are waiting), and tapping that opens the **Remixes** collection with the new pictures picked out by a short animation. Every remix is saved beside its original as `name_remix1.png` and put in the **Remixes** collection, which is made the first time.
@@ -146,16 +149,21 @@ ComfyUI has no fixed schema, so prompts and settings are found by walking the gr
 
 ### Notes files
 
-Ratings, flags and collections are kept in a file called `.generativeview.json` in each folder that has any, beside the pictures they are about:
+Ratings, flags and collections are kept in a file called `.generativeview.json` in each folder that has any, beside the pictures they are about, along with the smart collections saved in that folder:
 
 ```json
 {
   "generativeview": 1,
   "images": {
     "ComfyUI_00012_.png": { "rating": 4, "flag": "keep", "collections": ["Night city"] }
-  }
+  },
+  "smart": [
+    { "name": "Best flux", "query": "model:=flux1-dev.safetensors rating:>=4" }
+  ]
 }
 ```
+
+A smart collection's `query` is ordinary search text ([Search syntax](#search-syntax)); editing it by hand works too.
 
 The file is small, readable, and written whole (to a temporary file that is then renamed over it), so a sync tool such as Syncthing never sees half of one. Every change reads the file first and changes only the pictures it is about, so notes made on two machines are merged rather than lost, and anything else in the file (fields from a newer version, or another tool) is kept as it is. A picture with no stars, flag or collections has no entry; a folder with none has no file. The app keeps a copy in its index for searching, which it rebuilds from the files whenever they change.
 
@@ -192,7 +200,7 @@ On Ubuntu / Debian: `sudo apt install ffmpeg` (and `mpv` for the `.tar.gz`).
 
 ### Signing key
 
-Android only installs an update over an existing app if both are signed with the same key. Until the repository has a key of its own, each CI run signs with a throwaway one, and you have to uninstall before installing a newer build. To fix that once:
+Android only installs an update over an existing app if both are signed with the same key and the new one has a higher version code. Every build's version code is its CI run number, so it always goes up; the key is what has to stay the same. Until the repository has a key of its own, each CI run signs with a throwaway one (the run says so in a notice), and Android refuses the update with "App not installed" until the old one is uninstalled. To fix that once and for all:
 
 ```sh
 keytool -genkeypair -keystore generativeview.jks -storetype PKCS12 -alias generativeview \
@@ -202,7 +210,9 @@ base64 -w0 generativeview.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo JRu
 gh secret set ANDROID_KEYSTORE_PASSWORD --repo JRufer/GenerativeView --body 'choose-a-password'
 ```
 
-Keep `generativeview.jks` somewhere safe and out of the repository. Builds from then on all carry that signature.
+Or, on github.com: **Settings › Secrets and variables › Actions › New repository secret**, once for `ANDROID_KEYSTORE_BASE64` (the output of `base64 -w0 generativeview.jks`) and once for `ANDROID_KEYSTORE_PASSWORD`.
+
+Keep `generativeview.jks` somewhere safe and out of the repository: a key that is lost means one more uninstall. Builds from then on all carry that signature, so a new APK installs straight over the last one, keeping the app's settings, index and thumbnails. The build that is installed when the key is first set up was signed with a throwaway key, so uninstall it one last time.
 
 ## Build from source
 
