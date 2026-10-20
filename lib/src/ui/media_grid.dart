@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../core/thumb_cache.dart';
+import '../platform.dart';
 import '../theme.dart';
 import 'image_menu.dart';
 import 'notes_widgets.dart';
@@ -22,6 +23,12 @@ const double _gap = 3;
 /// grid keeps its place while it does. Tiles crop to fill or show the whole
 /// image, per [AppState.cropTiles]. Tap selects, double tap opens the image,
 /// and a right click or a press-and-hold brings up its menu.
+///
+/// The box in each tile's top right corner ticks it (as does Ctrl-click, and
+/// Shift-click ticks a run); once any is ticked, a tap anywhere on a tile
+/// ticks or unticks it, and the menu acts on all that are ticked. On the
+/// desktop a tile can be dragged out of the window as its file (with the
+/// others ticked, if it is one of them).
 class MediaGrid extends StatefulWidget {
   const MediaGrid({super.key, required this.state});
   final AppState state;
@@ -140,7 +147,30 @@ class _MediaGridState extends State<MediaGrid> {
     }
   }
 
+  /// The tile last ticked or unticked, where a Shift-click run starts.
+  int _anchor = -1;
+
   void _tap(int index, MediaItem item) {
+    final keyboard = HardwareKeyboard.instance;
+    final ctrl = isPrimaryShortcutModifier(
+      isControlPressed: keyboard.isControlPressed,
+      isMetaPressed: keyboard.isMetaPressed,
+    );
+    if (keyboard.isShiftPressed && state.checkedCount > 0 && _anchor >= 0 && _anchor < state.items.length) {
+      // A run from the last one ticked to this one.
+      final from = math.min(_anchor, index), to = math.max(_anchor, index);
+      for (var i = from; i <= to; i++) {
+        final it = state.items[i];
+        if (!state.isChecked(it.id)) state.toggleChecked(it);
+      }
+      _anchor = index;
+      state.select(index);
+      return;
+    }
+    if (ctrl || state.checkedCount > 0) {
+      _check(index, item);
+      return;
+    }
     final now = DateTime.now();
     final again =
         item.id == _lastTapId &&
@@ -153,6 +183,20 @@ class _MediaGridState extends State<MediaGrid> {
     } else {
       state.select(index);
     }
+  }
+
+  /// Tick [item], or untick it; it becomes the one shown.
+  void _check(int index, MediaItem item) {
+    _lastTapId = -1;
+    _anchor = index;
+    state.toggleChecked(item);
+    state.select(index);
+  }
+
+  /// A tile dragged out of the window: its file, or every ticked one if it
+  /// is ticked.
+  void _dragOut(MediaItem item) {
+    dragFilesOut([for (final t in state.targetsFor(item)) t.path]);
   }
 
   void _menu(int index, MediaItem item, Offset position) {
@@ -260,6 +304,14 @@ class _MediaGridState extends State<MediaGrid> {
               },
             );
           }
+          if (RegExp(r'(^|\s)(is|type|kind|media):(near-)?dup', caseSensitive: false).hasMatch(state.query)) {
+            return const _Hint(
+              icon: Icons.filter_none,
+              title: 'No near-duplicates here',
+              detail: 'None of these pictures has an all-but-identical twin among them. '
+                  'Pictures are compared by what they look like, at the same shape.',
+            );
+          }
           if (state.query.trim().isNotEmpty) {
             return _Hint(
               icon: Icons.search_off,
@@ -339,8 +391,11 @@ class _MediaGridState extends State<MediaGrid> {
                   cache: state.thumbs,
                   fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
                   selected: index == state.selectedIndex,
+                  checked: state.isChecked(item.id),
                   onTap: () => _tap(index, item),
+                  onCheck: () => _check(index, item),
                   onMenu: (position) => _menu(index, item, position),
+                  onDragOut: canDragFilesOut ? () => _dragOut(item) : null,
                 );
               },
             ),
@@ -350,16 +405,101 @@ class _MediaGridState extends State<MediaGrid> {
           fit: StackFit.expand,
           children: [
             grid,
-            if (state.fresh.isNotEmpty)
+            if (state.fresh.isNotEmpty || state.checkedCount > 0)
               Positioned(
                 top: 10,
                 left: 0,
                 right: 0,
-                child: Center(child: _NewPill(state: state)),
+                child: Center(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      if (state.checkedCount > 0) SelectionBar(state: state),
+                      if (state.fresh.isNotEmpty) _NewPill(state: state),
+                    ],
+                  ),
+                ),
               ),
           ],
         );
       },
+    );
+  }
+}
+
+/// "3 selected": what is ticked, with the menu for all of them (the same
+/// one a right click on any of them brings up), Select all, and a way to
+/// untick them all.
+class SelectionBar extends StatelessWidget {
+  const SelectionBar({super.key, required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = state.checkedCount;
+    final all = n == state.items.length;
+    Widget button({required Key key, required String tooltip, required IconData icon, required void Function(BuildContext) onTap}) =>
+        Builder(
+          builder: (context) => Tooltip(
+            message: tooltip,
+            child: InkResponse(
+              key: key,
+              radius: 18,
+              onTap: () => onTap(context),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Icon(icon, size: 18, color: Palette.text),
+              ),
+            ),
+          ),
+        );
+    return Material(
+      key: const ValueKey<String>('selection-bar'),
+      color: Palette.raised,
+      elevation: 4,
+      shape: const StadiumBorder(side: BorderSide(color: Palette.accent, width: 1.2)),
+      child: Padding(
+        padding: const EdgeInsets.only(left: 12, right: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_box, size: 18, color: Palette.accent),
+            const SizedBox(width: 6),
+            Text(
+              '$n selected',
+              key: const ValueKey<String>('selection-count'),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 4),
+            if (!all)
+              button(
+                key: const ValueKey<String>('selection-all'),
+                tooltip: 'Select all (Ctrl A)',
+                icon: Icons.select_all,
+                onTap: (_) => state.checkAll(),
+              ),
+            button(
+              key: const ValueKey<String>('selection-menu'),
+              tooltip: 'What to do with them',
+              icon: Icons.more_vert,
+              onTap: (context) {
+                final items = state.checkedItems;
+                if (items.isEmpty) return;
+                final box = context.findRenderObject()! as RenderBox;
+                showImageMenu(context, state, items.first, box.localToGlobal(box.size.bottomLeft(Offset.zero)));
+              },
+            ),
+            button(
+              key: const ValueKey<String>('selection-clear'),
+              tooltip: 'Clear the selection (Esc)',
+              icon: Icons.close,
+              onTap: (_) => state.clearChecked(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -427,8 +567,11 @@ class _Tile extends StatelessWidget {
     required this.cache,
     required this.fit,
     required this.selected,
+    this.checked = false,
     required this.onTap,
+    required this.onCheck,
     required this.onMenu,
+    this.onDragOut,
   });
 
   final MediaItem item;
@@ -448,10 +591,20 @@ class _Tile extends StatelessWidget {
   /// cover = cropped to fill the square, contain = the whole image.
   final BoxFit fit;
   final bool selected;
+
+  /// Ticked, to be acted on with others.
+  final bool checked;
   final VoidCallback onTap;
+
+  /// The corner box was tapped.
+  final VoidCallback onCheck;
 
   /// Called with where the pointer was on a right click or a long press.
   final ValueChanged<Offset> onMenu;
+
+  /// Dragged with the mouse: carry the file out of the window. Null where
+  /// that cannot be done.
+  final VoidCallback? onDragOut;
 
   @override
   Widget build(BuildContext context) {
@@ -484,7 +637,7 @@ class _Tile extends StatelessWidget {
   }
 
   Widget _body() {
-    return GestureDetector(
+    final tile = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       onSecondaryTapUp: (details) => onMenu(details.globalPosition),
@@ -492,11 +645,14 @@ class _Tile extends StatelessWidget {
       child: Semantics(
         label: item.name,
         selected: selected,
+        checked: checked,
         image: true,
         child: DecoratedBox(
           position: DecorationPosition.foreground,
           decoration: BoxDecoration(
-            border: selected
+            border: checked
+                ? Border.all(color: Palette.accent, width: 3)
+                : selected
                 ? Border.all(color: Palette.accent, width: 2)
                 : fresh
                 ? Border.all(color: Palette.accent.withValues(alpha: 0.7), width: 1.5)
@@ -515,9 +671,14 @@ class _Tile extends StatelessWidget {
                     opacity: item.flag == Flag.reject ? 0.4 : 1,
                     child: _picture(),
                   ),
+                  if (checked) const ColoredBox(color: Color(0x2E7AA2F7)),
                   if (item.isVideo) _VideoBadge(durationMs: item.durationMs),
                   if (item.rating > 0 || item.flag != Flag.none)
-                    TileMarks(rating: item.rating, flag: item.flag, compact: compact),
+                    TileMarks(rating: item.rating, flag: item.flag, compact: compact, besideCheck: true),
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: _CheckBox(key: ValueKey<String>('tile-check-${item.id}'), checked: checked, onTap: onCheck),
+                  ),
                   if (fresh)
                     const Align(
                       alignment: Alignment.topLeft,
@@ -532,6 +693,76 @@ class _Tile extends StatelessWidget {
           ),
         ),
       ),
+    );
+    final drag = onDragOut;
+    if (drag == null) return tile;
+    return _DragOut(onDragOut: drag, child: tile);
+  }
+}
+
+/// The tick box in a tile's corner: empty, or filled and ticked. Bigger to
+/// the finger than it looks.
+class _CheckBox extends StatelessWidget {
+  const _CheckBox({super.key, required this.checked, required this.onTap});
+  final bool checked;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      // Held, it is still a tick, not the menu.
+      onLongPress: () {},
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 5, 5, 12),
+        child: Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: checked ? Palette.accent : const Color(0x59000000),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: checked ? Palette.accent : const Color(0xE6FFFFFF), width: 1.6),
+            boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 3)],
+          ),
+          child: checked ? const Icon(Icons.check, size: 15, color: Color(0xFF0B1020)) : null,
+        ),
+      ),
+    );
+  }
+}
+
+/// Starts a drag of files out of the window when the mouse is pressed on
+/// [child] and moved a little way with the button held. Touch and pens
+/// are left to scroll and press as usual.
+class _DragOut extends StatefulWidget {
+  const _DragOut({required this.onDragOut, required this.child});
+  final VoidCallback onDragOut;
+  final Widget child;
+
+  @override
+  State<_DragOut> createState() => _DragOutState();
+}
+
+class _DragOutState extends State<_DragOut> {
+  Offset? _down;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (e) {
+        _down = e.kind == PointerDeviceKind.mouse && e.buttons == kPrimaryMouseButton ? e.position : null;
+      },
+      onPointerMove: (e) {
+        final down = _down;
+        if (down == null || e.buttons != kPrimaryMouseButton) return;
+        if ((e.position - down).distance < 12) return;
+        _down = null;
+        widget.onDragOut();
+      },
+      onPointerUp: (_) => _down = null,
+      onPointerCancel: (_) => _down = null,
+      child: widget.child,
     );
   }
 }

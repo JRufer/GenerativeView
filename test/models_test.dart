@@ -247,6 +247,10 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
           };
         case 'trashFile':
           return nextTrashReply;
+        case 'copyFiles':
+          return ((call.arguments as Map)['paths'] as List).length == 2;
+        case 'dragFiles':
+          return true;
         default:
           return null;
       }
@@ -256,6 +260,12 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
     });
 
     expect(await copyFileToClipboard('C:/pics/a.png'), isTrue);
+    // Several files go as one list; one goes as before.
+    expect(await copyFilesToClipboard(['C:/pics/a.png', 'C:/pics/b.png']), isTrue);
+    expect(await copyFilesToClipboard(['C:/pics/a.png']), isTrue);
+    expect(await dragFilesOut(['C:/pics/a.png']), canDragFilesOut);
+    // No share sheet off Android.
+    expect(await shareFiles(['C:/pics/a.png']), canShareFiles);
     expect(await copyFileToClipboard('C:/pics/other.png'), isFalse);
     expect(await readCopiedFile(), Uint8List.fromList([1, 2, 3, 4]));
 

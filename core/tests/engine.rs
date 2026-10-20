@@ -572,3 +572,33 @@ fn collections_are_deleted_and_deleted_pictures_forgotten() {
     assert!(file["images"].get("a.png").is_none());
     assert_eq!(h.call("collections", json!({}))[0], json!({ "name": "Keep", "count": 1 }));
 }
+
+#[test]
+fn near_duplicates_are_found_and_grouped() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    // A disc on a ramp, placed at (cx, cy), lifted by `lift`.
+    let picture = |cx: f32, cy: f32, lift: u8| {
+        image::RgbImage::from_fn(320, 480, |x, y| {
+            let ramp = (x + y) as f32 / 800.0 * 120.0;
+            let d = ((x as f32 - cx * 320.0).powi(2) + (y as f32 - cy * 480.0).powi(2)).sqrt();
+            let v = (ramp + if d < 60.0 { 110.0 } else { 0.0 }) as u8;
+            image::Rgb([v.saturating_add(lift), v, v])
+        })
+    };
+    for (name, cx, cy, lift) in [("a.png", 0.3, 0.4, 0), ("b.png", 0.8, 0.8, 0), ("c.png", 0.3, 0.4, 5), ("d.png", 0.7, 0.2, 0), ("e.png", 0.7, 0.2, 3)] {
+        let mut png = Vec::new();
+        picture(cx, cy, lift).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        std::fs::write(root.join(name), png).unwrap();
+    }
+    h.call("set_folder", json!({ "dir": root.to_str().unwrap(), "recursive": false, "poll_ms": 0 }));
+    h.wait_scan_done();
+    // a and c, then d and e: each group together, in the order asked for.
+    assert_eq!(h.names(&root, false, "is:duplicate"), ["a.png", "c.png", "d.png", "e.png"]);
+    // With other terms too, the groups are found among what they leave.
+    assert_eq!(h.names(&root, false, "is:duplicate -name:e.png"), ["a.png", "c.png"]);
+    // Asked again, the fingerprints are remembered.
+    assert_eq!(h.names(&root, false, "is:dupes"), ["a.png", "c.png", "d.png", "e.png"]);
+    assert_eq!(h.names(&root, false, "").len(), 5);
+}

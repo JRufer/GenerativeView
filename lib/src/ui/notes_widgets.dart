@@ -307,9 +307,13 @@ class _CollectionPickerState extends State<_CollectionPicker> {
 
 /// The marks on a grid tile: stars along the bottom, the flag in a corner.
 class TileMarks extends StatelessWidget {
-  const TileMarks({super.key, required this.rating, required this.flag, required this.compact});
+  const TileMarks({super.key, required this.rating, required this.flag, required this.compact, this.besideCheck = false});
   final int rating;
   final Flag flag;
+
+  /// The tile has a tick box in its top right corner: the flag goes to its
+  /// left.
+  final bool besideCheck;
 
   /// Small tiles get a number instead of a row of stars.
   final bool compact;
@@ -344,7 +348,7 @@ class TileMarks extends StatelessWidget {
           Align(
             alignment: Alignment.topRight,
             child: Container(
-              margin: const EdgeInsets.all(5),
+              margin: EdgeInsets.fromLTRB(5, 5, besideCheck ? 32 : 5, 5),
               decoration: const BoxDecoration(color: Color(0xB3000000), shape: BoxShape.circle),
               padding: const EdgeInsets.all(2),
               child: Icon(

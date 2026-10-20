@@ -56,6 +56,16 @@ final Map<String, CivitaiModel?> _cache = {};
 
 const String _api = 'https://civitai.com/api/v1';
 
+/// What an earlier lookup of [name] / [hash] found, without asking
+/// Civitai again: whether it was looked up, and the model if it was found.
+(bool, CivitaiModel?) cachedModel({required String name, String hash = ''}) {
+  final key = '$hash|$name';
+  return _cache.containsKey(key) ? (true, _cache[key]) : (false, null);
+}
+
+/// How a model is looked up: [lookUpModel], unless a test says otherwise.
+typedef ModelLookup = Future<CivitaiModel?> Function({required String name, String hash, String kind});
+
 /// The model with [hash] or, failing that, the one whose file is called
 /// [name]. Null if Civitai knows neither.
 Future<CivitaiModel?> lookUpModel({required String name, String hash = '', String kind = ''}) async {

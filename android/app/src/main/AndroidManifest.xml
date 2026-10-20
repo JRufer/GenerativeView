@@ -41,6 +41,15 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Pictures and videos shared from another app (a browser, a
+                 chat) open here, to see how they were made. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="image/*"/>
+                <data android:mimeType="video/*"/>
+            </intent-filter>
         </activity>
         <!-- Serves a copied image to the app it is pasted into. Not exported:
              the clipboard grants the pasting app access to the one file that

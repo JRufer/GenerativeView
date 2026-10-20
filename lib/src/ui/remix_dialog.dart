@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/backends.dart';
+import '../core/civitai.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
 import '../core/spelling.dart';
@@ -248,7 +249,7 @@ class _RemixPanelState extends State<RemixPanel> {
               padding: EdgeInsets.only(top: 6),
               child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
             ),
-          if (_loras.isNotEmpty) LoraSection(loras: _loras),
+          if (_loras.isNotEmpty) LoraSection(loras: _loras, prompt: _prompt),
           PanelHeading(
             'Send to',
             trailing: TextButton.icon(
@@ -469,16 +470,111 @@ class _SizeFieldState extends State<SizeField> {
 /// leave it out of the remix and a slider for its weight, from −1 to 2,
 /// that starts where the picture had it and shows in grey how far it has
 /// been moved.
+///
+/// "Check trigger words" looks each LoRA up on Civitai (its name and hash
+/// are all that is sent, and only when pressed) and lists the words that
+/// trigger it: those already in [prompt] ticked, the rest a tap away from
+/// being added. A LoRA left on with none of its words in the prompt is
+/// pointed out, on its row and, folded, beside the heading. What was found
+/// is remembered while the app is open, so the next remix shows it at once.
 class LoraSection extends StatefulWidget {
-  const LoraSection({super.key, required this.loras});
+  const LoraSection({super.key, required this.loras, this.prompt, this.lookUp});
   final List<LoraChoice> loras;
+
+  /// The prompt being edited, to check and add trigger words to.
+  final TextEditingController? prompt;
+
+  /// How to look a LoRA up; Civitai, unless a test says otherwise.
+  final ModelLookup? lookUp;
 
   @override
   State<LoraSection> createState() => _LoraSectionState();
 }
 
+/// What is known of one LoRA's trigger words.
+class _Triggers {
+  const _Triggers({this.looking = false, this.found = false, this.model, this.error});
+  final bool looking;
+
+  /// Looked up (whether or not Civitai knew it).
+  final bool found;
+  final CivitaiModel? model;
+  final String? error;
+
+  List<String> get words => model?.trainedWords.where((w) => w.trim().isNotEmpty).toList() ?? const [];
+}
+
 class _LoraSectionState extends State<LoraSection> {
   bool _open = false;
+  late final List<_Triggers> _triggers = [
+    for (final l in widget.loras) _cached(l.original),
+  ];
+
+  /// What lookups found while the app has been open, by name and hash.
+  static final Map<String, CivitaiModel?> _known = {};
+
+  static _Triggers _cached(LoraRef lora) {
+    final key = '${lora.hash}|${lora.name}';
+    if (_known.containsKey(key)) return _Triggers(found: true, model: _known[key]);
+    // Looked up already from the metadata panel, perhaps.
+    final (known, model) = cachedModel(name: lora.name, hash: lora.hash);
+    return known ? _Triggers(found: true, model: model) : const _Triggers();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.prompt?.addListener(_promptChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.prompt?.removeListener(_promptChanged);
+    super.dispose();
+  }
+
+  void _promptChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _looking => _triggers.any((t) => t.looking);
+
+  Future<void> _check() async {
+    final lookUp = widget.lookUp ?? lookUpModel;
+    await Future.wait([
+      for (var i = 0; i < widget.loras.length; i++)
+        () async {
+          if (_triggers[i].found) return;
+          setState(() => _triggers[i] = const _Triggers(looking: true));
+          final lora = widget.loras[i].original;
+          _Triggers result;
+          try {
+            final model = await lookUp(name: lora.name, hash: lora.hash, kind: 'lora');
+            _known['${lora.hash}|${lora.name}'] = model;
+            result = _Triggers(found: true, model: model);
+          } catch (e) {
+            result = _Triggers(error: '$e');
+          }
+          if (mounted) setState(() => _triggers[i] = result);
+        }(),
+    ]);
+  }
+
+  /// Whether LoRA [i] is on, has trigger words, and none of them is in
+  /// the prompt.
+  bool _missing(int i) {
+    final prompt = widget.prompt;
+    if (prompt == null || !widget.loras[i].enabled) return false;
+    final words = _triggers[i].words;
+    return words.isNotEmpty && !words.any((w) => triggerPresent(prompt.text, w));
+  }
+
+  void _add(String entry) {
+    final prompt = widget.prompt;
+    if (prompt == null) return;
+    final text = addTrigger(prompt.text, entry);
+    prompt.value = TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -486,21 +582,50 @@ class _LoraSectionState extends State<LoraSection> {
     final loras = widget.loras;
     final changed = loras.where((l) => l.changed).length;
     final off = loras.where((l) => !l.enabled).length;
+    final missing = [for (var i = 0; i < loras.length; i++) if (_missing(i)) i].length;
     final summary = [
       '${loras.length}',
       if (off > 0) '$off off',
       if (changed - off > 0) '${changed - off} changed',
     ].join(' · ');
+    final unchecked = widget.prompt != null && _triggers.any((t) => !t.found);
     final rows = !_open
         ? const SizedBox(width: double.infinity)
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (unchecked || _looking)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      TextButton.icon(
+                        key: const ValueKey<String>('remix-lora-triggers'),
+                        onPressed: _looking ? null : _check,
+                        icon: _looking
+                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.travel_explore, size: 16),
+                        label: const Text('Check trigger words'),
+                      ),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text(
+                          'Looks each LoRA up on civitai.com by its name and hash; nothing else is sent.',
+                          style: TextStyle(fontSize: 11.5, color: Palette.faint),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               for (var i = 0; i < loras.length; i++)
                 _LoraRow(
                   key: ValueKey<String>('remix-lora-$i'),
                   index: i,
                   choice: loras[i],
+                  triggers: _triggers[i],
+                  prompt: widget.prompt?.text,
+                  missing: _missing(i),
+                  onAdd: _add,
                   onChanged: () => setState(() {}),
                 ),
             ],
@@ -533,6 +658,19 @@ class _LoraSectionState extends State<LoraSection> {
                   key: const ValueKey<String>('remix-loras-summary'),
                   style: TextStyle(fontSize: 11.5, color: changed > 0 ? Palette.accent : Palette.faint),
                 ),
+                if (missing > 0) ...[
+                  const SizedBox(width: 10),
+                  const Icon(Icons.warning_amber_rounded, size: 15, color: _warn),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      missing == 1 ? '1 without its trigger words' : '$missing without their trigger words',
+                      key: const ValueKey<String>('remix-loras-missing'),
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11.5, color: _warn),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -553,11 +691,32 @@ class _LoraSectionState extends State<LoraSection> {
   }
 }
 
+const Color _warn = Color(0xFFE6B450);
+
 class _LoraRow extends StatelessWidget {
-  const _LoraRow({super.key, required this.index, required this.choice, required this.onChanged});
+  const _LoraRow({
+    super.key,
+    required this.index,
+    required this.choice,
+    required this.onChanged,
+    this.triggers = const _Triggers(),
+    this.prompt,
+    this.missing = false,
+    this.onAdd,
+  });
   final int index;
   final LoraChoice choice;
   final VoidCallback onChanged;
+  final _Triggers triggers;
+
+  /// The prompt as it stands, to tick the trigger words already in it.
+  final String? prompt;
+
+  /// On, with trigger words, none of them in the prompt.
+  final bool missing;
+
+  /// Put a trigger-word entry into the prompt.
+  final ValueChanged<String>? onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -568,12 +727,24 @@ class _LoraRow extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(10, 4, 6, 6),
-      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(
+        color: Palette.raised,
+        borderRadius: BorderRadius.circular(6),
+        border: missing ? Border.all(color: _warn.withValues(alpha: 0.55)) : null,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
+              if (missing)
+                const Padding(
+                  padding: EdgeInsets.only(right: 6),
+                  child: Tooltip(
+                    message: 'None of its trigger words is in the prompt',
+                    child: Icon(Icons.warning_amber_rounded, size: 16, color: _warn),
+                  ),
+                ),
               Expanded(
                 child: Tooltip(
                   message: c.original.name,
@@ -639,6 +810,65 @@ class _LoraRow extends StatelessWidget {
               onChanged();
             },
           ),
+          ?_triggerLine(),
+        ],
+      ),
+    );
+  }
+
+  /// The LoRA's trigger words, once looked up: those in the prompt ticked,
+  /// the others to tap and add.
+  Widget? _triggerLine() {
+    final t = triggers;
+    const note = TextStyle(fontSize: 11.5, color: Palette.faint);
+    if (t.looking) return null;
+    if (t.error != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(t.error!, key: ValueKey<String>('remix-lora-trigger-error-$index'), style: note),
+      );
+    }
+    if (!t.found) return null;
+    if (t.model == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text('Not found on Civitai', key: ValueKey<String>('remix-lora-unknown-$index'), style: note),
+      );
+    }
+    final words = t.words;
+    if (words.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text('Civitai lists no trigger words for it', key: ValueKey<String>('remix-lora-nowords-$index'), style: note),
+      );
+    }
+    final text = prompt ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var w = 0; w < words.length; w++)
+            if (triggerPresent(text, words[w]))
+              Tooltip(
+                message: 'In the prompt',
+                child: Chip(
+                  key: ValueKey<String>('remix-lora-word-$index-$w'),
+                  visualDensity: VisualDensity.compact,
+                  avatar: const Icon(Icons.check, size: 14, color: Palette.accent),
+                  label: Text(words[w], style: const TextStyle(fontSize: 12, color: Palette.muted)),
+                ),
+              )
+            else
+              ActionChip(
+                key: ValueKey<String>('remix-lora-word-$index-$w'),
+                visualDensity: VisualDensity.compact,
+                avatar: const Icon(Icons.add, size: 14),
+                tooltip: 'Add to the start of the prompt',
+                label: Text(words[w], style: const TextStyle(fontSize: 12)),
+                onPressed: onAdd == null ? null : () => onAdd!(words[w]),
+              ),
         ],
       ),
     );

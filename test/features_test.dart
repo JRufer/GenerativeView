@@ -10,6 +10,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
 import 'package:generativeview/src/core/backends.dart' show RemixImage;
+import 'package:generativeview/src/core/civitai.dart';
 import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
@@ -26,6 +29,7 @@ import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/licenses.dart';
 import 'package:generativeview/src/ui/about_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
+import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet;
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
 import 'package:generativeview/src/ui/remix_dialog.dart';
@@ -1043,6 +1047,276 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await settle(tester);
     await close(tester, state);
+  });
+
+  testWidgets('pictures are ticked by their corner box and acted on together', (tester) async {
+    final copied = captureCopiedFiles(tester);
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    MediaItem item(String name) => state.items[indexOf(state, name)];
+    Finder box(String name) => find.byKey(ValueKey<String>('tile-check-${item(name).id}'));
+    Finder tile(String name) => find.byKey(ValueKey<int>(item(name).id));
+
+    // Every tile has an empty box in its top right corner.
+    expect(box('fox_01.png'), findsOneWidget);
+    final tileRect = tester.getRect(tile('fox_01.png'));
+    final boxAt = tester.getCenter(box('fox_01.png'));
+    expect(boxAt.dx, greaterThan(tileRect.center.dx));
+    expect(boxAt.dy, lessThan(tileRect.center.dy));
+    expect(find.byKey(const ValueKey('selection-bar')), findsNothing);
+
+    // Tapping the box ticks it, without opening anything.
+    await tester.tap(box('fox_01.png'));
+    await tester.pump();
+    expect(state.checkedCount, 1);
+    expect(state.mode, ViewMode.grid);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('selection-count'))).data, '1 selected');
+    // Once one is ticked, a tap anywhere on a tile ticks it, or unticks it.
+    await tester.tap(tile('fox_02.png'));
+    await tester.pump();
+    await tester.tap(tile('owl_01.png'));
+    await tester.pump();
+    expect(state.checkedCount, 3);
+    await tester.tap(tile('owl_01.png'));
+    await tester.pump();
+    expect(state.checkedItems.map((i) => i.name).toSet(), {'fox_01.png', 'fox_02.png'});
+    expect(tester.widget<Text>(find.byKey(const ValueKey('selection-count'))).data, '2 selected');
+    await screenshot(tester, boundary, '48-ticked');
+
+    // The menu on a ticked picture is for both, and has only what can be
+    // done to both at once.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+    await mouse.down(tester.getCenter(tile('fox_02.png')));
+    await mouse.up();
+    await mouse.removePointer();
+    await settle(tester);
+    expect(find.text('Copy 2 images'), findsOneWidget);
+    expect(find.text('Rate…'), findsOneWidget);
+    expect(find.text('Keep all (P)'), findsOneWidget);
+    expect(find.text('Upscale 2 images… (Shift U)'), findsOneWidget);
+    expect(find.text('Delete 2 images…'), findsOneWidget);
+    expect(find.text('Remix… (R)'), findsNothing);
+    expect(find.text('More like this (L)'), findsNothing);
+    expect(find.text('Copy prompt'), findsNothing);
+    await screenshot(tester, boundary, '49-many-menu');
+    await tester.tap(find.text('Keep all (P)'));
+    await pumpUntil(tester, () => item('fox_01.png').flag == Flag.keep && item('fox_02.png').flag == Flag.keep, what: 'both kept');
+    expect(item('owl_01.png').flag, Flag.none);
+
+    // Keys act on them all too.
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit4);
+    await pumpUntil(tester, () => item('fox_01.png').rating == 4 && item('fox_02.png').rating == 4, what: 'both rated');
+    expect(item('fox_03.png').rating, 0);
+    await tester.sendKeyDownEvent(primaryModifier);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(primaryModifier);
+    await tester.pump();
+    expect(copied.toSet(), {normalizePath(item('fox_01.png').path), normalizePath(item('fox_02.png').path)});
+    // Rated from the menu: the Rate entry asks how many stars.
+    final again = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+    await again.down(tester.getCenter(tile('fox_01.png')));
+    await again.up();
+    await again.removePointer();
+    await settle(tester);
+    await tester.tap(find.text('Rate…'));
+    await settle(tester);
+    await tester.tap(find.textContaining('(2)'));
+    await pumpUntil(tester, () => item('fox_01.png').rating == 2 && item('fox_02.png').rating == 2, what: 'both rated from the menu');
+
+    // Esc unticks them all; the corner boxes are empty again.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(state.checkedCount, 0);
+    expect(find.byKey(const ValueKey('selection-bar')), findsNothing);
+
+    // Ctrl-click ticks too; a plain click then ticks more.
+    await tester.sendKeyDownEvent(primaryModifier);
+    await tester.tap(tile('heron.png'));
+    await tester.sendKeyUpEvent(primaryModifier);
+    await tester.pump();
+    expect(state.checkedItems.map((i) => i.name), ['heron.png']);
+    expect(state.mode, ViewMode.grid);
+    // Ctrl A ticks every picture listed; the bar's cross unticks them.
+    await tester.sendKeyDownEvent(primaryModifier);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    await tester.sendKeyUpEvent(primaryModifier);
+    await tester.pump();
+    expect(state.checkedCount, state.items.length);
+    await tester.tap(find.byKey(const ValueKey('selection-clear')));
+    await tester.pump();
+    expect(state.checkedCount, 0);
+
+    // One ticked picture alone gets the menu of one picture.
+    await tester.tap(box('fox_03.png'));
+    await tester.pump();
+    final one = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+    await one.down(tester.getCenter(tile('fox_03.png')));
+    await one.up();
+    await one.removePointer();
+    await settle(tester);
+    expect(find.text('Remix… (R)'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+    // Tidy up the notes for the tests after.
+    await tester.runAsync(() => state.changeNotes(targets: [item('fox_01.png'), item('fox_02.png')], rating: 0, flag: Flag.none));
+    await close(tester, state);
+  });
+
+  testWidgets('near-duplicates only: the pictures with a twin, each pair together', (tester) async {
+    // Pictures with something in them: a bright disc on a ramp, placed by
+    // (cx, cy). Two pairs of all-but-identical ones, and one alone.
+    Uint8List disc(double cx, double cy, int lift) {
+      const w = 240, h = 320;
+      final raw = Uint8List(h * (1 + w * 3));
+      var o = 0;
+      for (var y = 0; y < h; y++) {
+        raw[o++] = 0;
+        for (var x = 0; x < w; x++) {
+          final ramp = (x + y) / (w + h) * 120;
+          final d = math.sqrt(math.pow(x - cx * w, 2) + math.pow(y - cy * h, 2));
+          final v = (ramp + (d < 45 ? 110 : 0)).round();
+          raw[o++] = math.min(255, v + lift);
+          raw[o++] = v;
+          raw[o++] = v;
+        }
+      }
+      return pngFromRows(w, h, raw);
+    }
+
+    final dir = Directory('${scratch.path}/twins')..createSync();
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final pictures = {
+      'a.png': disc(0.3, 0.4, 0),
+      'b.png': disc(0.8, 0.8, 0),
+      'c.png': disc(0.3, 0.4, 4),
+      'd.png': disc(0.7, 0.2, 0),
+      'e.png': disc(0.7, 0.2, 2),
+    };
+    var minute = 0;
+    pictures.forEach((name, bytes) {
+      File('${dir.path}/$name')
+        ..writeAsBytesSync(bytes)
+        ..setLastModifiedSync(DateTime(2026, 10, 2, 12, minute++));
+    });
+
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.isNotEmpty, what: 'the listing');
+    await tester.runAsync(() => state.openFolder(dir.path));
+    await pumpUntil(tester, () => state.items.length == 5, what: 'the twins folder');
+
+    // Turned on in the filter panel.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-duplicates')).evaluate().isNotEmpty, what: 'the filter panel');
+    await tester.tap(find.byKey(const ValueKey('filter-duplicates')));
+    await pumpUntil(tester, () => state.items.length == 4, what: 'only the twins');
+    expect(state.query, 'is:duplicate');
+    expect(FilterSet.parse(state.query).duplicates, isTrue);
+    final order = names(state);
+    expect(order.toSet(), {'a.png', 'c.png', 'd.png', 'e.png'});
+    // Each pair side by side.
+    expect((order.indexOf('a.png') - order.indexOf('c.png')).abs(), 1);
+    expect((order.indexOf('d.png') - order.indexOf('e.png')).abs(), 1);
+    await screenshot(tester, boundary, '50-filter-duplicates');
+    await tester.tap(find.byKey(const ValueKey('filters-done')));
+    await settle(tester);
+    await screenshot(tester, boundary, '51-near-duplicates');
+    state.applySearch('');
+    await tester.runAsync(() => state.openFolder(library.path));
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'back to the library');
+    await close(tester, state);
+  });
+
+  testWidgets('a picture shared to the app opens with how it was made', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    if (state.rightOpen) state.toggleRight();
+    state.applySearch('owl');
+    await pumpUntil(tester, () => names(state).join() == 'owl_01.png', what: 'a search');
+    await tester.runAsync(() => state.showShared(['${library.path}/fox_02.png']));
+    await pumpUntil(tester, () => state.mode == ViewMode.focus && state.selected?.name == 'fox_02.png', what: 'the shared picture open');
+    expect(state.query, '', reason: 'the search is cleared, so the picture is listed');
+    expect(state.rightOpen, isTrue, reason: 'the generation data shows');
+    state.closeFocus();
+    state.toggleRight();
+    await settle(tester);
+    await close(tester, state);
+  });
+
+  testWidgets('trigger words are looked up when asked, and added with a tap', (tester) async {
+    final prompt = TextEditingController(text: 'a red fox in the snow');
+    final asked = <String>[];
+    Future<CivitaiModel?> lookUp({required String name, String hash = '', String kind = ''}) async {
+      asked.add(name);
+      if (name.contains('unknown')) return null;
+      return CivitaiModel(
+        modelId: 1,
+        versionId: 2,
+        name: name,
+        version: 'v1',
+        type: 'LORA',
+        baseModel: 'SDXL 1.0',
+        trainedWords: name.contains('fur') ? ['furry detail', 'soft fur, fluffy'] : [],
+        creator: 'someone',
+        preview: null,
+        matchedBy: 'name',
+      );
+    }
+
+    final loras = [
+      LoraChoice(const LoraRef('loras/fur_detail_test.safetensors', 0.8, null, '')),
+      LoraChoice(const LoraRef('plain_test.safetensors', 1, null, '')),
+      LoraChoice(const LoraRef('unknown_test.safetensors', 1, null, '')),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: SizedBox(width: 560, child: LoraSection(loras: loras, prompt: prompt, lookUp: lookUp)),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const ValueKey('remix-loras')));
+    await tester.pumpAndSettle();
+    // Nothing is asked until the button is pressed.
+    expect(asked, isEmpty);
+    expect(find.byKey(const ValueKey('remix-loras-missing')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('remix-lora-triggers')));
+    await tester.pumpAndSettle();
+    expect(asked, hasLength(3));
+    expect(find.text('furry detail'), findsOneWidget);
+    expect(find.text('soft fur, fluffy'), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-lora-nowords-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-lora-unknown-2')), findsOneWidget);
+    // On, and none of its words in the prompt: said on the heading.
+    expect(find.byKey(const ValueKey('remix-loras-missing')), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-lora-triggers')), findsNothing, reason: 'all looked up');
+    // A tap puts it at the start of the prompt.
+    await tester.tap(find.byKey(const ValueKey('remix-lora-word-0-0')));
+    await tester.pumpAndSettle();
+    expect(prompt.text, 'furry detail, a red fox in the snow');
+    expect(find.byKey(const ValueKey('remix-loras-missing')), findsNothing);
+    // Turned off, a LoRA's missing words don't matter.
+    prompt.text = 'a red fox';
+    await tester.pump();
+    expect(find.byKey(const ValueKey('remix-loras-missing')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('remix-lora-switch-0')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('remix-loras-missing')), findsNothing);
+    // What was found is remembered: a new panel shows it without asking.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: SizedBox(width: 560, child: LoraSection(loras: [LoraChoice(loras[0].original)], prompt: prompt, lookUp: lookUp)),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const ValueKey('remix-loras')));
+    await tester.pumpAndSettle();
+    expect(find.text('furry detail'), findsOneWidget);
+    expect(asked, hasLength(3), reason: 'not asked again');
+    expect(find.byKey(const ValueKey('remix-lora-triggers')), findsNothing);
   });
 
   testWidgets('side panels resize by their grips and snap shut past half their least', (tester) async {
