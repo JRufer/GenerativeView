@@ -32,6 +32,7 @@ import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet;
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
 import 'package:generativeview/src/ui/remix_dialog.dart';
+import 'package:generativeview/src/ui/sheet.dart' show ChoiceChipButton;
 import 'package:generativeview/src/ui/thumb_image.dart';
 
 import 'support.dart';
@@ -1357,6 +1358,165 @@ void main() {
     await tester.drag(right, Offset(state.rightWidth - minRightWidth / 2 + 30, 0));
     await settle(tester);
     expect(state.rightOpen, isFalse);
+    await close(tester, state);
+  });
+
+  testWidgets('filters show over the grid, dock in the folder panel, and come off one by one', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 6 && thumbsShown(tester) == 6, what: '6 thumbnails');
+    if (!state.leftOpen) state.toggleLeft();
+    state.setLeftTab(LeftTab.folders);
+    await settle(tester);
+    expect(find.byKey(const ValueKey('filter-bar')), findsNothing, reason: 'no filters, no bar');
+
+    // A filter shows as a chip over the grid; its cross takes it off.
+    state.applySearch('fox lora:=fur_detail.safetensors');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the LoRA');
+    await settle(tester);
+    final chip = find.byKey(const ValueKey('filter-bar-lora-fur_detail.safetensors'));
+    expect(chip, findsOneWidget);
+    expect(find.text('LoRA: fur_detail.safetensors'), findsOneWidget);
+    expect(find.text('Showing 2'), findsOneWidget);
+    await tester.tap(find.descendant(of: chip, matching: find.byType(IconButton)));
+    await pumpUntil(tester, () => state.query == 'fox', what: 'the filter off, the word kept');
+    await settle(tester);
+    expect(find.byKey(const ValueKey('filter-bar')), findsNothing);
+
+    // The Filters tab: the same panel, beside the grid, in step with the search box.
+    await tester.tap(find.byKey(const ValueKey('left-tab-filters')));
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')).evaluate().isNotEmpty, what: 'the docked filters');
+    expect(state.leftTab, LeftTab.filters);
+    expect(find.byKey(const ValueKey('filters-done')), findsNothing, reason: 'the grid is in sight; nothing to close');
+    await tester.tap(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
+    await pumpUntil(tester, () => state.query == 'fox lora:=fur_detail.safetensors', what: 'chosen from the tab');
+    await pumpUntil(tester, () => state.items.length == 2 && thumbsShown(tester) == 2, what: 'the two foxes');
+    await settle(tester);
+    expect(chip, findsOneWidget);
+    await screenshot(tester, boundary, '52-docked-filters');
+    // Changed from outside, the tab follows.
+    state.applySearch('');
+    await pumpUntil(tester, () => state.items.length == 6, what: 'everything');
+    await settle(tester);
+    final loraChip = tester.widget<ChoiceChipButton>(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
+    expect(loraChip.selected, isFalse);
+
+    // Several at once; "Clear all" takes them off and keeps a typed word.
+    state.applySearch('fox lora:=fur_detail.safetensors type:image');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'two filters');
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('filter-bar-clear')));
+    await pumpUntil(tester, () => state.query == 'fox', what: 'all cleared');
+    state.applySearch('');
+    state.setLeftTab(LeftTab.folders);
+    await close(tester, state);
+  });
+
+  testWidgets('smart collections are saved beside the pictures, shown, edited and deleted', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 6 && thumbsShown(tester) == 6, what: '6 thumbnails');
+    if (!state.leftOpen) state.toggleLeft();
+    state.setLeftTab(LeftTab.folders);
+    await settle(tester);
+    expect(find.text('SMART COLLECTIONS'), findsOneWidget);
+
+    // Filters over the grid, kept as a smart collection.
+    state.applySearch('fox lora:=fur_detail.safetensors');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the furry foxes');
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('filter-bar-save')));
+    await pumpUntil(tester, () => find.byKey(const ValueKey('smart-name')).evaluate().isNotEmpty, what: 'the editor');
+    await settle(tester);
+    // One rule per term, and the count of what they match.
+    expect(find.byKey(const ValueKey('smart-field-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('smart-field-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('smart-field-2')), findsNothing);
+    await pumpUntil(tester, () => find.text('2 pictures here match now', findRichText: true).evaluate().isNotEmpty, what: 'the count');
+    await tester.enterText(find.byKey(const ValueKey('smart-name')), 'Furry foxes');
+    await pumpUntil(tester, () => thumbsShown(tester) >= 2, what: 'the grid behind');
+    await settle(tester);
+    await screenshot(tester, boundary, '53-smart-editor');
+    await tester.tap(find.byKey(const ValueKey('smart-save')));
+    await pumpUntil(
+      tester,
+      () => File('${library.path}/.generativeview.json').existsSync() && jsonEncode(notesFile(library.path)['smart']) == jsonEncode([{'name': 'Furry foxes', 'query': 'fox lora:=fur_detail.safetensors'}]),
+      what: 'the smart collection saved in the folder',
+    );
+    await settle(tester);
+    // Listed with its count, and named over the grid while it shows.
+    await pumpUntil(tester, () => find.byKey(const ValueKey('smart-Furry foxes')).evaluate().isNotEmpty, what: 'listed');
+    expect(find.descendant(of: find.byKey(const ValueKey('smart-collections')), matching: find.text('2')), findsOneWidget);
+    expect(state.showingSmart?.name, 'Furry foxes');
+    expect(find.byKey(const ValueKey('filter-bar-smart')), findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-bar-save')), findsNothing);
+    await screenshot(tester, boundary, '54-smart-collection-shown');
+
+    // Tapped in the panel it shows, and tapped again it goes.
+    await tester.tap(find.byKey(const ValueKey('smart-Furry foxes')));
+    await pumpUntil(tester, () => state.query.isEmpty, what: 'tapped off');
+    await tester.tap(find.byKey(const ValueKey('smart-Furry foxes')));
+    await pumpUntil(tester, () => state.query == 'fox lora:=fur_detail.safetensors' && state.items.length == 2, what: 'tapped on');
+
+    // Edited from the bar: renamed, a rule taken out.
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('filter-bar-edit-smart')));
+    await pumpUntil(tester, () => find.byKey(const ValueKey('smart-delete')).evaluate().isNotEmpty, what: 'the editor, for a saved one');
+    await settle(tester);
+    await tester.enterText(find.byKey(const ValueKey('smart-name')), 'Fox fur');
+    await tester.tap(find.byKey(const ValueKey('smart-remove-0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('smart-save')));
+    await pumpUntil(
+      tester,
+      () => jsonEncode(notesFile(library.path)['smart']) == jsonEncode([{'name': 'Fox fur', 'query': 'lora:=fur_detail.safetensors'}]),
+      what: 'renamed in place',
+    );
+    await pumpUntil(tester, () => state.query == 'lora:=fur_detail.safetensors', what: 'what shows follows the edit');
+
+    // Deleted from its menu, after asking; the pictures stay.
+    await settle(tester);
+    final row = find.byKey(const ValueKey('smart-Fox fur'));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+    await mouse.down(tester.getCenter(row));
+    await mouse.up();
+    await mouse.removePointer();
+    await settle(tester);
+    await tester.tap(find.text('Delete smart collection…'));
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('confirm-action')));
+    await pumpUntil(tester, () => notesFile(library.path)['smart'] == null && state.query.isEmpty, what: 'deleted');
+    await pumpUntil(tester, () => state.items.length == 6, what: 'every picture still there');
+    await close(tester, state);
+  });
+
+  testWidgets('a fresh start comes back to the folder, search and tab last showing', (tester) async {
+    var state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 6, what: 'the folder');
+    // Opened by the user, so remembered (a folder named on the command line is not).
+    var reopened = false;
+    state.openFolder(library.path).whenComplete(() => reopened = true);
+    await pumpUntil(tester, () => reopened && state.items.length == 6, what: 'the folder opened by hand');
+    state.applySearch('lora:=fur_detail.safetensors');
+    state.setLeftTab(LeftTab.filters);
+    await pumpUntil(tester, () => state.items.length == 2, what: 'filtered');
+    await close(tester, state);
+
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    state = AppState(core: core, thumbs: ThumbCache(core, maxBytes: 64 << 20));
+    await tester.pumpWidget(RepaintBoundary(key: boundary, child: GenerativeViewApp(state: state)));
+    var done = false;
+    state.restore().whenComplete(() => done = true);
+    await pumpUntil(tester, () => done, what: 'the app to start again');
+    expect(state.folder, normalizePath(library.path));
+    expect(state.query, 'lora:=fur_detail.safetensors');
+    expect(state.searchText.text, 'lora:=fur_detail.safetensors');
+    expect(state.leftTab, LeftTab.filters);
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the same two pictures');
+
+    // Back to how other tests expect to find it.
+    state.applySearch('');
+    state.setLeftTab(LeftTab.folders);
+    await pumpUntil(tester, () => state.items.length == 6, what: 'everything');
     await close(tester, state);
   });
 }

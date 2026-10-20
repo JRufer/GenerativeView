@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../theme.dart';
 import 'notes_widgets.dart' show starColor;
 import 'sheet.dart';
+import 'smart_editor.dart';
 
 /// The facets the filter panel offers, in order: (usage kind, search field,
 /// heading).
@@ -196,8 +197,13 @@ Future<void> openFilters(BuildContext context, AppState state) {
 }
 
 class FilterPanel extends StatefulWidget {
-  const FilterPanel({super.key, required this.state});
+  const FilterPanel({super.key, required this.state, this.docked = false});
   final AppState state;
+
+  /// In the folder panel's Filters tab, beside the grid, rather than a
+  /// panel of its own: it fills the tab, and the grid it narrows is in
+  /// sight, so it has no "Show" button.
+  final bool docked;
 
   @override
   State<FilterPanel> createState() => _FilterPanelState();
@@ -205,6 +211,7 @@ class FilterPanel extends StatefulWidget {
 
 class _FilterPanelState extends State<FilterPanel> {
   late FilterSet _filters = FilterSet.parse(widget.state.query);
+  late String _seenQuery = widget.state.query;
   UsageStats? _stats;
   String? _countedFor;
   final Set<String> _expanded = {};
@@ -223,21 +230,35 @@ class _FilterPanelState extends State<FilterPanel> {
   }
 
   void _onState() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // The search changed from outside (typed, a chip taken off over the
+    // grid, a collection opened): show what it now chooses.
+    final query = widget.state.query;
+    if (query != _seenQuery) {
+      _seenQuery = query;
+      _filters = FilterSet.parse(query);
+    }
+    _count();
+    setState(() {});
   }
 
   Future<void> _count() async {
+    final state = widget.state;
     final text = _filters.freeText;
-    if (_countedFor == text && _stats != null) return;
-    _countedFor = text;
+    // Counted again for another folder too, or with sub-folders in or out.
+    final key = '${state.folder}|${state.recursive}|$text';
+    if (_countedFor == key && _stats != null) return;
+    _countedFor = key;
     try {
-      final stats = await widget.state.usage(text: text);
-      if (mounted && _countedFor == text) setState(() => _stats = stats);
+      final stats = await state.usage(text: text);
+      if (mounted && _countedFor == key) setState(() => _stats = stats);
     } catch (_) {}
   }
 
   void _apply() {
-    widget.state.applySearch(_filters.toQuery(), content: false);
+    final query = _filters.toQuery();
+    _seenQuery = query;
+    widget.state.applySearch(query, content: false);
     setState(() {});
   }
 
@@ -262,16 +283,14 @@ class _FilterPanelState extends State<FilterPanel> {
   Widget build(BuildContext context) {
     final stats = _stats;
     final matches = widget.state.items.length;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Flexible(
-          child: stats == null
-              ? const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-              : ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+    final docked = widget.docked;
+    final query = widget.state.query.trim();
+    final saved = widget.state.showingSmart;
+    final list = stats == null
+        ? const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+        : ListView(
+                  shrinkWrap: !docked,
+                  padding: EdgeInsets.fromLTRB(docked ? 12 : 18, 0, docked ? 12 : 18, 8),
                   children: [
                     if (_filters.free.isNotEmpty)
                       Text(
@@ -307,19 +326,51 @@ class _FilterPanelState extends State<FilterPanel> {
                     ),
                     for (final (kind, field, title) in _facets) ..._section(kind, field, title),
                   ],
-                ),
-        ),
+                );
+    // A search that is already a smart collection is edited there; any
+    // other can be kept as one.
+    final save = TextButton.icon(
+      key: const ValueKey<String>('filters-save-smart'),
+      onPressed: query.isEmpty || widget.state.contentSearch
+          ? null
+          : () => saved != null
+                ? openSmartEditor(context, widget.state, existing: saved)
+                : openSmartEditor(context, widget.state, query: query),
+      icon: const Icon(Icons.auto_awesome_motion_outlined, size: 17),
+      label: Text(saved != null ? 'Edit smart collection' : (docked ? 'Save as smart' : 'Save…')),
+    );
+    return Column(
+      mainAxisSize: docked ? MainAxisSize.max : MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (docked) Expanded(child: list) else Flexible(child: list),
         const Divider(height: 1),
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
-          child: Row(
+          padding: EdgeInsets.fromLTRB(docked ? 6 : 18, docked ? 6 : 10, docked ? 6 : 18, docked ? 8 : 14),
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
-              TextButton(onPressed: _filters.isEmpty ? null : _clear, child: const Text('Clear filters')),
-              const Spacer(),
-              FilledButton(
-                key: const ValueKey<String>('filters-done'),
-                onPressed: () => Navigator.of(context).maybePop(),
-                child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
+              TextButton(
+                key: const ValueKey<String>('filters-clear'),
+                onPressed: _filters.isEmpty ? null : _clear,
+                child: Text(docked ? 'Clear' : 'Clear filters'),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  save,
+                  if (!docked) ...[
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      key: const ValueKey<String>('filters-done'),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
@@ -466,3 +517,20 @@ class _FilterPanelState extends State<FilterPanel> {
 
   static String _short(String s) => s.length > 64 ? '${s.substring(0, 61)}…' : s;
 }
+
+/// What a filter on [field] is called where it is shown on its own, as a
+/// chip over the grid.
+String facetLabel(String field) => switch (field) {
+  'model' => 'Model',
+  'lora' => 'LoRA',
+  'collection' => 'Collection',
+  'fullprompt' => 'Prompt',
+  'prompt' => 'Word',
+  'sampler' => 'Sampler',
+  'scheduler' => 'Scheduler',
+  'steps' => 'Steps',
+  'cfg' => 'CFG',
+  'size' => 'Size',
+  'source' => 'Made with',
+  _ => field,
+};

@@ -244,6 +244,34 @@ impl Engine {
         self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?, sort, bar)
     }
 
+    /// The smart collections that apply to the folder being viewed: those
+    /// saved in it and in every folder above it, the nearest first when two
+    /// share a name. Each comes with where it is saved and how many of the
+    /// pictures in view (`dir`, `recursive`) it matches now.
+    fn smart_list(&self, args: &Value) -> Result<String, String> {
+        let dir = normalize(str_arg(args, "dir")?);
+        let recursive = bool_arg(args, "recursive");
+        let mut out: Vec<Value> = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        for place in Path::new(&dir).ancestors() {
+            let Some(place) = place.to_str().filter(|p| !p.is_empty()) else { continue };
+            let place = normalize(place);
+            for smart in self.notes.smart(&place) {
+                let key = smart.name.to_lowercase();
+                if seen.contains(&key) {
+                    continue;
+                }
+                seen.push(key);
+                let count = self
+                    .search(&json!({ "dir": dir, "recursive": recursive, "text": smart.query }))
+                    .map(|found| found.rows.len() as i64)
+                    .unwrap_or(-1);
+                out.push(json!({ "name": smart.name, "query": smart.query, "dir": place, "count": count }));
+            }
+        }
+        Ok(Value::Array(out).to_string())
+    }
+
     /// Handle one request. `query` answers in the packed binary layout
     /// (see `QueryResult::pack`); everything else is JSON.
     pub fn request(&self, method: &str, args: &Value) -> Result<Reply, String> {
@@ -305,6 +333,21 @@ impl Engine {
             "collections" => {
                 let names = self.db.collection_names().map_err(db_err)?;
                 Ok(Value::Array(names.into_iter().map(|(name, count)| json!({ "name": name, "count": count })).collect()).to_string())
+            }
+            "smart_list" => self.smart_list(args),
+            "smart_set" => {
+                let old = args.get("old_name").and_then(Value::as_str);
+                self.notes.set_smart(&normalize(str_arg(args, "dir")?), str_arg(args, "name")?, str_arg(args, "query")?, old)?;
+                Ok("null".into())
+            }
+            "smart_delete" => {
+                self.notes.delete_smart(&normalize(str_arg(args, "dir")?), str_arg(args, "name")?)?;
+                Ok("null".into())
+            }
+            "count" => {
+                // How many pictures a search would list, without listing them.
+                let found = self.search(args)?;
+                Ok(json!({ "count": found.rows.len() }).to_string())
             }
             "forget" => self.forget(str_arg(args, "path")?),
             "collection_delete" => self.delete_collection(str_arg(args, "name")?),

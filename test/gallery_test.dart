@@ -167,6 +167,49 @@ void main() {
     await pumpUntil(tester, () => shown() >= 5, what: 'the filtered grid');
     await screenshot(tester, boundary, '31b-real-filtered');
 
+    // Filters docked beside the grid, and shown over it.
+    if (!state.leftOpen) state.toggleLeft();
+    if (state.rightOpen) state.toggleRight();
+    state.setLeftTab(LeftTab.filters);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('docked-filters')).evaluate().isNotEmpty, what: 'the docked filters');
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-stars-4')).evaluate().isNotEmpty, what: 'the facets counted');
+    await settle(tester);
+    await pumpUntil(tester, () => shown() >= 5, what: 'the filtered grid');
+    await screenshot(tester, boundary, '33-real-docked-filters');
+
+    // Kept as a smart collection.
+    await tester.tap(find.byKey(const ValueKey('filter-bar-save')));
+    await pumpUntil(tester, () => find.byKey(const ValueKey('smart-name')).evaluate().isNotEmpty, what: 'the smart collection editor');
+    await tester.enterText(find.byKey(const ValueKey('smart-name')), 'Four stars and up');
+    await pumpUntil(tester, () => find.text('5 pictures here match now', findRichText: true).evaluate().isNotEmpty, what: 'the count');
+    await settle(tester);
+    await tester.pump(const Duration(seconds: 1));
+    await screenshot(tester, boundary, '34-real-smart-editor');
+    await tester.tap(find.byKey(const ValueKey('smart-save')));
+    await pumpUntil(tester, () => state.showingSmart != null, what: 'the smart collection showing');
+    state.setLeftTab(LeftTab.folders);
+    await settle(tester);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('smart-Four stars and up')).evaluate().isNotEmpty, what: 'listed');
+    await settle(tester);
+    await screenshot(tester, boundary, '35-real-smart-collection');
+
+    // On a phone: the filters come up from the bottom.
+    tester.view.physicalSize = const Size(412, 915);
+    if (state.leftOpen) state.toggleLeft();
+    await settle(tester);
+    await pumpUntil(tester, () => shown() >= 2, what: 'the phone grid');
+    await screenshot(tester, boundary, '36a-real-phone-filtered');
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filters-done')).evaluate().isNotEmpty, what: 'the filter sheet');
+    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-stars-4')).evaluate().isNotEmpty && find.byType(CircularProgressIndicator).evaluate().isEmpty, what: 'the sheet counted');
+    await settle(tester);
+    await settle(tester);
+    await screenshot(tester, boundary, '36b-real-phone-filters');
+    await tester.tap(find.byKey(const ValueKey('filters-done')));
+    await settle(tester);
+    tester.view.physicalSize = const Size(1600, 1000);
+    await settle(tester);
+
     // The prompt editor: words selected, weighted with the slider.
     state.select(0);
     await tester.pump();

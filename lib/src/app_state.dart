@@ -69,6 +69,33 @@ class PinnedSearch {
   int get hashCode => Object.hash(query, content);
 }
 
+/// A search saved under a name, in the notes file of the folder it was
+/// saved in: whatever pictures match it, whenever it is looked at.
+@immutable
+class SmartCollection {
+  const SmartCollection({required this.name, required this.query, required this.dir, this.count = -1});
+  final String name;
+  final String query;
+
+  /// The folder whose notes file holds it.
+  final String dir;
+
+  /// How many pictures in view match it now; -1 when that is not known.
+  final int count;
+
+  static SmartCollection? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final name = json['name'];
+    final query = json['query'];
+    final dir = json['dir'];
+    if (name is! String || query is! String || dir is! String) return null;
+    return SmartCollection(name: name, query: query, dir: dir, count: (json['count'] as num?)?.toInt() ?? -1);
+  }
+}
+
+/// What the folder panel is showing.
+enum LeftTab { folders, filters }
+
 /// How far a download of the content-search model has come.
 @immutable
 class DownloadProgress {
@@ -292,6 +319,52 @@ class AppState extends ChangeNotifier {
   /// Whether the folder panel's "Pinned" section is showing its contents.
   bool pinsOpen = true;
 
+  /// The folder panel's tab: the folder tree, or the filters.
+  LeftTab leftTab = LeftTab.folders;
+
+  void setLeftTab(LeftTab tab) {
+    if (leftTab == tab) return;
+    leftTab = tab;
+    _save('left_tab', tab.name);
+    notifyListeners();
+  }
+
+  /// The search last saved as the one to come back to, so it is written
+  /// only when it changes.
+  String? _rememberedQuery;
+
+  /// The smart collections that apply to the open folder, with how many
+  /// pictures each matches. Kept up to date as pictures and notes change.
+  List<SmartCollection> smart = const [];
+  Timer? _smartTimer;
+
+  /// The smart collection whose search is the one showing, if any.
+  SmartCollection? get showingSmart {
+    final q = query.trim();
+    if (q.isEmpty || contentSearch) return null;
+    for (final s in smart) {
+      if (s.query.trim() == q) return s;
+    }
+    return null;
+  }
+
+  /// Read the smart collections (and their counts) again now.
+  Future<void> refreshSmart() async {
+    _smartTimer?.cancel();
+    final dir = folder;
+    final list = await smartCollections();
+    if (_disposed || dir != folder) return;
+    smart = list;
+    notifyListeners();
+  }
+
+  /// Read them again shortly: after a burst of changes, once.
+  void _smartSoon() {
+    if (_disposed) return;
+    _smartTimer?.cancel();
+    _smartTimer = Timer(const Duration(milliseconds: 700), () => unawaited(refreshSmart()));
+  }
+
   // ---------------------------------------------------------------- internals
 
   int _queryTicket = 0;
@@ -376,6 +449,7 @@ class AppState extends ChangeNotifier {
     sort = (saved['sort'] as String?) ?? sort;
     searchSort = (saved['search_sort'] as String?) ?? searchSort;
     pinsOpen = flag('pins_open', pinsOpen);
+    leftTab = LeftTab.values.firstWhere((t) => t.name == saved['left_tab'], orElse: () => leftTab);
     contentSearch = flag('content_search', contentSearch);
     pinnedSearches = [
       for (final entry in _savedList(saved['pinned_searches']))
@@ -398,6 +472,18 @@ class AppState extends ChangeNotifier {
 
     await loadPlaces();
     final start = initialFolder ?? saved['folder'] as String?;
+    // Back to exactly what was showing last time: the folder, and the
+    // search, filters or collection it was showing. A folder asked for by
+    // name (on the command line) starts clean instead.
+    final lastQuery = saved['query'] as String? ?? '';
+    _rememberedQuery = lastQuery;
+    if (initialFolder == null && lastQuery.trim().isNotEmpty) {
+      query = lastQuery;
+      searchText.value = TextEditingValue(
+        text: lastQuery,
+        selection: TextSelection.collapsed(offset: lastQuery.length),
+      );
+    }
     if (start != null && start.isNotEmpty) {
       await openFolder(start, remember: initialFolder == null);
       await treeRevealing;
@@ -405,6 +491,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     _sharedIn ??= sharedFiles.listen((paths) => unawaited(showShared(paths)));
+    notesTick.addListener(_smartSoon);
   }
 
   StreamSubscription<List<String>>? _sharedIn;
@@ -565,6 +652,7 @@ class AppState extends ChangeNotifier {
     var dir = normalizePath(path.trim());
     if (dir.isEmpty) return;
     folder = dir;
+    smart = const [];
     items = ItemList.empty;
     loaded = false;
     fresh.clear();
@@ -591,6 +679,7 @@ class AppState extends ChangeNotifier {
     treeRevealing = rev;
     unawaited(rev);
     await _reload();
+    unawaited(refreshSmart());
     if (contentSearch) unawaited(refreshContent());
   }
 
@@ -870,6 +959,7 @@ class AppState extends ChangeNotifier {
         _onContentEvent(e);
       case 'changed':
         _contentSoon();
+        _smartSoon();
         // Coalesce bursts (a scan reports every few hundred files).
         _reloadTimer ??= Timer(const Duration(milliseconds: 120), () {
           _reloadTimer = null;
@@ -885,6 +975,7 @@ class AppState extends ChangeNotifier {
           );
         } else if (state == 'done') {
           scan.value = ScanStatus.idle;
+          _smartSoon();
           if (prewarm) _warm();
           _contentSoon();
         } else {
@@ -904,6 +995,11 @@ class AppState extends ChangeNotifier {
   Future<void> _reload() async {
     final dir = folder;
     if (dir == null || _disposed) return;
+    if (query != _rememberedQuery) {
+      // What is showing now is what to come back to next time.
+      _rememberedQuery = query;
+      _save('query', query);
+    }
     final ticket = ++_queryTicket;
     final describing = contentSearch && searching;
     ItemList list;
@@ -1306,6 +1402,73 @@ class AppState extends ChangeNotifier {
         for (final c in raw)
           if (c is Map) (c['name'] as String, (c['count'] as num).toInt()),
       ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// The smart collections saved in the open folder and the folders above
+  /// it, each with how many pictures in view match it now.
+  Future<List<SmartCollection>> smartCollections() async {
+    final dir = folder;
+    if (dir == null) return const [];
+    try {
+      final raw = await core.call('smart_list', {'dir': dir, 'recursive': recursive}) as List;
+      return [for (final s in raw) ?SmartCollection.fromJson(s)];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Save [query] as the smart collection [name] in [dir] (the open folder,
+  /// if left out). With [oldName] that one is changed, renamed if need be.
+  /// Showing it then is showing what it matches.
+  Future<bool> saveSmartCollection({required String name, required String query, String? oldName, String? dir}) async {
+    final where = dir ?? folder;
+    if (where == null) return false;
+    try {
+      await core.call('smart_set', {'dir': where, 'name': name, 'query': query, 'old_name': ?oldName});
+    } catch (e) {
+      _notices.add('Could not save the smart collection: $e');
+      return false;
+    }
+    await refreshSmart();
+    return true;
+  }
+
+  /// Forget the smart collection [target]. No picture is touched.
+  Future<bool> deleteSmartCollection(SmartCollection target) async {
+    try {
+      await core.call('smart_delete', {'dir': target.dir, 'name': target.name});
+    } catch (e) {
+      _notices.add('Could not delete the smart collection: $e');
+      return false;
+    }
+    if (query.trim() == target.query.trim()) applyFilter('');
+    await refreshSmart();
+    return true;
+  }
+
+  /// How many pictures in view a metadata search for [text] would list.
+  Future<int?> countMatches(String text) async {
+    final dir = folder;
+    if (dir == null) return null;
+    try {
+      final json = await core.call('count', {'dir': dir, 'recursive': recursive, 'text': text});
+      return ((json as Map)['count'] as num).toInt();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The first pictures in view that a metadata search for [text] lists, in
+  /// the grid's order, for a preview.
+  Future<List<MediaItem>> previewMatches(String text, {int limit = 8}) async {
+    final dir = folder;
+    if (dir == null) return const [];
+    try {
+      final list = ItemList.parse(await core.query(dir: dir, recursive: recursive, text: text, sort: sort, then: sort));
+      return [for (var i = 0; i < list.length && i < limit; i++) list[i]];
     } catch (_) {
       return const [];
     }
@@ -1811,6 +1974,7 @@ class AppState extends ChangeNotifier {
     _reloadTimer?.cancel();
     _queryTimer?.cancel();
     _contentTimer?.cancel();
+    _smartTimer?.cancel();
     _download?.cancel();
     content.dispose();
     download.dispose();

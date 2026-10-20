@@ -4,7 +4,9 @@ import '../app_state.dart';
 import '../core/models.dart' show exactTerm, normalizePath;
 import '../theme.dart';
 import 'context_menu.dart';
+import 'filter_sheet.dart';
 import 'sheet.dart';
+import 'smart_editor.dart';
 
 /// The left-hand panel: pinned folders, then places to start from and a
 /// lazily loaded folder tree. Tap a folder to view it; tap its arrow to look
@@ -176,13 +178,31 @@ class _FolderPanelState extends State<FolderPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final tabs = _PanelTabs(state: state);
+    if (state.leftTab == LeftTab.filters) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          tabs,
+          Expanded(
+            child: state.folder == null
+                ? const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text('Open a folder to filter it.', style: TextStyle(color: Palette.muted, fontSize: 13)),
+                  )
+                : FilterPanel(key: const ValueKey<String>('docked-filters'), state: state, docked: true),
+          ),
+        ],
+      );
+    }
     final rows = _rows();
     _scrollToCurrent(rows);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        tabs,
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
           child: SizedBox(
             height: 34,
             child: TextField(
@@ -216,6 +236,7 @@ class _FolderPanelState extends State<FolderPanel> {
           ),
         ),
         _PinnedFolders(state: state, onOpen: _pick, onMenu: _menu),
+        if (state.folder != null) _SmartCollections(state: state, onPicked: widget.onPicked),
         _Collections(state: state, onPicked: widget.onPicked),
         Expanded(
           child: rows.isEmpty
@@ -587,6 +608,222 @@ class _CollectionsState extends State<_Collections> {
                                 child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Color(0xFFCFCFD6))),
                               ),
                               Text('$count', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          const Divider(height: 9),
+        ],
+      ),
+    );
+  }
+}
+
+/// The panel's two tabs: the folders (with pins and collections), and the
+/// filters, docked beside the grid. The Filters tab shows how many filters
+/// are on.
+class _PanelTabs extends StatelessWidget {
+  const _PanelTabs({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = state.contentSearch ? 0 : FilterSet.parse(state.query).count;
+    Widget tab(LeftTab tab, String label, IconData icon, {int badge = 0}) {
+      final selected = state.leftTab == tab;
+      return Expanded(
+        child: Semantics(
+          selected: selected,
+          button: true,
+          child: InkWell(
+            key: ValueKey<String>('left-tab-${tab.name}'),
+            onTap: () => state.setLeftTab(tab),
+            hoverColor: Palette.hover,
+            child: Container(
+              height: 40,
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: selected ? Palette.accent : Colors.transparent, width: 2)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 16, color: selected ? Palette.accent : Palette.muted),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected ? Palette.text : Palette.muted,
+                    ),
+                  ),
+                  if (badge > 0) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(color: Palette.accent, borderRadius: BorderRadius.circular(9)),
+                      child: Text('$badge', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Palette.canvas)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ExcludeFocus(
+      child: DecoratedBox(
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Palette.line))),
+        child: Row(
+          children: [
+            tab(LeftTab.folders, 'Folders', Icons.folder_outlined),
+            tab(LeftTab.filters, 'Filters', Icons.tune, badge: on),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Searches kept under a name, saved beside the pictures: each shows the
+/// pictures that match it now. Tap one to show it; right-click or press and
+/// hold it to change or delete it.
+class _SmartCollections extends StatefulWidget {
+  const _SmartCollections({required this.state, this.onPicked});
+  final AppState state;
+  final VoidCallback? onPicked;
+
+  @override
+  State<_SmartCollections> createState() => _SmartCollectionsState();
+}
+
+class _SmartCollectionsState extends State<_SmartCollections> {
+  bool _open = true;
+
+  AppState get state => widget.state;
+
+  Future<void> _menu(SmartCollection smart, Offset position) async {
+    final choice = await showContextMenu<String>(context, position, const [
+      MenuEntry('edit', 'Edit smart collection…', Icons.edit_outlined),
+      MenuEntry('delete', 'Delete smart collection…', Icons.delete_outline),
+    ]);
+    if (!mounted) return;
+    if (choice == 'edit') {
+      await openSmartEditor(context, state, existing: smart);
+    } else if (choice == 'delete') {
+      final yes = await confirmAction(
+        context,
+        title: 'Delete \u201c${smart.name}\u201d?',
+        message: 'The smart collection goes away. The pictures it shows are not touched.',
+        action: 'Delete',
+      );
+      if (yes) await state.deleteSmartCollection(smart);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final list = state.smart;
+    final current = state.contentSearch ? '' : state.query.trim();
+    return ExcludeFocus(
+      key: const ValueKey<String>('smart-collections'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: () => setState(() => _open = !_open),
+              hoverColor: Palette.hover,
+              child: SizedBox(
+                height: 28,
+                child: Row(
+                  children: [
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      width: 26,
+                      child: Icon(_open ? Icons.expand_more : Icons.chevron_right, size: 18, color: Palette.faint),
+                    ),
+                    const Expanded(
+                      child: Text(
+                        'SMART COLLECTIONS',
+                        style: TextStyle(fontSize: 10.5, letterSpacing: 0.9, fontWeight: FontWeight.w600, color: Palette.faint),
+                      ),
+                    ),
+                    if (list.isNotEmpty) Text('${list.length}', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                    SizedBox(
+                      width: 32,
+                      height: 28,
+                      child: IconButton(
+                        key: const ValueKey<String>('smart-new'),
+                        tooltip: 'New smart collection',
+                        padding: EdgeInsets.zero,
+                        iconSize: 17,
+                        onPressed: () => openSmartEditor(context, state, query: current),
+                        icon: const Icon(Icons.add, color: Palette.muted),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_open && list.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(30, 2, 12, 8),
+              child: Text(
+                'Filters or a search, kept under a name. They stay up to date as pictures come and go.',
+                style: TextStyle(fontSize: 12, height: 1.35, color: Palette.faint),
+              ),
+            ),
+          if (_open && list.isNotEmpty)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: _rowHeight * 5.5),
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemExtent: _rowHeight,
+                itemCount: list.length,
+                itemBuilder: (context, index) {
+                  final smart = list[index];
+                  final on = current == smart.query.trim();
+                  return Material(
+                    color: on ? Palette.accent.withValues(alpha: 0.16) : Colors.transparent,
+                    child: GestureDetector(
+                      key: ValueKey<String>('smart-${smart.name}'),
+                      onSecondaryTapUp: (details) => _menu(smart, details.globalPosition),
+                      onLongPressStart: (details) => _menu(smart, details.globalPosition),
+                      child: InkWell(
+                        onTap: () {
+                          state.applyFilter(on ? '' : smart.query);
+                          widget.onPicked?.call();
+                        },
+                        hoverColor: Palette.hover,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 30, right: 12),
+                          child: Row(
+                            children: [
+                              Icon(Icons.auto_awesome_motion_outlined, size: 16, color: on ? Palette.accent : Palette.muted),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  smart.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13, color: Color(0xFFCFCFD6)),
+                                ),
+                              ),
+                              if (smart.count >= 0)
+                                Text('${smart.count}', style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
                             ],
                           ),
                         ),
