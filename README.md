@@ -46,6 +46,8 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 | Ratings, flags and collections, saved beside the pictures | Filters, with counts |
 | ![The remix panel: a phrase weighted with the slider under it](docs/screenshot-remix.png) | ![Upscaling on the device, keeping the metadata](docs/screenshot-upscale.png) |
 | Remix: select words, drag their weight | Upscale on the device, metadata kept or stripped |
+| ![The Filters tab beside the grid, with the bar of filters over it](docs/screenshot-filter-tab.png) | ![A smart collection listed with its count and showing](docs/screenshot-smart-collections.png) |
+| Filters docked beside the grid, each one a chip over it | Smart collections, saved beside the pictures |
 | ![Models ranked by the stars of their pictures](docs/screenshot-best-rated.png) | ![Every keyboard shortcut](docs/screenshot-shortcuts.png) |
 | Best rated models and LoRAs | `?` lists every shortcut |
 
