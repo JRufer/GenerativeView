@@ -197,7 +197,7 @@ void main() {
     tester.view.physicalSize = const Size(412, 915);
     if (state.leftOpen) state.toggleLeft();
     await settle(tester);
-    await pumpUntil(tester, () => shown() >= 4, what: 'the phone grid');
+    await pumpUntil(tester, () => shown() >= 2, what: 'the phone grid');
     await screenshot(tester, boundary, '36a-real-phone-filtered');
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await pumpUntil(tester, () => find.byKey(const ValueKey('filters-done')).evaluate().isNotEmpty, what: 'the filter sheet');

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import 'filter_sheet.dart';
+import 'notes_widgets.dart' show starColor;
 import 'smart_editor.dart';
 
 /// Over the grid while filters are on: each filter as a chip that takes it
@@ -47,7 +48,12 @@ class FilterBar extends StatelessWidget {
       }
     }
     if (filters.minRating > 0) {
-      chip('rating', '★ ${filters.minRating}${filters.minRating < 5 ? '+' : ''}', (f) => f.minRating = 0);
+      chip(
+        'rating',
+        filters.minRating < 5 ? '${filters.minRating} stars or more' : '5 stars',
+        (f) => f.minRating = 0,
+        icon: Icons.star_rounded,
+      );
     }
     if (filters.unrated) chip('unrated', 'Not rated', (f) => f.unrated = false);
     for (final flag in filters.flags) {
@@ -89,7 +95,7 @@ class FilterBar extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Text(
-              count == 1 ? '1 picture' : '$count pictures',
+              'Showing $count',
               style: const TextStyle(fontSize: 12.5, color: Palette.muted),
             ),
           ),
@@ -131,7 +137,7 @@ class _FilterChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[Icon(icon, size: 14, color: Palette.accent), const SizedBox(width: 6)],
+          if (icon != null) ...[Icon(icon, size: 15, color: starColor), const SizedBox(width: 6)],
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 320),
             child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: Palette.text)),

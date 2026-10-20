@@ -1376,7 +1376,7 @@ void main() {
     final chip = find.byKey(const ValueKey('filter-bar-lora-fur_detail.safetensors'));
     expect(chip, findsOneWidget);
     expect(find.text('LoRA: fur_detail.safetensors'), findsOneWidget);
-    expect(find.text('2 pictures'), findsOneWidget);
+    expect(find.text('Showing 2'), findsOneWidget);
     await tester.tap(find.descendant(of: chip, matching: find.byType(IconButton)));
     await pumpUntil(tester, () => state.query == 'fox', what: 'the filter off, the word kept');
     await settle(tester);
@@ -1492,7 +1492,9 @@ void main() {
     var state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 6, what: 'the folder');
     // Opened by the user, so remembered (a folder named on the command line is not).
-    await state.openFolder(library.path);
+    var reopened = false;
+    state.openFolder(library.path).whenComplete(() => reopened = true);
+    await pumpUntil(tester, () => reopened && state.items.length == 6, what: 'the folder opened by hand');
     state.applySearch('lora:=fur_detail.safetensors');
     state.setLeftTab(LeftTab.filters);
     await pumpUntil(tester, () => state.items.length == 2, what: 'filtered');

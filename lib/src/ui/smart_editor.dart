@@ -67,7 +67,7 @@ class SmartRule {
 
   /// Whether the value is one of a few, chosen rather than typed.
   List<(String, String)>? get choices => switch (field) {
-    SmartField.rating => [for (var n = 1; n <= 5; n++) ('$n', '$n ★')],
+    SmartField.rating => [for (var n = 1; n <= 5; n++) ('$n', n == 1 ? '1 star' : '$n stars')],
     SmartField.flag => const [('keep', 'Keep'), ('reject', 'Reject'), ('none', 'Not flagged')],
     _ => null,
   };
@@ -220,7 +220,7 @@ class _SmartEditorState extends State<SmartEditor> {
       final v = r.value.trim();
       if (r.op == SmartOp.isNot || r.op == SmartOp.lacks) continue;
       if (r.field == SmartField.rating) {
-        parts.add(r.op == SmartOp.unrated ? 'Not rated' : '$v★${r.op == SmartOp.atLeast ? '+' : ''}');
+        parts.add(r.op == SmartOp.unrated ? 'Not rated' : '$v${r.op == SmartOp.atLeast ? '+' : ''} stars');
       } else if (v.isNotEmpty) {
         final short = v.replaceAll(RegExp(r'\.(safetensors|ckpt|pt|pth)$', caseSensitive: false), '');
         parts.add(short.length > 24 ? '${short.substring(0, 23)}…' : short);
@@ -462,7 +462,7 @@ class _SmartEditorState extends State<SmartEditor> {
           rule.value = v;
           _changed();
         },
-        style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13, color: Palette.text),
         decoration: InputDecoration(
           isDense: true,
           hintText: rule.field == SmartField.text ? 'as in the search box' : 'value',
@@ -519,7 +519,7 @@ class _SmartEditorState extends State<SmartEditor> {
           isExpanded: true,
           isDense: true,
           dropdownColor: Palette.raised,
-          style: const TextStyle(fontSize: 13, color: Palette.text),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 13, color: Palette.text),
           iconSize: 18,
           items: [
             for (final (v, label) in items)
