@@ -561,7 +561,7 @@ class _SmartEditorState extends State<SmartEditor> {
             LayoutBuilder(
               builder: (context, box) {
                 const gap = 6.0;
-                final side = ((box.maxWidth - gap * 7) / 8).clamp(28.0, 72.0);
+                final side = ((box.maxWidth - gap * 7) / 8).clamp(28.0, 72.0).toDouble();
                 return Wrap(
                   spacing: gap,
                   runSpacing: gap,
