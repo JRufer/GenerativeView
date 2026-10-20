@@ -13,6 +13,7 @@ struct _MyApplication {
   char** dart_entrypoint_arguments;
   FlMethodChannel* media_channel;
   GtkWindow* window;
+  FlView* view;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -58,22 +59,34 @@ static const gchar* image_type_for(const gchar* path) {
   return nullptr;
 }
 
-// Called when another program pastes: |user_data| is the copied file's path.
+// The file:// URIs of |paths|, a null-terminated list, as a new list.
+static gchar** uris_for(gchar** paths) {
+  guint n = g_strv_length(paths);
+  gchar** uris = g_new0(gchar*, n + 1);
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GFile) file = g_file_new_for_path(paths[i]);
+    uris[i] = g_file_get_uri(file);
+  }
+  return uris;
+}
+
+// Called when another program pastes: |user_data| is the copied files'
+// paths, a null-terminated list.
 static void clipboard_get_cb(GtkClipboard* clipboard,
                              GtkSelectionData* selection_data,
                              guint info,
                              gpointer user_data) {
-  const gchar* path = static_cast<const gchar*>(user_data);
-  g_autoptr(GFile) file = g_file_new_for_path(path);
-  g_autofree gchar* uri = g_file_get_uri(file);
+  gchar** paths = static_cast<gchar**>(user_data);
+  const gchar* path = paths[0];
+  g_auto(GStrv) uris = uris_for(paths);
   switch (info) {
     case kTargetUriList: {
-      gchar* uris[] = {uri, nullptr};
       gtk_selection_data_set_uris(selection_data, uris);
       break;
     }
     case kTargetGnomeCopiedFiles: {
-      g_autofree gchar* text = g_strconcat("copy\n", uri, nullptr);
+      g_autofree gchar* list = g_strjoinv("\n", uris);
+      g_autofree gchar* text = g_strconcat("copy\n", list, nullptr);
       gtk_selection_data_set(selection_data,
                              gtk_selection_data_get_target(selection_data), 8,
                              reinterpret_cast<const guchar*>(text),
@@ -98,20 +111,33 @@ static void clipboard_get_cb(GtkClipboard* clipboard,
 
 // Called when something else is copied, or the app closes.
 static void clipboard_clear_cb(GtkClipboard* clipboard, gpointer user_data) {
-  g_free(user_data);
+  g_strfreev(static_cast<gchar**>(user_data));
 }
 
-static gboolean copy_file_to_clipboard(const gchar* path) {
-  if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
+// Put |paths| (a null-terminated list) on the clipboard as files; a single
+// picture also as its own bytes.
+static gboolean copy_files_to_clipboard(gchar** paths) {
+  g_autoptr(GPtrArray) found = g_ptr_array_new_with_free_func(g_free);
+  for (gchar** p = paths; p != nullptr && *p != nullptr; p++) {
+    if (g_file_test(*p, G_FILE_TEST_IS_REGULAR)) {
+      g_ptr_array_add(found, g_strdup(*p));
+    }
+  }
+  if (found->len == 0) {
     return FALSE;
   }
+  g_ptr_array_add(found, nullptr);
+  gchar** owned_paths =
+      reinterpret_cast<gchar**>(g_ptr_array_steal(found, nullptr));
+  const gchar* path = owned_paths[0];
   GtkTargetList* list = gtk_target_list_new(nullptr, 0);
   gtk_target_list_add(list, gdk_atom_intern_static_string("text/uri-list"), 0,
                       kTargetUriList);
   gtk_target_list_add(
       list, gdk_atom_intern_static_string("x-special/gnome-copied-files"), 0,
       kTargetGnomeCopiedFiles);
-  const gchar* image_type = image_type_for(path);
+  const gchar* image_type =
+      owned_paths[1] == nullptr ? image_type_for(path) : nullptr;
   if (image_type != nullptr) {
     gtk_target_list_add(list, gdk_atom_intern(image_type, FALSE), 0,
                         kTargetImage);
@@ -119,20 +145,132 @@ static gboolean copy_file_to_clipboard(const gchar* path) {
   gint count = 0;
   GtkTargetEntry* targets = gtk_target_table_new_from_list(list, &count);
   GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
-  gchar* owned_path = g_strdup(path);
   gboolean ok =
       gtk_clipboard_set_with_data(clipboard, targets, count, clipboard_get_cb,
-                                  clipboard_clear_cb, owned_path);
+                                  clipboard_clear_cb, owned_paths);
   if (ok) {
     // Let a clipboard manager keep it after this window closes.
     gtk_clipboard_set_can_store(clipboard, nullptr, 0);
   } else {
-    // On failure the clear callback is never called, so the path is ours.
-    g_free(owned_path);
+    // On failure the clear callback is never called, so the paths are ours.
+    g_strfreev(owned_paths);
   }
   gtk_target_table_free(targets, count);
   gtk_target_list_unref(list);
   return ok;
+}
+
+static gboolean copy_file_to_clipboard(const gchar* path) {
+  gchar* paths[] = {const_cast<gchar*>(path), nullptr};
+  return copy_files_to_clipboard(paths);
+}
+
+// --- Dragging files out of the window ---------------------------------------
+//
+// A drag has to start from the press of the mouse button that is still held,
+// so every press is noted on its way to Flutter. When the app asks for a
+// drag, GTK starts one from that press, offering the files as a list of
+// URIs: a file manager, a browser's upload box or a chat window takes them
+// as the files themselves.
+
+static GdkEvent* last_press = nullptr;
+static gchar** drag_uris = nullptr;
+
+static void note_presses(GdkEvent* event, gpointer data) {
+  if (event->type == GDK_BUTTON_PRESS && event->button.button == 1) {
+    if (last_press != nullptr) {
+      gdk_event_free(last_press);
+    }
+    last_press = gdk_event_copy(event);
+  }
+  gtk_main_do_event(event);
+}
+
+static void drag_data_get_cb(GtkWidget* widget,
+                             GdkDragContext* context,
+                             GtkSelectionData* selection_data,
+                             guint info,
+                             guint time,
+                             gpointer user_data) {
+  if (drag_uris != nullptr) {
+    gtk_selection_data_set_uris(selection_data, drag_uris);
+  }
+}
+
+// GTK took the mouse for the drag, so Flutter never saw the button come up:
+// tell it, or it would think the button is still held.
+static void drag_end_cb(GtkWidget* widget,
+                        GdkDragContext* context,
+                        gpointer user_data) {
+  if (last_press == nullptr || last_press->button.window == nullptr) {
+    return;
+  }
+  GdkEvent* release = gdk_event_new(GDK_BUTTON_RELEASE);
+  release->button.window =
+      GDK_WINDOW(g_object_ref(last_press->button.window));
+  release->button.send_event = TRUE;
+  release->button.time = GDK_CURRENT_TIME;
+  release->button.button = 1;
+  release->button.state = GDK_BUTTON1_MASK;
+  GdkDevice* device = gdk_event_get_device(last_press);
+  gdk_event_set_device(release, device);
+  gdk_event_set_source_device(release, gdk_event_get_source_device(last_press));
+  gint x = 0, y = 0;
+  if (device != nullptr) {
+    gdk_window_get_device_position(last_press->button.window, device, &x, &y,
+                                   nullptr);
+  }
+  release->button.x = x;
+  release->button.y = y;
+  release->button.x_root = last_press->button.x_root;
+  release->button.y_root = last_press->button.y_root;
+  gtk_main_do_event(release);
+  gdk_event_free(release);
+}
+
+static gboolean drag_files(MyApplication* self, gchar** paths) {
+  if (self->view == nullptr || last_press == nullptr || paths == nullptr ||
+      paths[0] == nullptr) {
+    return FALSE;
+  }
+  g_strfreev(drag_uris);
+  drag_uris = uris_for(paths);
+  GtkTargetList* list = gtk_target_list_new(nullptr, 0);
+  gtk_target_list_add(list, gdk_atom_intern_static_string("text/uri-list"), 0,
+                      kTargetUriList);
+  GdkDragContext* context = gtk_drag_begin_with_coordinates(
+      GTK_WIDGET(self->view), list, GDK_ACTION_COPY, 1, last_press, -1, -1);
+  gtk_target_list_unref(list);
+  if (context == nullptr) {
+    return FALSE;
+  }
+  gtk_drag_set_icon_name(context,
+                         paths[1] == nullptr ? "image-x-generic"
+                                             : "emblem-documents",
+                         0, 0);
+  return TRUE;
+}
+
+// The "paths" argument of a call, as a new null-terminated list.
+static gchar** paths_argument(FlMethodCall* method_call) {
+  FlValue* args = fl_method_call_get_args(method_call);
+  if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+    return nullptr;
+  }
+  FlValue* list = fl_value_lookup_string(args, "paths");
+  if (list == nullptr || fl_value_get_type(list) != FL_VALUE_TYPE_LIST) {
+    return nullptr;
+  }
+  size_t n = fl_value_get_length(list);
+  gchar** out = g_new0(gchar*, n + 1);
+  size_t at = 0;
+  for (size_t i = 0; i < n; i++) {
+    FlValue* item = fl_value_get_list_value(list, i);
+    if (fl_value_get_type(item) == FL_VALUE_TYPE_STRING) {
+      out[at++] = g_strdup(fl_value_get_string(item));
+    }
+  }
+  return out;
 }
 
 // The bytes a program pasting the clipboard as a picture would get, or a null
@@ -274,6 +412,16 @@ static void media_method_call_cb(FlMethodChannel* channel,
     }
     g_autoptr(FlValue) result = fl_value_new_bool(copied);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (g_str_equal(method, "copyFiles")) {
+    g_auto(GStrv) paths = paths_argument(method_call);
+    gboolean copied = paths != nullptr && copy_files_to_clipboard(paths);
+    g_autoptr(FlValue) result = fl_value_new_bool(copied);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (g_str_equal(method, "dragFiles")) {
+    g_auto(GStrv) paths = paths_argument(method_call);
+    gboolean started = drag_files(MY_APPLICATION(user_data), paths);
+    g_autoptr(FlValue) result = fl_value_new_bool(started);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (g_str_equal(method, "trashFile")) {
     const gchar* path = path_argument(method_call);
     g_autoptr(FlValue) result = path != nullptr
@@ -353,6 +501,7 @@ static void my_application_activate(GApplication* application) {
       project, self->dart_entrypoint_arguments);
 
   FlView* view = fl_view_new(project);
+  self->view = view;
   GdkRGBA background_color;
   // Background defaults to black, override it here if necessary, e.g. #00000000
   // for transparent.
@@ -366,6 +515,12 @@ static void my_application_activate(GApplication* application) {
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
                            self);
   gtk_widget_realize(GTK_WIDGET(view));
+
+  // For dragging files out: note each press, and serve the drag's files.
+  gdk_event_handler_set(note_presses, nullptr, nullptr);
+  g_signal_connect(view, "drag-data-get", G_CALLBACK(drag_data_get_cb),
+                   nullptr);
+  g_signal_connect(view, "drag-end", G_CALLBACK(drag_end_cb), nullptr);
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 

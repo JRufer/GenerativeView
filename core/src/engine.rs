@@ -24,6 +24,7 @@ pub struct Engine {
     pub indexer: Indexer,
     pub content: ContentSearch,
     pub notes: Arc<Notes>,
+    pub dupes: crate::dupes::Duplicates,
     data_dir: std::path::PathBuf,
     sink: crate::index::EventSink,
     /// Upscales under way; one that is taken out of here stops.
@@ -47,7 +48,8 @@ impl Engine {
         let content = ContentSearch::start(data_dir, db.clone(), thumbs.clone(), sink.clone())?;
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
-        Ok(Engine { db, thumbs, indexer, content, notes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default() })
+        let dupes = crate::dupes::Duplicates::open(data_dir);
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default() })
     }
 
     pub fn close(&self) {
@@ -67,8 +69,19 @@ impl Engine {
     }
 
     /// A metadata search; with a `similar:<path>` term in it, only the
-    /// matches that look like that picture, most alike first.
+    /// matches that look like that picture, most alike first; with
+    /// `is:duplicate`, only those that have a near-duplicate among the
+    /// matches, each group together.
     fn search(&self, args: &Value) -> Result<crate::db::QueryResult, String> {
+        let found = self.search_plain(args)?;
+        let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+        if crate::db::wants_duplicates(text) {
+            return Ok(self.dupes.only_duplicates(&self.thumbs, &found));
+        }
+        Ok(found)
+    }
+
+    fn search_plain(&self, args: &Value) -> Result<crate::db::QueryResult, String> {
         let query = Self::query_args(args)?;
         let similar = crate::db::similar_target(&query.text);
         let Some(target) = similar else {

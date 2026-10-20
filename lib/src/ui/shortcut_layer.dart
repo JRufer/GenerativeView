@@ -9,6 +9,7 @@ import '../core/models.dart';
 import '../platform.dart';
 import 'filter_sheet.dart';
 import 'image_menu.dart';
+import 'meta_panel.dart' show toast;
 import 'notes_widgets.dart';
 import 'remix_dialog.dart';
 import 'shortcuts_overlay.dart';
@@ -206,15 +207,20 @@ class ShortcutLayer extends StatelessWidget {
       return KeyEventResult.handled;
     }
     if (ctrl && key == LogicalKeyboardKey.keyC) {
-      // Ctrl+C copies the prompt; with Shift, the image itself.
+      // Ctrl+C copies the prompt; with Shift, the image itself (or every
+      // ticked one).
       final item = state.selected;
-      if (item != null) {
-        if (keyboard.isShiftPressed) {
-          copyImage(context, item);
-        } else {
-          copyPrompt(context, state, item);
-        }
+      if (keyboard.isShiftPressed) {
+        final targets = state.keyTargets;
+        if (targets.isNotEmpty) copyItems(context, targets);
+      } else if (item != null) {
+        copyPrompt(context, state, item);
       }
+      return KeyEventResult.handled;
+    }
+    if (ctrl && key == LogicalKeyboardKey.keyA) {
+      // Ctrl+A ticks every picture listed.
+      if (state.mode == ViewMode.grid && event is! KeyRepeatEvent) state.checkAll();
       return KeyEventResult.handled;
     }
     if (ctrl && key == LogicalKeyboardKey.keyV) {
@@ -315,6 +321,8 @@ class ShortcutLayer extends StatelessWidget {
         state.closeFocus();
       } else if (state.leftFloats || state.rightFloats) {
         state.closeOverlays();
+      } else if (state.checkedCount > 0) {
+        state.clearChecked();
       } else {
         state.clearSelection();
       }
@@ -324,14 +332,16 @@ class ShortcutLayer extends StatelessWidget {
     return KeyEventResult.handled;
   }
 
-  /// The keys that act on the selected picture, and those that open
-  /// panels. True if [key] was one of them.
+  /// The keys that act on the selected picture (or, where it makes sense,
+  /// on every ticked one), and those that open panels. True if [key] was
+  /// one of them.
   bool _pictureKey(LogicalKeyboardKey key, bool shift) {
     final panel = _panelContext;
     final item = state.selected;
+    final targets = state.keyTargets;
     final stars = _stars(key);
     if (stars != null) {
-      if (item != null) state.rateSelected(stars, toggle: stars > 0);
+      if (targets.isNotEmpty) state.rateSelected(stars, toggle: stars > 0);
       return true;
     }
     if (key == LogicalKeyboardKey.keyF) {
@@ -343,7 +353,28 @@ class ShortcutLayer extends StatelessWidget {
       return true;
     }
     if (key == LogicalKeyboardKey.delete) {
-      if (panel != null && item != null) deleteFile(panel, state, item);
+      if (panel != null && targets.isNotEmpty) deleteFiles(panel, state, targets);
+      return true;
+    }
+    if (targets.length > 1) {
+      // Several ticked: what can be done to all of them.
+      if (key == LogicalKeyboardKey.keyP) {
+        state.flagSelected(Flag.keep);
+      } else if (key == LogicalKeyboardKey.keyX) {
+        state.flagSelected(Flag.reject);
+      } else if (key == LogicalKeyboardKey.keyU && shift) {
+        if (panel != null) openUpscaleMany(panel, state, targets);
+      } else if (key == LogicalKeyboardKey.keyU) {
+        state.changeNotes(targets: targets, flag: Flag.none);
+      } else if (key == LogicalKeyboardKey.keyB) {
+        if (panel != null) showCollectionPicker(panel, state, targets);
+      } else if (key != LogicalKeyboardKey.keyL && key != LogicalKeyboardKey.keyR) {
+        return false;
+      }
+      // Remix and look-alikes are for one picture at a time.
+      if ((key == LogicalKeyboardKey.keyL || key == LogicalKeyboardKey.keyR) && panel != null) {
+        toast(panel, key == LogicalKeyboardKey.keyR ? 'Remix works on one picture at a time' : '“More like this” works on one picture at a time');
+      }
       return true;
     }
     if (item == null) {

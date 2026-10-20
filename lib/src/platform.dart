@@ -1,6 +1,7 @@
 /// Platform-specific integration across Linux, Android, Windows, and macOS.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -235,5 +236,103 @@ Future<PasteSource?> readPasteSource() async {
     return null;
   } on MissingPluginException {
     return null;
+  }
+}
+
+/// Put several files on the clipboard as files, bytes untouched. False if
+/// this platform cannot, or none of them could be copied.
+Future<bool> copyFilesToClipboard(List<String> paths) async {
+  if (paths.length == 1) return copyFileToClipboard(paths.single);
+  try {
+    return await _media.invokeMethod<bool>('copyFiles', {'paths': paths}) ?? false;
+  } on PlatformException catch (e) {
+    debugPrint('copy failed: $e');
+    return false;
+  } on MissingPluginException {
+    return false;
+  }
+}
+
+/// Whether there is a system share sheet to hand files to other apps.
+bool get canShareFiles => Platform.isAndroid;
+
+/// Offer [paths] to another app through the system's share sheet, as the
+/// files themselves. Android only (see [canShareFiles]).
+Future<bool> shareFiles(List<String> paths) async {
+  if (!canShareFiles || paths.isEmpty) return false;
+  try {
+    return await _media.invokeMethod<bool>('shareFiles', {'paths': paths}) ?? false;
+  } on PlatformException {
+    return false;
+  } on MissingPluginException {
+    return false;
+  }
+}
+
+/// Whether files can be dragged out of the window into other programs.
+bool get canDragFilesOut => Platform.isLinux || Platform.isMacOS || Platform.isWindows;
+
+/// Start dragging [paths] out of the window, as the files themselves, from
+/// the mouse press that is under way.
+Future<bool> dragFilesOut(List<String> paths) async {
+  if (!canDragFilesOut || paths.isEmpty) return false;
+  try {
+    return await _media.invokeMethod<bool>('dragFiles', {'paths': paths}) ?? false;
+  } on PlatformException {
+    return false;
+  } on MissingPluginException {
+    return false;
+  }
+}
+
+/// Move several files to the trash at once. On Android the system asks
+/// once for all of them; [TrashOutcome.unsupported] means it cannot, and
+/// they should go one by one. Elsewhere this is the same as each in turn,
+/// and the outcome is the first that was not [TrashOutcome.trashed].
+Future<(TrashOutcome, String?)> trashFiles(List<String> paths) async {
+  if (paths.length == 1) return trashFile(paths.single);
+  if (Platform.isAndroid) {
+    try {
+      final answer = await _media.invokeMethod<String>('trashFiles', {'paths': paths}) ?? 'unsupported';
+      return switch (answer) {
+        'trashed' => (TrashOutcome.trashed, null),
+        'cancelled' => (TrashOutcome.cancelled, null),
+        _ => (TrashOutcome.unsupported, null),
+      };
+    } on PlatformException catch (e) {
+      return (TrashOutcome.failed, e.message);
+    } on MissingPluginException {
+      return (TrashOutcome.unsupported, null);
+    }
+  }
+  return (TrashOutcome.unsupported, null);
+}
+
+/// Pictures shared to the app from another (Android), as paths of the
+/// copies kept in its shared folder. Each list is handed over once.
+final StreamController<List<String>> _shared = StreamController<List<String>>.broadcast();
+bool _sharedListening = false;
+
+Stream<List<String>> get sharedFiles {
+  if (!_sharedListening && Platform.isAndroid) {
+    _sharedListening = true;
+    _media.setMethodCallHandler((call) async {
+      if (call.method == 'sharedReady') await _takeShared();
+      return null;
+    });
+    // Anything shared before the app was listening (it was opened by it).
+    scheduleMicrotask(_takeShared);
+  }
+  return _shared.stream;
+}
+
+Future<void> _takeShared() async {
+  try {
+    final paths = await _media.invokeListMethod<String>('takeShared');
+    if (paths != null && paths.isNotEmpty) _shared.add(paths);
+  } on PlatformException {
+    // Nothing to take.
+  } on MissingPluginException {
+    // Not Android.
   }
 }

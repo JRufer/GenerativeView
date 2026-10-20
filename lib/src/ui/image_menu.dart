@@ -13,17 +13,24 @@ import 'remix_dialog.dart';
 import 'sheet.dart';
 import 'upscale_dialog.dart';
 
-/// The menu a right click or a press-and-hold on an image brings up.
+/// The collection being looked at, if the grid is narrowed to one: every
+/// picture shown is in it, so the menu can take pictures out again.
+String? _shownCollection(AppState state) {
+  final collections = FilterSet.parse(state.query).chosen['collection'] ?? const <String>{};
+  return collections.length == 1 ? collections.first : null;
+}
+
+/// The menu a right click or a press-and-hold on an image brings up. On one
+/// of several ticked pictures, it is the menu for all of them.
 Future<void> showImageMenu(
   BuildContext context,
   AppState state,
   MediaItem item,
   Offset position,
 ) async {
-  // The collection being looked at, if the grid is narrowed to one: every
-  // picture shown is in it, so the menu can take this one out again.
-  final collections = FilterSet.parse(state.query).chosen['collection'] ?? const <String>{};
-  final shownCollection = collections.length == 1 ? collections.first : null;
+  final targets = state.targetsFor(item);
+  if (targets.length > 1) return _showManyMenu(context, state, targets, position);
+  final shownCollection = _shownCollection(state);
   final choice = await showContextMenu<String>(context, position, [
     MenuEntry(
       'file',
@@ -32,6 +39,7 @@ Future<void> showImageMenu(
     ),
     const MenuEntry('prompt', 'Copy prompt', Icons.notes),
     const MenuEntry('path', 'Copy file path', Icons.link),
+    if (canShareFiles) MenuEntry('share', item.isVideo ? 'Share video…' : 'Share image…', Icons.share_outlined),
     const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
     const MenuEntry('similar', 'More like this (L)', Icons.image_search),
     const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
@@ -71,6 +79,8 @@ Future<void> showImageMenu(
       await copyPrompt(context, state, item);
     case 'path':
       copyText(context, item.path, 'file path');
+    case 'share':
+      await shareItems(context, [item]);
     case 'paste':
       await pasteInto(context, state, item.dir);
     case 'uncollect':
@@ -78,6 +88,147 @@ Future<void> showImageMenu(
       if (context.mounted) toast(context, 'Removed from "$shownCollection"');
     case 'delete':
       await deleteFile(context, state, item);
+  }
+}
+
+/// The menu for several ticked pictures: only what can be done to all of
+/// them at once.
+Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem> targets, Offset position) async {
+  final n = targets.length;
+  final shownCollection = _shownCollection(state);
+  final images = targets.where((t) => !t.isVideo).length;
+  final things = targets.every((t) => t.isVideo) ? 'videos' : (images == n ? 'images' : 'files');
+  final allKeep = targets.every((t) => t.flag == Flag.keep);
+  final allReject = targets.every((t) => t.flag == Flag.reject);
+  final choice = await showContextMenu<String>(context, position, [
+    MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
+    if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
+    const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
+    MenuEntry('keep', allKeep ? 'Clear the keep flag (P)' : 'Keep all (P)', Icons.check_circle_outline),
+    MenuEntry('reject', allReject ? 'Clear the reject flag (X)' : 'Reject all (X)', Icons.cancel_outlined),
+    const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+    if (shownCollection != null)
+      MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
+    if (images > 0)
+      MenuEntry('upscale', images == n ? 'Upscale $n images… (Shift U)' : 'Upscale the $images images… (Shift U)', Icons.photo_size_select_large),
+    MenuEntry('delete', 'Delete $n $things…', Icons.delete_outline),
+    const MenuEntry('clear', 'Clear the selection (Esc)', Icons.deselect),
+  ]);
+  if (choice == null || !context.mounted) return;
+  switch (choice) {
+    case 'copy':
+      await copyItems(context, targets);
+    case 'share':
+      await shareItems(context, targets);
+    case 'rate':
+      final stars = await showContextMenu<int>(context, position, [
+        for (var i = 5; i >= 1; i--) MenuEntry(i, '${'★' * i}${'☆' * (5 - i)}  ($i)', Icons.star_rounded),
+        const MenuEntry(0, 'No stars (0)', Icons.star_outline_rounded),
+      ]);
+      if (stars != null) await state.rate(targets, stars);
+    case 'keep':
+      await state.setFlag(targets, Flag.keep);
+    case 'reject':
+      await state.setFlag(targets, Flag.reject);
+    case 'collection':
+      await showCollectionPicker(context, state, targets);
+    case 'uncollect':
+      await state.changeNotes(targets: targets, remove: [shownCollection!]);
+      if (context.mounted) toast(context, 'Removed $n from "$shownCollection"');
+    case 'upscale':
+      await openUpscaleMany(context, state, targets);
+    case 'delete':
+      await deleteFiles(context, state, targets);
+    case 'clear':
+      state.clearChecked();
+  }
+}
+
+/// Copy [items] as files, so they paste as themselves, generation data
+/// and all.
+Future<void> copyItems(BuildContext context, List<MediaItem> items) async {
+  if (items.length == 1) return copyImage(context, items.single);
+  final copied = await copyFilesToClipboard([for (final i in items) i.path]);
+  if (!context.mounted) return;
+  toast(context, copied ? 'Copied ${items.length} files' : 'Could not copy these files');
+}
+
+/// Hand [items] to another app through the system's share sheet.
+Future<void> shareItems(BuildContext context, List<MediaItem> items) async {
+  final shared = await shareFiles([for (final i in items) i.path]);
+  if (!shared && context.mounted) toast(context, 'Could not share ${items.length == 1 ? 'this file' : 'these files'}');
+}
+
+/// Delete several files at once, after asking once: to the trash where
+/// there is one, for good (after asking again) where there isn't.
+Future<void> deleteFiles(BuildContext context, AppState state, List<MediaItem> items) async {
+  if (items.length == 1) return deleteFile(context, state, items.single);
+  final n = items.length;
+  if (!trashAsksFirst) {
+    final yes = await confirmAction(
+      context,
+      title: 'Delete $n files?',
+      message: 'They are moved to the trash, along with their stars, flags and collections. You can restore them from the trash.',
+      action: 'Move $n to trash',
+    );
+    if (!yes || !context.mounted) return;
+  }
+  final trashed = <MediaItem>[];
+  final noTrash = <MediaItem>[];
+  final failed = <String>[];
+  if (trashAsksFirst) {
+    // One prompt from the system for all of them, where it can.
+    final (outcome, why) = await trashFiles([for (final i in items) i.path]);
+    switch (outcome) {
+      case TrashOutcome.trashed:
+        trashed.addAll(items);
+      case TrashOutcome.cancelled:
+        return;
+      case TrashOutcome.failed:
+        failed.add(why ?? 'unknown error');
+      case TrashOutcome.unsupported:
+        noTrash.addAll(items);
+    }
+  } else {
+    for (final item in items) {
+      final (outcome, why) = await trashFile(item.path);
+      switch (outcome) {
+        case TrashOutcome.trashed:
+          trashed.add(item);
+        case TrashOutcome.cancelled:
+          break;
+        case TrashOutcome.failed:
+          failed.add('${item.name}: ${why ?? 'unknown error'}');
+        case TrashOutcome.unsupported:
+          noTrash.add(item);
+      }
+    }
+  }
+  if (noTrash.isNotEmpty && context.mounted) {
+    final m = noTrash.length;
+    final yes = await confirmAction(
+      context,
+      title: m == 1 ? 'Delete ${noTrash.single.name} permanently?' : 'Delete $m files permanently?',
+      message: 'There is no trash for ${m == 1 ? 'this file' : 'these files'} here, so ${m == 1 ? 'it' : 'they'} would be deleted for good. This can\'t be undone.',
+      action: 'Delete permanently',
+    );
+    if (yes) {
+      for (final item in noTrash) {
+        try {
+          await File(item.path).delete();
+          trashed.add(item);
+        } catch (e) {
+          failed.add('${item.name}: $e');
+        }
+      }
+    }
+  }
+  await state.forgetFiles(trashed);
+  if (!context.mounted) return;
+  if (failed.isNotEmpty) {
+    toast(context, 'Could not delete ${failed.length == 1 ? failed.single : '${failed.length} files'}');
+  } else if (trashed.isNotEmpty) {
+    toast(context, trashed.length == 1 ? 'Deleted ${trashed.single.name}' : 'Deleted ${trashed.length} files');
   }
 }
 

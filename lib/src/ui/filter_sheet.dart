@@ -38,6 +38,7 @@ class FilterSet {
     this.unrated = false,
     Set<Flag>? flags,
     this.media = MediaShown.both,
+    this.duplicates = false,
   }) : flags = flags ?? {};
 
   /// Terms the panel does not manage: typed words, dates, negations.
@@ -49,6 +50,12 @@ class FilterSet {
   bool unrated;
   final Set<Flag> flags;
   MediaShown media;
+
+  /// Only pictures that have a near-duplicate, each group together
+  /// (`is:duplicate`).
+  bool duplicates;
+
+  static const Set<String> _duplicateWords = {'duplicate', 'duplicates', 'dupe', 'dupes', 'near-duplicate', 'near-duplicates'};
 
   /// The search fields that mean the kind of file (`type:video`).
   static const Set<String> _typeFields = {'type', 'kind', 'media', 'is'};
@@ -66,10 +73,15 @@ class FilterSet {
     var unrated = false;
     final flags = <Flag>{};
     var media = MediaShown.both;
+    var duplicates = false;
     for (final raw in splitTerms(query)) {
       final t = parseTerm(raw);
       if (t.negate || !_managed.contains(t.field)) {
         free.add(raw);
+        continue;
+      }
+      if (_typeFields.contains(t.field) && _duplicateWords.contains(t.value.toLowerCase().trim())) {
+        duplicates = true;
         continue;
       }
       if (_typeFields.contains(t.field)) {
@@ -105,18 +117,19 @@ class FilterSet {
       final values = _allOf.contains(t.field) || t.field == 'fullprompt' ? [t.value] : t.value.split('|');
       chosen.putIfAbsent(t.field, () => {}).addAll(values.where((v) => v.isNotEmpty));
     }
-    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media);
+    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media, duplicates: duplicates);
   }
 
   bool get isEmpty =>
-      chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty && media == MediaShown.both;
+      chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty && media == MediaShown.both && !duplicates;
 
   int get count =>
       chosen.values.fold(0, (n, s) => n + s.length) +
       (minRating > 0 ? 1 : 0) +
       (unrated ? 1 : 0) +
       flags.length +
-      (media == MediaShown.both ? 0 : 1);
+      (media == MediaShown.both ? 0 : 1) +
+      (duplicates ? 1 : 0);
 
   bool has(String field, String value) => chosen[field]?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
 
@@ -155,6 +168,7 @@ class FilterSet {
     if (flags.isNotEmpty) parts.add('flag:${flags.map((f) => f.word).join('|')}');
     if (media == MediaShown.images) parts.add('type:image');
     if (media == MediaShown.videos) parts.add('type:video');
+    if (duplicates) parts.add('is:duplicate');
     return parts.join(' ');
   }
 }
@@ -332,6 +346,17 @@ class _FilterPanelState extends State<FilterPanel> {
         choice(MediaShown.both, 'Images and videos', Icons.perm_media_outlined),
         choice(MediaShown.images, 'Images only', Icons.image_outlined),
         choice(MediaShown.videos, 'Videos only', Icons.videocam_outlined),
+        ChoiceChipButton(
+          key: const ValueKey<String>('filter-duplicates'),
+          label: 'Near-duplicates only',
+          icon: Icons.filter_none,
+          tooltip: 'Pictures that have an all-but-identical twin here (the same seed run again, a small change, a resave), each group side by side',
+          selected: _filters.duplicates,
+          onTap: () {
+            _filters.duplicates = !_filters.duplicates;
+            _apply();
+          },
+        ),
       ],
     );
   }

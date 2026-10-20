@@ -4,6 +4,7 @@
 pub mod clip;
 pub mod dates;
 pub mod db;
+pub mod dupes;
 pub mod engine;
 pub mod ffi;
 pub mod fsnav;

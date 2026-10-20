@@ -94,6 +94,22 @@ Uint8List pngWithText(
   return out.toBytes();
 }
 
+/// A PNG of [width] × [height] RGB pixels, given as filtered scanlines (a
+/// zero filter byte, then three bytes a pixel, for each row).
+Uint8List pngFromRows(int width, int height, Uint8List rows) {
+  final header = ByteData(13)
+    ..setUint32(0, width)
+    ..setUint32(4, height)
+    ..setUint8(8, 8)
+    ..setUint8(9, 2);
+  return (BytesBuilder()
+        ..add(const [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        ..add(_chunk('IHDR', header.buffer.asUint8List()))
+        ..add(_chunk('IDAT', zlib.encode(rows)))
+        ..add(_chunk('IEND', const [])))
+      .toBytes();
+}
+
 /// A minimal ComfyUI API-format graph. LoRAs ([lora], then [loras]) are
 /// chained between the checkpoint and the sampler, all at [strength].
 String comfyGraph({
@@ -308,9 +324,15 @@ List<String> captureCopiedFiles(WidgetTester tester) {
   tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
     call,
   ) async {
-    if (call.method != 'copyFile') return null;
-    copied.add(normalizePath((call.arguments as Map)['path'] as String));
-    return true;
+    if (call.method == 'copyFile') {
+      copied.add(normalizePath((call.arguments as Map)['path'] as String));
+      return true;
+    }
+    if (call.method == 'copyFiles') {
+      copied.addAll([for (final p in (call.arguments as Map)['paths'] as List) normalizePath(p as String)]);
+      return true;
+    }
+    return null;
   });
   addTearDown(
     () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(

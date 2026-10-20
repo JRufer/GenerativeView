@@ -9,8 +9,14 @@ import 'sheet.dart';
 /// Open the upscale panel for [item]: which model, how much bigger, and
 /// what to do with the metadata. The upscale itself runs on this device in
 /// the background; [UpscaleJobs] shows how it is going.
-Future<void> openUpscale(BuildContext context, AppState state, MediaItem item) async {
-  if (item.isVideo) {
+Future<void> openUpscale(BuildContext context, AppState state, MediaItem item) =>
+    openUpscaleMany(context, state, [item]);
+
+/// The same for several pictures at once: one choice for all of them, and
+/// they are upscaled one after another. Videos among them are left out.
+Future<void> openUpscaleMany(BuildContext context, AppState state, List<MediaItem> targets) async {
+  final items = [for (final t in targets) if (!t.isVideo) t];
+  if (items.isEmpty) {
     toast(context, 'Videos cannot be upscaled');
     return;
   }
@@ -24,17 +30,19 @@ Future<void> openUpscale(BuildContext context, AppState state, MediaItem item) a
   if (!context.mounted) return;
   await showPanel<void>(
     context,
-    title: 'Upscale ${item.name}',
+    title: items.length == 1 ? 'Upscale ${items.single.name}' : 'Upscale ${items.length} images',
     icon: Icons.photo_size_select_large,
     width: 520,
-    builder: (context) => UpscalePanel(state: state, item: item, models: models),
+    builder: (context) => UpscalePanel(state: state, items: items, models: models),
   );
 }
 
 class UpscalePanel extends StatefulWidget {
-  const UpscalePanel({super.key, required this.state, required this.item, required this.models});
+  const UpscalePanel({super.key, required this.state, required this.items, required this.models});
   final AppState state;
-  final MediaItem item;
+
+  /// The pictures to upscale: one, or several, each in turn.
+  final List<MediaItem> items;
   final UpscaleModels models;
 
   @override
@@ -65,13 +73,14 @@ class _UpscalePanelState extends State<UpscalePanel> {
       setState(() => _busy = false);
       return;
     }
-    await widget.state.startUpscale(widget.item, model: model.id, factor: _factor, keepMetadata: _keepMetadata);
+    await widget.state.startUpscales(widget.items, model: model.id, factor: _factor, keepMetadata: _keepMetadata);
     if (mounted) Navigator.of(context).maybePop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final item = widget.item;
+    final item = widget.items.first;
+    final many = widget.items.length > 1;
     final w = item.width * _factor;
     final h = item.height * _factor;
     final ext = item.name.contains('.') ? item.name.split('.').last.toLowerCase() : 'png';
@@ -122,7 +131,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
                 ),
             ],
           ),
-          if (item.width > 0)
+          if (item.width > 0 && !many)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
@@ -163,7 +172,9 @@ class _UpscalePanelState extends State<UpscalePanel> {
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              'Saved as ${item.name.replaceFirst(RegExp(r'\.[^.]+$'), '')}_up${_factor}x.$ext',
+              many
+                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${_factor}x'
+                  : 'Saved as ${item.name.replaceFirst(RegExp(r'\.[^.]+$'), '')}_up${_factor}x.$ext',
               style: const TextStyle(fontSize: 12, color: Palette.faint),
             ),
           ),
@@ -195,7 +206,13 @@ class _UpscalePanelState extends State<UpscalePanel> {
               key: const ValueKey<String>('upscale-start'),
               onPressed: _busy || _chosen == null ? null : _start,
               icon: const Icon(Icons.photo_size_select_large, size: 18),
-              label: Text(_chosen?.installed == false ? 'Download and upscale' : 'Upscale'),
+              label: Text(
+                _chosen?.installed == false
+                    ? 'Download and upscale'
+                    : many
+                    ? 'Upscale ${widget.items.length}'
+                    : 'Upscale',
+              ),
             ),
           ),
         ],
@@ -212,7 +229,9 @@ class UpscaleJobs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<UpscaleJob>>(
+    return ValueListenableBuilder<int>(
+      valueListenable: state.upscalesWaiting,
+      builder: (context, waiting, _) => ValueListenableBuilder<List<UpscaleJob>>(
       valueListenable: state.upscales,
       builder: (context, jobs, _) {
         if (jobs.isEmpty) return const SizedBox.shrink();
@@ -255,10 +274,27 @@ class UpscaleJobs extends StatelessWidget {
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Stop',
+                          tooltip: waiting > 0 ? 'Stop this one' : 'Stop',
                           iconSize: 18,
                           onPressed: () => state.cancelUpscale(job.id),
                           icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  if (waiting > 0)
+                    Row(
+                      key: const ValueKey<String>('upscale-waiting'),
+                      children: [
+                        const SizedBox(width: 24),
+                        Expanded(
+                          child: Text(
+                            '$waiting more waiting',
+                            style: const TextStyle(fontSize: 12, color: Palette.muted),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: state.cancelAllUpscales,
+                          child: const Text('Stop all'),
                         ),
                       ],
                     ),
@@ -268,6 +304,7 @@ class UpscaleJobs extends StatelessWidget {
           ),
         );
       },
+      ),
     );
   }
 }

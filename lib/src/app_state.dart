@@ -11,7 +11,7 @@ import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/thumb_cache.dart';
-import 'platform.dart' show PasteSource;
+import 'platform.dart' show PasteSource, sharedFiles;
 
 enum ViewMode { grid, focus }
 
@@ -185,6 +185,11 @@ class AppState extends ChangeNotifier {
   ViewMode mode = ViewMode.grid;
   int selectedIndex = -1;
   int? _selectedId;
+
+  /// Pictures ticked for acting on together (their tile's corner box, or
+  /// Ctrl-click), by id, in the order they were ticked. Only those still
+  /// listed count: a search that leaves one out unticks it.
+  final List<int> _checked = [];
 
   /// Bumped whenever the grid should scroll the selection into view.
   int revealTick = 0;
@@ -399,6 +404,35 @@ class AppState extends ChangeNotifier {
     } else {
       notifyListeners();
     }
+    _sharedIn ??= sharedFiles.listen((paths) => unawaited(showShared(paths)));
+  }
+
+  StreamSubscription<List<String>>? _sharedIn;
+
+  /// The picture to open in the focus view once a query lists it: the first
+  /// of some shared to the app.
+  String? _openWhenListed;
+
+  /// Pictures shared to the app from another: open the folder they were put
+  /// in, with the first of them in the focus view and how it was made
+  /// beside it.
+  Future<void> showShared(List<String> paths) async {
+    if (paths.isEmpty || _disposed) return;
+    final first = normalizePath(paths.first);
+    final cut = first.lastIndexOf('/');
+    if (cut <= 0) return;
+    final dir = first.substring(0, cut);
+    _openWhenListed = first;
+    if (query.isNotEmpty) {
+      query = '';
+      searchText.clear();
+    }
+    if (normalizePath(folder ?? '') != dir) {
+      await openFolder(dir);
+    } else {
+      rescan();
+      await _reload();
+    }
   }
 
   /// A list saved as JSON text; empty if it is missing or unreadable.
@@ -534,6 +568,7 @@ class AppState extends ChangeNotifier {
     items = ItemList.empty;
     loaded = false;
     fresh.clear();
+    _checked.clear();
     _knownIds = null;
     _openedAt = DateTime.now().millisecondsSinceEpoch;
     selectedIndex = -1;
@@ -930,6 +965,26 @@ class AppState extends ChangeNotifier {
       }
     }
     if (mode == ViewMode.focus && list.isEmpty) mode = ViewMode.grid;
+    final open = _openWhenListed;
+    if (open != null) {
+      for (var i = 0; i < list.length; i++) {
+        if (normalizePath(list[i].path) != open) continue;
+        _openWhenListed = null;
+        selectedIndex = i;
+        _selectedId = list.idAt(i);
+        fresh.remove(_selectedId);
+        mode = ViewMode.focus;
+        if (!rightOpen) {
+          rightOpen = true;
+          _save('right_open', 'true');
+        }
+        break;
+      }
+    }
+    if (_checked.isNotEmpty) {
+      final listed = list.ids.toSet();
+      _checked.retainWhere(listed.contains);
+    }
     _resolveHighlight(list);
     if (_revealAfterReload) {
       _revealAfterReload = false;
@@ -1006,6 +1061,57 @@ class AppState extends ChangeNotifier {
     fresh.remove(_selectedId);
     if (reveal) revealTick++;
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------- ticked
+
+  /// How many pictures are ticked.
+  int get checkedCount => _checked.length;
+
+  bool isChecked(int id) => _checked.contains(id);
+
+  /// The ticked pictures, in the order they are listed.
+  List<MediaItem> get checkedItems {
+    if (_checked.isEmpty) return const [];
+    final ids = _checked.toSet();
+    return [
+      for (var i = 0; i < items.length; i++)
+        if (ids.contains(items.idAt(i))) items[i],
+    ];
+  }
+
+  /// Tick [item], or untick it if it is ticked.
+  void toggleChecked(MediaItem item) {
+    if (!_checked.remove(item.id)) _checked.add(item.id);
+    notifyListeners();
+  }
+
+  /// Tick every picture listed.
+  void checkAll() {
+    _checked
+      ..clear()
+      ..addAll(items.ids);
+    notifyListeners();
+  }
+
+  void clearChecked() {
+    if (_checked.isEmpty) return;
+    _checked.clear();
+    notifyListeners();
+  }
+
+  /// What an action on [item] should act on: every ticked picture when
+  /// [item] is one of them and there is more than one, else [item] alone.
+  List<MediaItem> targetsFor(MediaItem item) {
+    if (_checked.length < 2 || !_checked.contains(item.id)) return [item];
+    return checkedItems;
+  }
+
+  /// What a keyboard shortcut should act on: the ticked pictures when there
+  /// are two or more, else the selected one.
+  List<MediaItem> get keyTargets {
+    if (_checked.length >= 2) return checkedItems;
+    return [?selected];
   }
 
   void clearSelection() {
@@ -1170,19 +1276,26 @@ class AppState extends ChangeNotifier {
     await _reload();
   }
 
-  /// Give the selected picture [stars]; the same number again clears it.
-  Future<void> rateSelected(int stars, {bool toggle = false}) async {
-    final item = selected;
-    if (item == null) return;
-    final value = toggle && item.rating == stars ? 0 : stars;
-    await changeNotes(rating: value);
+  /// Give the selected picture (or the ticked ones, see [keyTargets])
+  /// [stars]; the same number again, on all of them, clears it.
+  Future<void> rateSelected(int stars, {bool toggle = false}) => rate(keyTargets, stars, toggle: toggle);
+
+  /// Flag the selected picture (or the ticked ones); the same flag again,
+  /// on all of them, clears it.
+  Future<void> flagSelected(Flag flag) => setFlag(keyTargets, flag);
+
+  /// Give [targets] [stars]; with [toggle], when they all have that many
+  /// already, take them away.
+  Future<void> rate(List<MediaItem> targets, int stars, {bool toggle = false}) async {
+    if (targets.isEmpty) return;
+    final value = toggle && targets.every((t) => t.rating == stars) ? 0 : stars;
+    await changeNotes(targets: targets, rating: value);
   }
 
-  /// Flag the selected picture; the same flag again clears it.
-  Future<void> flagSelected(Flag flag) async {
-    final item = selected;
-    if (item == null) return;
-    await changeNotes(flag: item.flag == flag ? Flag.none : flag);
+  /// Flag [targets]; when they all have that flag already, clear it.
+  Future<void> setFlag(List<MediaItem> targets, Flag flag) async {
+    if (targets.isEmpty) return;
+    await changeNotes(targets: targets, flag: targets.every((t) => t.flag == flag) ? Flag.none : flag);
   }
 
   /// Every collection known, with how many pictures are in each.
@@ -1220,13 +1333,20 @@ class AppState extends ChangeNotifier {
 
   /// [item] was deleted or moved to the trash: drop it from the index and
   /// its folder's notes. In the grid the selection moves to its neighbour.
-  Future<void> forgetFile(MediaItem item) async {
-    final wasSelected = selected?.id == item.id;
+  Future<void> forgetFile(MediaItem item) => forgetFiles([item]);
+
+  /// [gone] were deleted or moved to the trash, as [forgetFile].
+  Future<void> forgetFiles(List<MediaItem> gone) async {
+    if (gone.isEmpty) return;
+    final wasSelected = gone.any((g) => g.id == selected?.id);
     final at = selectedIndex;
-    try {
-      await core.call('forget', {'path': item.path});
-    } catch (e) {
-      _notices.add('Could not update the index: $e');
+    for (final item in gone) {
+      try {
+        await core.call('forget', {'path': item.path});
+      } catch (e) {
+        _notices.add('Could not update the index: $e');
+      }
+      _checked.remove(item.id);
     }
     notesTick.value++;
     await _reload();
@@ -1573,6 +1693,54 @@ class AppState extends ChangeNotifier {
   void cancelUpscaleDownload() => _upscaleDownload?.cancel();
 
   /// Upscale [item] in the background; how it goes shows in [upscales].
+  /// Upscales asked for together, waiting for the one before to finish:
+  /// they run one at a time, since each uses every core.
+  final List<_QueuedUpscale> _upscaleQueue = [];
+
+  /// How many upscales are waiting their turn.
+  final ValueNotifier<int> upscalesWaiting = ValueNotifier(0);
+
+  /// Upscale each of [targets] in turn, as [startUpscale]. Videos are
+  /// left out.
+  Future<void> startUpscales(
+    List<MediaItem> targets, {
+    required String model,
+    required int factor,
+    required bool keepMetadata,
+  }) async {
+    for (final item in targets) {
+      if (!item.isVideo) _upscaleQueue.add(_QueuedUpscale(item, model, factor, keepMetadata));
+    }
+    upscalesWaiting.value = _upscaleQueue.length;
+    if (upscales.value.isEmpty) await _nextUpscale();
+  }
+
+  /// Stop the upscale running and forget those waiting.
+  void cancelAllUpscales() {
+    _upscaleQueue.clear();
+    upscalesWaiting.value = 0;
+    for (final job in upscales.value) {
+      cancelUpscale(job.id);
+    }
+  }
+
+  bool _startingUpscale = false;
+
+  Future<void> _nextUpscale() async {
+    if (_startingUpscale) return;
+    _startingUpscale = true;
+    try {
+      while (_upscaleQueue.isNotEmpty && !_disposed && upscales.value.isEmpty) {
+        final next = _upscaleQueue.removeAt(0);
+        upscalesWaiting.value = _upscaleQueue.length;
+        // One that will not start leaves the way open for the next.
+        await startUpscale(next.item, model: next.model, factor: next.factor, keepMetadata: next.keepMetadata);
+      }
+    } finally {
+      _startingUpscale = false;
+    }
+  }
+
   Future<void> startUpscale(
     MediaItem item, {
     required String model,
@@ -1625,6 +1793,7 @@ class AppState extends ChangeNotifier {
         _notices.add('Upscale failed: ${e['error'] ?? 'unknown error'}');
     }
     upscales.value = list;
+    if (list.isEmpty && _upscaleQueue.isNotEmpty) unawaited(_nextUpscale());
   }
 
   /// The watcher normally sees new files; on storage where it cannot, look.
@@ -1638,6 +1807,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _events.cancel();
+    _sharedIn?.cancel();
     _reloadTimer?.cancel();
     _queryTimer?.cancel();
     _contentTimer?.cancel();
@@ -1679,6 +1849,15 @@ class RemixJob {
   final bool running;
 
   RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false);
+}
+
+/// An upscale waiting for the one before it to finish.
+class _QueuedUpscale {
+  const _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata);
+  final MediaItem item;
+  final String model;
+  final int factor;
+  final bool keepMetadata;
 }
 
 /// An upscale under way.
