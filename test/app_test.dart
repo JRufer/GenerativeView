@@ -2122,12 +2122,12 @@ void main() {
     expect(state.tileSize, greaterThan(before));
     state.setTileSize(before);
     // Typed in, the box keeps its row; the tools stay where they are, in reach.
-    final resting = box();
+    final inRow = box();
     await tester.tap(search);
     await tester.pump();
     await tester.pump(rest);
     expect(state.searchFocus.hasFocus, isTrue);
-    expect(box(), resting);
+    expect(box(), inRow);
     expect(inBar('library'), findsOneWidget);
     state.searchFocus.unfocus();
     await tester.pump();
