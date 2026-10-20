@@ -170,8 +170,8 @@ class TopBar extends StatelessWidget {
                         ],
                       ),
                     ),
-                    SizedBox(
-                      height: _secondRow,
+                    // What is left under the top row, its bottom border aside.
+                    Expanded(
                       child: Padding(
                         padding: const EdgeInsets.only(left: 4, bottom: 6),
                         child: Row(
