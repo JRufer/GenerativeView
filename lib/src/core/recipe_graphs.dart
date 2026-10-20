@@ -46,6 +46,7 @@ class Recipe {
     required String negative,
     required int width,
     required int height,
+    List<LoraRef>? loras,
   }) {
     String? p(List<String> names) {
       for (final e in info.params) {
@@ -62,7 +63,7 @@ class Recipe {
       prompt: prompt,
       negative: negative,
       model: info.model,
-      loras: info.loras,
+      loras: loras ?? info.loras,
       width: width,
       height: height,
       steps: int.tryParse(p(['steps']) ?? '') ?? double.tryParse(p(['steps']) ?? '')?.round(),

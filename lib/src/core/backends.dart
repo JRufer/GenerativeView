@@ -23,6 +23,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'lora_edits.dart';
 import 'models.dart';
 import 'recipe_graphs.dart';
 
@@ -37,6 +38,7 @@ class Remix {
     required this.count,
     required this.width,
     required this.height,
+    this.loras,
   });
 
   final GenInfo info;
@@ -51,6 +53,25 @@ class Remix {
   final int count;
   final int width;
   final int height;
+
+  /// The picture's LoRAs as the user has set them (on or off, and how
+  /// strong); null to send them as the picture had them.
+  final List<LoraChoice>? loras;
+
+  /// [prompt] with its LoRA tags following [loras].
+  String get sentPrompt => loras == null ? prompt : retagPrompt(prompt, loras!);
+
+  /// [negative] likewise.
+  String get sentNegative => loras == null ? negative : retagPrompt(negative, loras!);
+
+  /// The LoRAs a graph built from the settings should load: those left on,
+  /// at the weights set.
+  List<LoraRef> get sentLoras => loras == null
+      ? info.loras
+      : [
+          for (final c in loras!)
+            if (c.enabled) c.ref,
+        ];
 
   int seedFor(int run, math.Random random) =>
       randomSeed ? random.nextInt(1 << 32) : seed + run;
@@ -292,10 +313,10 @@ int _patchGraph(
       if (v is String) {
         final n = norm(v);
         if (oldPrompt.isNotEmpty && n == oldPrompt) {
-          f[key] = remix.prompt;
+          f[key] = remix.sentPrompt;
           found++;
         } else if (oldNegative.isNotEmpty && n == oldNegative) {
-          f[key] = remix.negative;
+          f[key] = remix.sentNegative;
         }
       } else if (v is num) {
         switch (key) {
@@ -332,13 +353,20 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
   if (raw == null) {
     if (!remix.info.hasGeneration) throw BackendException(backendSupport(remix.info)['comfyui']!);
     final checkpoints = await _get(client, '$base/object_info/CheckpointLoaderSimple');
-    final loras = remix.info.loras.isEmpty ? const <String, dynamic>{} : await _get(client, '$base/object_info/LoraLoader');
+    final loras = remix.sentLoras.isEmpty ? const <String, dynamic>{} : await _get(client, '$base/object_info/LoraLoader');
     installed = ComfyModels(
       ComfyModels.options(checkpoints, 'CheckpointLoaderSimple', 'ckpt_name'),
       ComfyModels.options(loras, 'LoraLoader', 'lora_name'),
     );
   }
-  final recipe = Recipe.from(remix.info, prompt: remix.prompt, negative: remix.negative, width: remix.width, height: remix.height);
+  final recipe = Recipe.from(
+    remix.info,
+    prompt: remix.sentPrompt,
+    negative: remix.sentNegative,
+    width: remix.width,
+    height: remix.height,
+    loras: remix.sentLoras,
+  );
   for (var run = 0; run < remix.count; run++) {
     final seed = remix.seedFor(run, random);
     late final Map<String, dynamic> graph;
@@ -351,6 +379,7 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
         fields: (node) => (node['inputs'] as Map<String, dynamic>?) ?? {},
       );
       if (run == 0) _requirePrompt(found, remix);
+      if (remix.loras != null) editComfyLoras(graph, remix.loras!);
     } else {
       try {
         graph = comfyGraph(recipe, seed, installed!, skipped: run == 0 ? skipped : null);
@@ -461,11 +490,18 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
             if (m is Map<String, dynamic>) InvokeModel.fromJson(m),
         ];
     mains = listed(await _get(client, '$base/api/v2/models/?model_type=main'));
-    if (remix.info.loras.isNotEmpty) {
+    if (remix.sentLoras.isNotEmpty) {
       loras = listed(await _get(client, '$base/api/v2/models/?model_type=lora'));
     }
   }
-  final recipe = Recipe.from(remix.info, prompt: remix.prompt, negative: remix.negative, width: remix.width, height: remix.height);
+  final recipe = Recipe.from(
+    remix.info,
+    prompt: remix.sentPrompt,
+    negative: remix.sentNegative,
+    width: remix.width,
+    height: remix.height,
+    loras: remix.sentLoras,
+  );
   for (var run = 0; run < remix.count; run++) {
     final seed = remix.seedFor(run, random);
     late final Map<String, dynamic> graph;
@@ -474,6 +510,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
       final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
       if (run == 0) _requirePrompt(found, remix);
+      if (remix.loras != null) editInvokeLoras(graph, remix.loras!);
     } else {
       try {
         graph = invokeGraph(recipe, seed, mains, loras, skipped: run == 0 ? skipped : null);
@@ -568,9 +605,12 @@ Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
   double? number(List<String> names) => double.tryParse(param(info, names) ?? '');
   final sampler = param(info, ['sampler', 'sampler_name']);
   final scheduler = param(info, ['schedule type', 'scheduler']);
+  // Forge loads only the LoRAs its prompt names, so those left on that the
+  // prompt does not name are named in it.
+  final loras = remix.loras;
   final payload = <String, Object?>{
-    'prompt': remix.prompt,
-    'negative_prompt': remix.negative,
+    'prompt': loras == null ? remix.prompt : retagPrompt(remix.prompt, loras, addTo: info.prompt),
+    'negative_prompt': remix.sentNegative,
     'seed': remix.randomSeed ? -1 : remix.seed,
     'n_iter': remix.count,
     'batch_size': 1,
