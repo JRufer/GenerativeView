@@ -289,7 +289,7 @@ void editInvokeLoras(Map<String, dynamic> graph, List<LoraChoice> choices) {
         if (incoming.isEmpty) {
           edges.remove(out);
         } else {
-          out['source'] = Map<String, dynamic>.of(incoming.first['source'] as Map);
+          out['source'] = Map<String, dynamic>.from(incoming.first['source'] as Map);
         }
       }
       edges.removeWhere((e) => destNode(e) == id);
