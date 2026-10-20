@@ -378,8 +378,6 @@ jobs:
   windows:
     name: Windows app
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -400,21 +398,7 @@ jobs:
       - name: Build Windows release
         env:
           CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
-        shell: bash
-        run: |
-          set -o pipefail
-          flutter build windows --release --build-number="${{ github.run_number }}" 2>&1 | tee "$RUNNER_TEMP/winbuild.txt"
-      # TEMPORARY (removed before merge): the build output, readable without the log viewer.
-      - name: Publish the build output
-        if: failure()
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/out" && cp "$RUNNER_TEMP/winbuild.txt" "$RUNNER_TEMP/out/" || true
-          cd "$RUNNER_TEMP/out"
-          git init -q -b ci-out-windows
-          git -c user.name=ci -c user.email=ci@localhost add -A
-          git -c user.name=ci -c user.email=ci@localhost commit -qm "windows build ${{ github.sha }}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-out-windows
+        run: flutter build windows --release --build-number="${{ github.run_number }}"
       - name: Package Windows ZIP
         shell: bash
         run: |
