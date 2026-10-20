@@ -1851,16 +1851,17 @@ class RemixJob {
   RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false);
 }
 
-/// An upscale under way.
-@immutable
+/// An upscale waiting for the one before it to finish.
 class _QueuedUpscale {
-  _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata);
+  const _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata);
   final MediaItem item;
   final String model;
   final int factor;
   final bool keepMetadata;
 }
 
+/// An upscale under way.
+@immutable
 class UpscaleJob {
   const UpscaleJob(this.id, this.name, {required this.factor, this.done = 0, this.total = 0});
   final int id;
