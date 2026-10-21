@@ -345,7 +345,7 @@ mod tests {
         let mut v: Vec<f32> = (0..dim)
             .map(|i| {
                 // Cheap repeatable noise.
-                let h = (noise.wrapping_mul(6364136223846793005).wrapping_add(i as u64 * 1442695040888963407)) >> 40;
+                let h = (noise.wrapping_mul(6364136223846793005).wrapping_add((i as u64).wrapping_mul(1442695040888963407))) >> 40;
                 (h % 1000) as f32 / 1000.0 * 0.3
             })
             .collect();
