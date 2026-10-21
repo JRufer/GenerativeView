@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../platform.dart';
 import '../theme.dart';
+import 'meta_panel.dart' show copyText;
 import 'sheet.dart';
 
 const String appName = 'GenerativeView';
@@ -105,12 +106,36 @@ Future<void> showAbout(BuildContext context) async {
   );
 }
 
+/// The release this build came in, as GitHub names it: `build-159` for an
+/// automatic build of main, `v0.2.0` for a tagged release, `test-171` for a
+/// build that was never published (a pull request). Stamped in by CI; empty
+/// for a build made by hand.
+const String releaseName = String.fromEnvironment('GV_RELEASE');
+
+/// The commit it was built from, stamped in by CI; empty otherwise.
+const String buildCommit = String.fromEnvironment('GV_COMMIT');
+
+/// The build, as it should be compared with the releases on GitHub:
+/// `build-159 · a06630b`, or what is known of a build made by hand.
+String buildLabel({String release = releaseName, String commit = buildCommit}) {
+  final short = commit.length > 7 ? commit.substring(0, 7) : commit;
+  final parts = <String>[
+    if (release.startsWith('test-'))
+      'test build ${release.substring(5)}, not published'
+    else if (release.isNotEmpty)
+      release
+    else
+      'built locally',
+    if (short.isNotEmpty) short,
+  ];
+  return parts.join(' · ');
+}
+
+/// The version number from pubspec.yaml, as the platform reports it.
 Future<String?> _version() async {
   try {
     final info = await PackageInfo.fromPlatform();
-    if (info.version.isEmpty) return null;
-    final build = info.buildNumber;
-    return build.isEmpty || build == '1' ? info.version : '${info.version} (build $build)';
+    return info.version.isEmpty ? null : info.version;
   } catch (_) {
     return null;
   }
@@ -161,6 +186,38 @@ class _AboutContentState extends State<AboutContent> {
             builder: (context, snapshot) => Text(
               snapshot.data == null ? ' ' : 'Version ${snapshot.data}',
               style: const TextStyle(fontSize: 12.5, color: Palette.faint),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        // The release name as GitHub's Releases page shows it, to check
+        // which build this is; tap to copy.
+        Center(
+          child: Tooltip(
+            message: 'The release on GitHub this build came in, and its commit. Tap to copy',
+            child: InkWell(
+              key: const ValueKey<String>('about-build'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => copyText(context, buildLabel(), 'build'),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Palette.raised,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Palette.line),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.sell_outlined, size: 13, color: Palette.muted),
+                    const SizedBox(width: 6),
+                    Text(
+                      buildLabel(),
+                      style: const TextStyle(fontSize: 12.5, color: Palette.text, fontFeatures: [FontFeature.tabularFigures()]),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -284,7 +341,8 @@ class _AboutContentState extends State<AboutContent> {
   }
 
   Future<void> _showLicences(BuildContext context) async {
-    final version = await _versionFuture;
+    final number = await _versionFuture;
+    final version = number == null ? buildLabel() : '$number (${buildLabel()})';
     if (!context.mounted) return;
     showLicensePage(
       context: context,

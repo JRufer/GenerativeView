@@ -1,11 +1,14 @@
 package com.jrufer.generativeview
 
+import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -37,7 +40,70 @@ class MainActivity : FlutterActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.action == RemixService.ACTION_OPEN_REMIXES) {
+            // A "remix done" notification, tapped while the app was open.
+            intent.action = Intent.ACTION_MAIN
+            channel?.invokeMethod("openRemixes", null)
+            return
+        }
         receiveShared(intent)
+    }
+
+    // --- Remixes -------------------------------------------------------------
+
+    private var askedForNotifications = false
+    private var nextDoneId = 4200
+
+    /**
+     * [count] remixes are being waited for: while any are, the waiting
+     * service runs (see [RemixService]); at none it stops.
+     */
+    private fun remixWaiting(count: Int) {
+        if (count <= 0) {
+            stopService(Intent(this, RemixService::class.java))
+            return
+        }
+        askForNotifications()
+        if (RemixService.running) {
+            // Already in the foreground: only the count changes.
+            RemixService.ensureChannels(this)
+            notifications().notify(RemixService.ID_WAITING, RemixService.waiting(this, count))
+            return
+        }
+        val intent = Intent(this, RemixService::class.java).putExtra(RemixService.EXTRA_COUNT, count)
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+        } catch (e: Exception) {
+            // Not allowed from the background: the app waits while it can,
+            // and picks up the rest when next opened.
+        }
+    }
+
+    /** A remix is back: say so, and open the Remixes collection when tapped. */
+    private fun remixDone(title: String, text: String) {
+        if (!mayNotify()) return
+        RemixService.ensureChannels(this)
+        val notification = RemixService.builder(this, RemixService.CHANNEL_DONE)
+            .setSmallIcon(R.drawable.ic_stat_remix)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(RemixService.openApp(this, true))
+            .setAutoCancel(true)
+            .build()
+        notifications().notify(nextDoneId++, notification)
+    }
+
+    private fun notifications() = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    private fun mayNotify(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    /** Android 13 and later ask once, the first time a remix is sent. */
+    private fun askForNotifications() {
+        if (askedForNotifications || mayNotify()) return
+        askedForNotifications = true
+        if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 41)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -57,6 +123,14 @@ class MainActivity : FlutterActivity() {
                     "openUrl" -> result.success(openUrl(call.argument<String>("url")))
                     "trashFile" -> trashFile(call.argument<String>("path"), result)
                     "pasteSource" -> pasteSource(result)
+                    "remixWaiting" -> {
+                        remixWaiting(call.argument<Int>("count") ?: 0)
+                        result.success(null)
+                    }
+                    "remixDone" -> {
+                        remixDone(call.argument<String>("title") ?: "Remix done", call.argument<String>("text") ?: "")
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

@@ -116,7 +116,15 @@ class RemixImage {
 
 /// What [sendRemix] queued: a line to show, and the pictures as they finish.
 class RemixTicket {
-  RemixTicket(this.message, this.count, this.results);
+  RemixTicket(
+    this.message,
+    this.count,
+    this.results, {
+    this.kind = '',
+    this.base = '',
+    this.jobs = const [],
+    Stream<String>? finished,
+  }) : finished = finished ?? const Stream.empty();
   final String message;
 
   /// How many pictures were asked for.
@@ -125,6 +133,31 @@ class RemixTicket {
   /// Each picture as it is done; an error for a run that failed. Closes
   /// when every run has finished or failed.
   final Stream<RemixImage> results;
+
+  /// Where it was queued, and the server's names for the jobs: enough to
+  /// pick the wait up again with [resumeRemix] after the app was closed.
+  /// No jobs for a server that cannot be asked later (Forge).
+  final String kind;
+  final String base;
+  final List<String> jobs;
+
+  /// Each of [jobs] once it is dealt with (its pictures handed on, or its
+  /// failure), so a wait picked up later does not fetch it again.
+  final Stream<String> finished;
+}
+
+/// Wait again for [jobs] queued on the backend [kind] at [base] by an
+/// earlier [sendRemix], after the app was closed: the same as the ticket
+/// it gave, without queueing anything. Only ComfyUI and InvokeAI keep jobs
+/// to be asked about later.
+RemixTicket resumeRemix(String kind, String base, List<String> jobs) {
+  final done = StreamController<String>();
+  final results = switch (kind) {
+    'comfyui' => _comfyResults(base, jobs, done),
+    'invokeai' => _invokeResults(base, [for (final j in jobs) ?int.tryParse(j)], done),
+    _ => throw BackendException('${backendNames[kind] ?? kind} remixes cannot be picked up again.'),
+  };
+  return RemixTicket('', jobs.length, results, kind: kind, base: base, jobs: jobs, finished: done.stream);
 }
 
 /// How long to keep waiting for a backend to finish what was queued.
@@ -468,10 +501,15 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     });
     ids.add('${reply['prompt_id'] ?? ''}');
   }
+  final done = StreamController<String>();
   return RemixTicket(
     'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped)}',
     remix.count,
-    _comfyResults(base, ids),
+    _comfyResults(base, ids, done),
+    kind: 'comfyui',
+    base: base,
+    jobs: [for (final id in ids) if (id.isNotEmpty) id],
+    finished: done.stream,
   );
 }
 
@@ -603,15 +641,22 @@ String _built(bool built, List<String> skipped) {
   return '$note; without ${skipped.length == 1 ? 'the LoRA' : 'the LoRAs'} $names, which the server does not have)';
 }
 
-/// Wait for each of the ComfyUI prompts [ids] and fetch what it saved.
-Stream<RemixImage> _comfyResults(String base, List<String> ids) async* {
+/// How many times a job is asked about, not yet done, before checking
+/// that the server still has it at all.
+const int _checkGoneEvery = 5;
+
+/// Wait for each of the ComfyUI prompts [ids] and fetch what it saved,
+/// telling [done] as each is dealt with.
+Stream<RemixImage> _comfyResults(String base, List<String> ids, [StreamController<String>? done]) async* {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
   try {
     for (final id in ids) {
       if (id.isEmpty) continue;
       final deadline = DateTime.now().add(remixPatience);
       Map<String, dynamic>? entry;
-      while (entry == null) {
+      var asked = 0;
+      var gone = false;
+      while (entry == null && !gone) {
         if (DateTime.now().isAfter(deadline)) {
           throw BackendException('ComfyUI did not finish within ${remixPatience.inHours} hours.');
         }
@@ -619,20 +664,35 @@ Stream<RemixImage> _comfyResults(String base, List<String> ids) async* {
         try {
           final history = await _get(client, '$base/history/$id');
           final found = history[id];
-          if (found is Map<String, dynamic>) entry = found;
+          if (found is Map<String, dynamic>) {
+            entry = found;
+          } else if (++asked % _checkGoneEvery == 0) {
+            // Neither done nor waiting: ComfyUI was restarted, or its
+            // queue cleared, since this was sent.
+            gone = !await _comfyHas(client, base, id);
+          }
         } on SocketException {
           // The server may be restarting: keep asking until the deadline.
         } on TimeoutException {
           // As above.
         }
       }
+      if (entry == null) {
+        yield* Stream.error(BackendException('ComfyUI no longer has a remix that was sent to it (it was restarted, or its queue cleared).'));
+        done?.add(id);
+        continue;
+      }
       final status = entry['status'];
       if (status is Map && status['status_str'] == 'error') {
         yield* Stream.error(BackendException(_comfyError(status)));
+        done?.add(id);
         continue;
       }
       final outputs = entry['outputs'];
-      if (outputs is! Map) continue;
+      if (outputs is! Map) {
+        done?.add(id);
+        continue;
+      }
       for (final output in outputs.values) {
         final images = output is Map ? output['images'] : null;
         if (images is! List) continue;
@@ -647,9 +707,28 @@ Stream<RemixImage> _comfyResults(String base, List<String> ids) async* {
           yield RemixImage(await _bytes(client, '$base/view?$query'));
         }
       }
+      done?.add(id);
     }
   } finally {
     client.close(force: true);
+    // Not waited for: with no one listening it would never finish.
+    if (done != null) unawaited(done.close());
+  }
+}
+
+/// Whether ComfyUI has the prompt [id] running or waiting, or has kept it
+/// in its history after all. True when it cannot tell, so as not to give
+/// up on a job for want of an answer.
+Future<bool> _comfyHas(HttpClient client, String base, String id) async {
+  try {
+    final queue = await _get(client, '$base/queue');
+    bool listed(Object? jobs) => jobs is List && jobs.any((j) => j is List && j.length > 1 && '${j[1]}' == id);
+    if (listed(queue['queue_running']) || listed(queue['queue_pending'])) return true;
+    // It may have finished between the two questions.
+    final history = await _get(client, '$base/history/$id');
+    return history[id] is Map;
+  } catch (_) {
+    return true;
   }
 }
 
@@ -714,6 +793,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       graph = jsonDecode(raw) as Map<String, dynamic>;
       final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
       final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
+      invokeSeed(graph, seed);
       if (run == 0) _requirePrompt(found, remix);
       if (remix.loras != null) editInvokeLoras(graph, remix.loras!);
       if (start != null) invokeImageToImage(graph, image: start.image, keepMask: start.mask, strength: start.strength);
@@ -735,16 +815,52 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       fetchable = false;
     }
   }
+  final done = StreamController<String>();
   return RemixTicket(
     'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped)}',
     remix.count,
+    kind: 'invokeai',
+    base: base,
+    jobs: fetchable ? [for (final id in ids) '$id'] : const [],
+    finished: done.stream,
     fetchable
-        ? _invokeResults(base, ids)
+        ? _invokeResults(base, ids, done)
         : Stream.error(BackendException(
             'This InvokeAI does not say which queue items it made, so the '
             'pictures stay in its gallery. Updating InvokeAI fixes this.',
           )),
   );
+}
+
+/// The seed inputs of InvokeAI nodes.
+const Set<String> _seedFields = {'seed', 'noise_seed', 'variance_seed'};
+
+/// Give an InvokeAI graph [seed] wherever it takes one. InvokeAI's own
+/// graphs (InvokeAI 4 and later, and 7's new canvas) keep the seed in an
+/// `integer` node of its own, whose value is wired into the denoise or
+/// noise step, the metadata and the like; a value wired in wins over the
+/// field's own, so that node is the one to change. A seed wired from
+/// anything else (a random-number node) is cut off and set directly.
+void invokeSeed(Map<String, dynamic> graph, int seed) {
+  final nodes = graph['nodes'];
+  final edges = graph['edges'];
+  if (nodes is! Map || edges is! List) return;
+  final cut = <Object?>[];
+  for (final e in edges) {
+    if (e is! Map) continue;
+    final from = e['source'];
+    final to = e['destination'];
+    if (from is! Map || to is! Map || !_seedFields.contains(to['field'])) continue;
+    final source = nodes[from['node_id']];
+    if (source is Map && source['type'] == 'integer' && from['field'] == 'value') {
+      source['value'] = seed;
+    } else {
+      cut.add(e);
+      final target = nodes[to['node_id']];
+      if (target is Map) target[to['field']] = seed;
+    }
+  }
+  edges.removeWhere(cut.contains);
 }
 
 /// Make an InvokeAI graph (the picture's own, as InvokeAI saved it) start
@@ -841,15 +957,17 @@ Future<String> _invokeUpload(HttpClient client, String base, Uint8List bytes) as
 }
 
 /// Wait for each of the InvokeAI queue items [ids] and fetch the pictures
-/// it kept (not its intermediate steps).
-Stream<RemixImage> _invokeResults(String base, List<int> ids) async* {
+/// it kept (not its intermediate steps), telling [done] as each is dealt
+/// with.
+Stream<RemixImage> _invokeResults(String base, List<int> ids, [StreamController<String>? done]) async* {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
   final api = '$base/api/v1';
   try {
     for (final id in ids) {
       final deadline = DateTime.now().add(remixPatience);
       Map<String, dynamic>? item;
-      while (item == null) {
+      var gone = false;
+      while (item == null && !gone) {
         if (DateTime.now().isAfter(deadline)) {
           throw BackendException('InvokeAI did not finish within ${remixPatience.inHours} hours.');
         }
@@ -863,22 +981,40 @@ Stream<RemixImage> _invokeResults(String base, List<int> ids) async* {
           // Restarting, perhaps: keep asking until the deadline.
         } on TimeoutException {
           // As above.
+        } on BackendException catch (e) {
+          // Asked for one it does not have (its queue was cleared), or
+          // some other refusal: no use asking again.
+          if (e.message.contains(' 404')) {
+            gone = true;
+          } else {
+            rethrow;
+          }
         }
+      }
+      if (item == null) {
+        yield* Stream.error(BackendException('InvokeAI no longer has a remix that was sent to it (its queue was cleared).'));
+        done?.add('$id');
+        continue;
       }
       switch (item['status']) {
         case 'canceled':
           yield* Stream.error(BackendException('A remix was cancelled in InvokeAI.'));
+          done?.add('$id');
           continue;
         case 'failed':
           final why = item['error_message'] ?? item['error_type'] ?? item['error'];
           yield* Stream.error(BackendException(
             why == null ? 'InvokeAI could not run the graph.' : 'InvokeAI: ${'$why'.trim().split('\n').first}',
           ));
+          done?.add('$id');
           continue;
       }
       final session = item['session'];
       final results = session is Map ? session['results'] : null;
-      if (results is! Map) continue;
+      if (results is! Map) {
+        done?.add('$id');
+        continue;
+      }
       final names = <String>{};
       for (final result in results.values) {
         if (result is! Map) continue;
@@ -893,9 +1029,12 @@ Stream<RemixImage> _invokeResults(String base, List<int> ids) async* {
         if (dto['is_intermediate'] == true) continue;
         yield RemixImage(await _bytes(client, '$api/images/i/$path/full'));
       }
+      done?.add('$id');
     }
   } finally {
     client.close(force: true);
+    // Not waited for: with no one listening it would never finish.
+    if (done != null) unawaited(done.close());
   }
 }
 

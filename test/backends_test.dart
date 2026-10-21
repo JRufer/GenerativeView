@@ -968,6 +968,156 @@ void main() {
     expect(nodes['denoise']['denoising_start'], closeTo(0.45, 1e-9));
   });
 
+  test('InvokeAI: each run gets its own seed, though the graph keeps it in a node', () async {
+    final batches = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      if (request.uri.path == '/api/v1/queue/default/enqueue_batch') {
+        batches.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'item_ids': [batches.length]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    // As InvokeAI 7 saves it: the seed is an integer node wired into the
+    // denoise step and the metadata, and the denoise step's own field is
+    // left at whatever it was.
+    final graph = jsonEncode({
+      'nodes': {
+        'seed': {'id': 'seed', 'type': 'integer', 'value': 7},
+        'pos': {'id': 'pos', 'type': 'krea2_text_encoder', 'prompt': 'a red fox'},
+        'denoise': {'id': 'denoise', 'type': 'krea2_denoise', 'seed': 0},
+        'rand': {'id': 'rand', 'type': 'rand_int'},
+        'variance': {'id': 'variance', 'type': 'krea2_seed_variance'},
+        'meta': {'id': 'meta', 'type': 'core_metadata'},
+      },
+      'edges': [
+        {'source': {'node_id': 'seed', 'field': 'value'}, 'destination': {'node_id': 'denoise', 'field': 'seed'}},
+        {'source': {'node_id': 'seed', 'field': 'value'}, 'destination': {'node_id': 'meta', 'field': 'seed'}},
+        {'source': {'node_id': 'rand', 'field': 'value'}, 'destination': {'node_id': 'variance', 'field': 'seed'}},
+      ],
+    });
+    final ticket = await sendRemix(
+      'invokeai',
+      base,
+      Remix(
+        info: info(source: 'invokeai', raw: [['invokeai_graph', graph]]),
+        prompt: 'a red fox',
+        negative: 'blurry',
+        seed: 0,
+        randomSeed: true,
+        count: 3,
+        width: 512,
+        height: 512,
+      ),
+    );
+    expect(ticket.count, 3);
+    final sent = [
+      for (final b in batches) ((b['batch'] as Map)['graph'] as Map)['nodes'] as Map,
+    ];
+    final seeds = [for (final n in sent) n['seed']['value']];
+    expect(seeds.toSet(), hasLength(3), reason: 'a new seed for each run, in the node that is wired in');
+    for (var i = 0; i < 3; i++) {
+      expect(sent[i]['variance']['seed'], seeds[i], reason: 'a seed from elsewhere is replaced too');
+      final edges = ((batches[i]['batch'] as Map)['graph'] as Map)['edges'] as List;
+      expect(edges.any((e) => e['source']['node_id'] == 'rand'), isFalse);
+    }
+  });
+
+  // ------------------------------------------------ picked up again
+
+  test('ComfyUI: a remix sent earlier is picked up again by its job', () async {
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/history/p7') {
+        json(request, {
+          'p7': {
+            'status': {'status_str': 'success'},
+            'outputs': {
+              '9': {
+                'images': [
+                  {'filename': 'out.png', 'subfolder': '', 'type': 'output'},
+                ],
+              },
+            },
+          },
+        });
+      } else if (path == '/view') {
+        request.response.add(tinyPng(7));
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = resumeRemix('comfyui', base, ['p7']);
+    expect(ticket.jobs, ['p7']);
+    final finished = ticket.finished.toList();
+    final images = await ticket.results.toList();
+    expect(images.single.bytes[28], 7);
+    expect(await finished, ['p7'], reason: 'so it is not fetched again');
+  });
+
+  test('ComfyUI: a sent remix it no longer has is given up on, not waited for', () async {
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path.startsWith('/history/')) {
+        json(request, {});
+      } else if (path == '/queue') {
+        json(request, {'queue_running': [], 'queue_pending': []});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = resumeRemix('comfyui', base, ['lost']);
+    final finished = ticket.finished.toList();
+    final errors = <Object>[];
+    await ticket.results.handleError(errors.add).toList();
+    expect(errors.single.toString(), contains('no longer has'));
+    expect(await finished, ['lost']);
+  });
+
+  test('InvokeAI: a queue item it no longer has is given up on', () async {
+    final (server, base) = await serve((request) async {
+      request.response.statusCode = 404;
+      request.response.write('{"detail": "Queue item not found"}');
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = resumeRemix('invokeai', base, ['12']);
+    final finished = ticket.finished.toList();
+    final errors = <Object>[];
+    await ticket.results.handleError(errors.add).toList();
+    expect(errors.single.toString(), contains('no longer has'));
+    expect(await finished, ['12']);
+  });
+
+  test('a ticket says which jobs to pick up again; Forge has none to give', () async {
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/prompt') {
+        await request.drain<void>();
+        json(request, {'prompt_id': 'abc'});
+      } else if (path == '/sdapi/v1/txt2img') {
+        await request.drain<void>();
+        json(request, {'images': <String>[]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final graph = jsonEncode({
+      '6': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'a red fox'}},
+    });
+    final comfy = await sendRemix('comfyui', base, remix(info(source: 'comfyui', raw: [['prompt', graph]])));
+    expect(comfy.kind, 'comfyui');
+    expect(comfy.base, base);
+    expect(comfy.jobs, ['abc']);
+    final forge = await sendRemix('forge', base, remix(info(source: 'a1111')));
+    expect(forge.jobs, isEmpty);
+    await forge.results.toList();
+    expect(() => resumeRemix('forge', base, ['x']), throwsA(isA<BackendException>()));
+  });
+
   test('Forge: image to image goes to img2img with the picture and mask', () async {
     late String path;
     late Map<String, dynamic> payload;

@@ -18,7 +18,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
-import 'package:generativeview/src/core/backends.dart' show RemixImage;
+import 'package:generativeview/src/core/backends.dart' show RemixImage, RemixTicket;
 import 'package:generativeview/src/core/civitai.dart';
 import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
@@ -616,8 +616,8 @@ void main() {
     // Two out at once, in different folders.
     final first = StreamController<RemixImage>();
     final second = StreamController<RemixImage>();
-    state.collectRemix(sailor, first.stream);
-    state.collectRemix(owl, second.stream);
+    state.collectRemix(sailor, RemixTicket('', 1, first.stream));
+    state.collectRemix(owl, RemixTicket('', 1, second.stream));
     await pumpUntil(tester, () => find.text('2 Remixes Running').evaluate().isNotEmpty, what: 'the running chip');
     await screenshot(tester, boundary, '40-remix-running');
 
