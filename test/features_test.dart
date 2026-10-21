@@ -29,10 +29,10 @@ import 'package:generativeview/src/licenses.dart';
 import 'package:generativeview/src/ui/about_panel.dart';
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet;
+import 'package:generativeview/src/ui/folder_panel.dart' show FolderPanel;
 import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
 import 'package:generativeview/src/ui/remix_dialog.dart';
-import 'package:generativeview/src/ui/sheet.dart' show ChoiceChipButton;
 import 'package:generativeview/src/ui/thumb_image.dart';
 
 import 'support.dart';
@@ -1361,11 +1361,52 @@ void main() {
     await close(tester, state);
   });
 
-  testWidgets('filters show over the grid, dock in the folder panel, and come off one by one', (tester) async {
+  testWidgets('panels lying over the grid on a narrow screen resize by their grips too', (tester) async {
+    // A Fold-sized window, wider than tall: both panels slide over the grid.
+    final state = await launch(tester, size: const Size(800, 700));
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    expect(state.narrowLayout, isTrue);
+    if (state.rightOpen) state.toggleRight();
+    if (!state.leftOpen) state.toggleLeft();
+    state.setLeftWidth(280);
+    await settle(tester);
+    final grip = find.byKey(const ValueKey('resize-left'));
+    expect(grip, findsOneWidget);
+    await screenshot(tester, boundary, '55-narrow-resize-left');
+    await tester.drag(grip, const Offset(80, 0));
+    await settle(tester);
+    expect(state.leftWidth, closeTo(360, 1));
+    expect(tester.getSize(find.byType(FolderPanel)).width, closeTo(360, 1));
+    // Never so wide that no grid is left to tap.
+    await tester.drag(grip, const Offset(600, 0));
+    await settle(tester);
+    expect(tester.getTopRight(grip).dx, lessThan(800 - 40));
+    // Dragged shut, it closes like its button.
+    state.setLeftWidth(300);
+    await settle(tester);
+    await tester.drag(grip, const Offset(-(300 - minLeftWidth / 2) - 30, 0));
+    await settle(tester);
+    expect(state.leftOpen, isFalse);
+    expect(state.leftWidth, 300);
+
+    // The metadata panel, from the other side.
+    state.select(0);
+    if (!state.rightOpen) state.toggleRight();
+    state.setRightWidth(300);
+    await settle(tester);
+    final right = find.byKey(const ValueKey('resize-right'));
+    expect(right, findsOneWidget);
+    await tester.drag(right, const Offset(-60, 0));
+    await settle(tester);
+    expect(state.rightWidth, closeTo(360, 1));
+    expect(tester.getSize(find.byType(MetaPanel)).width, closeTo(360, 1));
+    await screenshot(tester, boundary, '56-narrow-resize-right');
+    await close(tester, state);
+  });
+
+  testWidgets('filters show over the grid and come off one by one', (tester) async {
     final state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 6 && thumbsShown(tester) == 6, what: '6 thumbnails');
-    if (!state.leftOpen) state.toggleLeft();
-    state.setLeftTab(LeftTab.folders);
     await settle(tester);
     expect(find.byKey(const ValueKey('filter-bar')), findsNothing, reason: 'no filters, no bar');
 
@@ -1382,24 +1423,6 @@ void main() {
     await settle(tester);
     expect(find.byKey(const ValueKey('filter-bar')), findsNothing);
 
-    // The Filters tab: the same panel, beside the grid, in step with the search box.
-    await tester.tap(find.byKey(const ValueKey('left-tab-filters')));
-    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')).evaluate().isNotEmpty, what: 'the docked filters');
-    expect(state.leftTab, LeftTab.filters);
-    expect(find.byKey(const ValueKey('filters-done')), findsNothing, reason: 'the grid is in sight; nothing to close');
-    await tester.tap(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
-    await pumpUntil(tester, () => state.query == 'fox lora:=fur_detail.safetensors', what: 'chosen from the tab');
-    await pumpUntil(tester, () => state.items.length == 2 && thumbsShown(tester) == 2, what: 'the two foxes');
-    await settle(tester);
-    expect(chip, findsOneWidget);
-    await screenshot(tester, boundary, '52-docked-filters');
-    // Changed from outside, the tab follows.
-    state.applySearch('');
-    await pumpUntil(tester, () => state.items.length == 6, what: 'everything');
-    await settle(tester);
-    final loraChip = tester.widget<ChoiceChipButton>(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
-    expect(loraChip.selected, isFalse);
-
     // Several at once; "Clear all" takes them off and keeps a typed word.
     state.applySearch('fox lora:=fur_detail.safetensors type:image');
     await pumpUntil(tester, () => state.items.length == 2, what: 'two filters');
@@ -1407,7 +1430,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('filter-bar-clear')));
     await pumpUntil(tester, () => state.query == 'fox', what: 'all cleared');
     state.applySearch('');
-    state.setLeftTab(LeftTab.folders);
     await close(tester, state);
   });
 
@@ -1415,7 +1437,6 @@ void main() {
     final state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 6 && thumbsShown(tester) == 6, what: '6 thumbnails');
     if (!state.leftOpen) state.toggleLeft();
-    state.setLeftTab(LeftTab.folders);
     await settle(tester);
     expect(find.text('SMART COLLECTIONS'), findsOneWidget);
 
@@ -1488,7 +1509,7 @@ void main() {
     await close(tester, state);
   });
 
-  testWidgets('a fresh start comes back to the folder, search and tab last showing', (tester) async {
+  testWidgets('a fresh start comes back to the folder and search last showing', (tester) async {
     var state = await launch(tester);
     await pumpUntil(tester, () => state.items.length == 6, what: 'the folder');
     // Opened by the user, so remembered (a folder named on the command line is not).
@@ -1496,7 +1517,6 @@ void main() {
     state.openFolder(library.path).whenComplete(() => reopened = true);
     await pumpUntil(tester, () => reopened && state.items.length == 6, what: 'the folder opened by hand');
     state.applySearch('lora:=fur_detail.safetensors');
-    state.setLeftTab(LeftTab.filters);
     await pumpUntil(tester, () => state.items.length == 2, what: 'filtered');
     await close(tester, state);
 
@@ -1510,12 +1530,10 @@ void main() {
     expect(state.folder, normalizePath(library.path));
     expect(state.query, 'lora:=fur_detail.safetensors');
     expect(state.searchText.text, 'lora:=fur_detail.safetensors');
-    expect(state.leftTab, LeftTab.filters);
     await pumpUntil(tester, () => state.items.length == 2, what: 'the same two pictures');
 
     // Back to how other tests expect to find it.
     state.applySearch('');
-    state.setLeftTab(LeftTab.folders);
     await pumpUntil(tester, () => state.items.length == 6, what: 'everything');
     await close(tester, state);
   });

@@ -93,9 +93,6 @@ class SmartCollection {
   }
 }
 
-/// What the folder panel is showing.
-enum LeftTab { folders, filters }
-
 /// How far a download of the content-search model has come.
 @immutable
 class DownloadProgress {
@@ -319,16 +316,6 @@ class AppState extends ChangeNotifier {
   /// Whether the folder panel's "Pinned" section is showing its contents.
   bool pinsOpen = true;
 
-  /// The folder panel's tab: the folder tree, or the filters.
-  LeftTab leftTab = LeftTab.folders;
-
-  void setLeftTab(LeftTab tab) {
-    if (leftTab == tab) return;
-    leftTab = tab;
-    _save('left_tab', tab.name);
-    notifyListeners();
-  }
-
   /// The search last saved as the one to come back to, so it is written
   /// only when it changes.
   String? _rememberedQuery;
@@ -449,7 +436,6 @@ class AppState extends ChangeNotifier {
     sort = (saved['sort'] as String?) ?? sort;
     searchSort = (saved['search_sort'] as String?) ?? searchSort;
     pinsOpen = flag('pins_open', pinsOpen);
-    leftTab = LeftTab.values.firstWhere((t) => t.name == saved['left_tab'], orElse: () => leftTab);
     contentSearch = flag('content_search', contentSearch);
     pinnedSearches = [
       for (final entry in _savedList(saved['pinned_searches']))

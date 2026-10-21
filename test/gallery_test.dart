@@ -167,15 +167,12 @@ void main() {
     await pumpUntil(tester, () => shown() >= 5, what: 'the filtered grid');
     await screenshot(tester, boundary, '31b-real-filtered');
 
-    // Filters docked beside the grid, and shown over it.
+    // The filters shown over the grid.
     if (!state.leftOpen) state.toggleLeft();
     if (state.rightOpen) state.toggleRight();
-    state.setLeftTab(LeftTab.filters);
-    await pumpUntil(tester, () => find.byKey(const ValueKey('docked-filters')).evaluate().isNotEmpty, what: 'the docked filters');
-    await pumpUntil(tester, () => find.byKey(const ValueKey('filter-stars-4')).evaluate().isNotEmpty, what: 'the facets counted');
     await settle(tester);
     await pumpUntil(tester, () => shown() >= 5, what: 'the filtered grid');
-    await screenshot(tester, boundary, '33-real-docked-filters');
+    await screenshot(tester, boundary, '33-real-filter-bar');
 
     // Kept as a smart collection.
     await tester.tap(find.byKey(const ValueKey('filter-bar-save')));
@@ -187,7 +184,6 @@ void main() {
     await screenshot(tester, boundary, '34-real-smart-editor');
     await tester.tap(find.byKey(const ValueKey('smart-save')));
     await pumpUntil(tester, () => state.showingSmart != null, what: 'the smart collection showing');
-    state.setLeftTab(LeftTab.folders);
     await settle(tester);
     await pumpUntil(tester, () => find.byKey(const ValueKey('smart-Four stars and up')).evaluate().isNotEmpty, what: 'listed');
     await settle(tester);
