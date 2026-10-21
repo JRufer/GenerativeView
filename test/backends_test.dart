@@ -968,6 +968,62 @@ void main() {
     expect(nodes['denoise']['denoising_start'], closeTo(0.45, 1e-9));
   });
 
+  test('InvokeAI: each run gets its own seed, though the graph keeps it in a node', () async {
+    final batches = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      if (request.uri.path == '/api/v1/queue/default/enqueue_batch') {
+        batches.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'item_ids': [batches.length]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    // As InvokeAI 7 saves it: the seed is an integer node wired into the
+    // denoise step and the metadata, and the denoise step's own field is
+    // left at whatever it was.
+    final graph = jsonEncode({
+      'nodes': {
+        'seed': {'id': 'seed', 'type': 'integer', 'value': 7},
+        'pos': {'id': 'pos', 'type': 'krea2_text_encoder', 'prompt': 'a red fox'},
+        'denoise': {'id': 'denoise', 'type': 'krea2_denoise', 'seed': 0},
+        'rand': {'id': 'rand', 'type': 'rand_int'},
+        'variance': {'id': 'variance', 'type': 'krea2_seed_variance'},
+        'meta': {'id': 'meta', 'type': 'core_metadata'},
+      },
+      'edges': [
+        {'source': {'node_id': 'seed', 'field': 'value'}, 'destination': {'node_id': 'denoise', 'field': 'seed'}},
+        {'source': {'node_id': 'seed', 'field': 'value'}, 'destination': {'node_id': 'meta', 'field': 'seed'}},
+        {'source': {'node_id': 'rand', 'field': 'value'}, 'destination': {'node_id': 'variance', 'field': 'seed'}},
+      ],
+    });
+    final ticket = await sendRemix(
+      'invokeai',
+      base,
+      Remix(
+        info: info(source: 'invokeai', raw: [['invokeai_graph', graph]]),
+        prompt: 'a red fox',
+        negative: 'blurry',
+        seed: 0,
+        randomSeed: true,
+        count: 3,
+        width: 512,
+        height: 512,
+      ),
+    );
+    expect(ticket.count, 3);
+    final sent = [
+      for (final b in batches) ((b['batch'] as Map)['graph'] as Map)['nodes'] as Map,
+    ];
+    final seeds = [for (final n in sent) n['seed']['value']];
+    expect(seeds.toSet(), hasLength(3), reason: 'a new seed for each run, in the node that is wired in');
+    for (var i = 0; i < 3; i++) {
+      expect(sent[i]['variance']['seed'], seeds[i], reason: 'a seed from elsewhere is replaced too');
+      final edges = ((batches[i]['batch'] as Map)['graph'] as Map)['edges'] as List;
+      expect(edges.any((e) => e['source']['node_id'] == 'rand'), isFalse);
+    }
+  });
+
   // ------------------------------------------------ picked up again
 
   test('ComfyUI: a remix sent earlier is picked up again by its job', () async {
