@@ -408,7 +408,9 @@ class _MediaGridState extends State<MediaGrid> {
             grid,
             if (state.fresh.isNotEmpty || state.checkedCount > 0)
               Positioned(
-                top: 10,
+                // Sits just under the top row's tick boxes, so they can
+                // still be ticked while the bar is up.
+                top: _gap + _CheckBox.reach + 3,
                 left: 0,
                 right: 0,
                 child: Center(
@@ -715,6 +717,13 @@ class _CheckBox extends StatelessWidget {
   final bool checked;
   final VoidCallback onTap;
 
+  static const double _box = 20;
+  static const EdgeInsets _pad = EdgeInsets.fromLTRB(12, 5, 5, 12);
+
+  /// How far down from a tile's top edge the box and its touch area reach,
+  /// allowing for the thickest border a tile can have.
+  static const double reach = 3 + 5 + _box + 12;
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -723,10 +732,10 @@ class _CheckBox extends StatelessWidget {
       // Held, it is still a tick, not the menu.
       onLongPress: () {},
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 5, 5, 12),
+        padding: _pad,
         child: Container(
-          width: 20,
-          height: 20,
+          width: _box,
+          height: _box,
           decoration: BoxDecoration(
             color: checked ? Palette.accent : const Color(0x59000000),
             borderRadius: BorderRadius.circular(5),
