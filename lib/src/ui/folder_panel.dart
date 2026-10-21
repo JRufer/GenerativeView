@@ -4,7 +4,6 @@ import '../app_state.dart';
 import '../core/models.dart' show exactTerm, normalizePath;
 import '../theme.dart';
 import 'context_menu.dart';
-import 'filter_sheet.dart';
 import 'sheet.dart';
 import 'smart_editor.dart';
 
@@ -178,31 +177,13 @@ class _FolderPanelState extends State<FolderPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = _PanelTabs(state: state);
-    if (state.leftTab == LeftTab.filters) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          tabs,
-          Expanded(
-            child: state.folder == null
-                ? const Padding(
-                    padding: EdgeInsets.all(20),
-                    child: Text('Open a folder to filter it.', style: TextStyle(color: Palette.muted, fontSize: 13)),
-                  )
-                : FilterPanel(key: const ValueKey<String>('docked-filters'), state: state, docked: true),
-          ),
-        ],
-      );
-    }
     final rows = _rows();
     _scrollToCurrent(rows);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        tabs,
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
           child: SizedBox(
             height: 34,
             child: TextField(
@@ -619,74 +600,6 @@ class _CollectionsState extends State<_Collections> {
             ),
           const Divider(height: 9),
         ],
-      ),
-    );
-  }
-}
-
-/// The panel's two tabs: the folders (with pins and collections), and the
-/// filters, docked beside the grid. The Filters tab shows how many filters
-/// are on.
-class _PanelTabs extends StatelessWidget {
-  const _PanelTabs({required this.state});
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final on = state.contentSearch ? 0 : FilterSet.parse(state.query).count;
-    Widget tab(LeftTab tab, String label, IconData icon, {int badge = 0}) {
-      final selected = state.leftTab == tab;
-      return Expanded(
-        child: Semantics(
-          selected: selected,
-          button: true,
-          child: InkWell(
-            key: ValueKey<String>('left-tab-${tab.name}'),
-            onTap: () => state.setLeftTab(tab),
-            hoverColor: Palette.hover,
-            child: Container(
-              height: 40,
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: selected ? Palette.accent : Colors.transparent, width: 2)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, size: 16, color: selected ? Palette.accent : Palette.muted),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                      color: selected ? Palette.text : Palette.muted,
-                    ),
-                  ),
-                  if (badge > 0) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(color: Palette.accent, borderRadius: BorderRadius.circular(9)),
-                      child: Text('$badge', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Palette.canvas)),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return ExcludeFocus(
-      child: DecoratedBox(
-        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Palette.line))),
-        child: Row(
-          children: [
-            tab(LeftTab.folders, 'Folders', Icons.folder_outlined),
-            tab(LeftTab.filters, 'Filters', Icons.tune, badge: on),
-          ],
-        ),
       ),
     );
   }

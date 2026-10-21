@@ -33,6 +33,10 @@ const double _footerHandleHeight = 18;
 /// hold of with a finger, with the grip in the middle.
 const double _sideHandleWidth = 14;
 
+/// How much of the content a panel lying over it always leaves showing, so
+/// there is somewhere to tap to put the panel away.
+const double _overlayMargin = 48;
+
 /// How long a panel takes to open or close.
 const Duration _panelMotion = Duration(milliseconds: 220);
 const Curve _panelCurve = Curves.easeOutCubic;
@@ -394,7 +398,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (portrait) body = _withFooter(body, meta, right);
     if (!narrow) return body;
 
-    final panelWidth = (width * 0.86).clamp(240.0, 380.0).toDouble();
+    // Lying over the content, each panel keeps its own width (the one its
+    // handle was last dragged to), short of leaving the content no room to
+    // be tapped to put it away.
+    final most = math.max(width - _sideHandleWidth - _overlayMargin, 120.0);
+    final leftMin = math.min(minLeftWidth, most);
+    final rightMin = math.min(minRightWidth, most);
+    final leftWidth = state.leftWidth.clamp(leftMin, most).toDouble();
+    final rightWidth = state.rightWidth.clamp(rightMin, most).toDouble();
     final overRight = portrait ? 0.0 : right;
     final shade = math.max(left, overRight);
     return Stack(
@@ -414,7 +425,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             alignment: Alignment.centerLeft,
             child: FractionalTranslation(
               translation: Offset(left - 1, 0),
-              child: SizedBox(width: panelWidth, child: folders),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                // The grip's strip runs the panel's full height.
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(width: leftWidth, child: folders),
+                  _DragHandle(
+                    key: const ValueKey<String>('resize-left'),
+                    size: leftWidth,
+                    min: leftMin,
+                    grows: 1,
+                    overlay: true,
+                    onResize: (px) => state.setLeftWidth(math.min(px, most)),
+                    onClose: state.toggleLeft,
+                  ),
+                ],
+              ),
             ),
           ),
         if (overRight > 0)
@@ -422,7 +449,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             alignment: Alignment.centerRight,
             child: FractionalTranslation(
               translation: Offset(1 - overRight, 0),
-              child: SizedBox(width: panelWidth, child: meta),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                // The grip's strip runs the panel's full height.
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _DragHandle(
+                    key: const ValueKey<String>('resize-right'),
+                    size: rightWidth,
+                    min: rightMin,
+                    grows: -1,
+                    overlay: true,
+                    onResize: (px) => state.setRightWidth(math.min(px, most)),
+                    onClose: state.toggleRight,
+                  ),
+                  SizedBox(width: rightWidth, child: meta),
+                ],
+              ),
             ),
           ),
       ],
@@ -726,6 +769,7 @@ class _DragHandle extends StatefulWidget {
     required this.onResize,
     required this.onClose,
     this.axis = Axis.horizontal,
+    this.overlay = false,
   });
 
   /// The panel's size along [axis] now, in pixels.
@@ -746,6 +790,11 @@ class _DragHandle extends StatefulWidget {
   /// The way the handle moves: sideways between columns, or up and down on
   /// top of the footer.
   final Axis axis;
+
+  /// On the edge of a panel lying over the content rather than between two
+  /// columns: the strip is the panel's own colour, so the panel's edge reads
+  /// as the handle against the shaded content.
+  final bool overlay;
 
   @override
   State<_DragHandle> createState() => _DragHandleState();
@@ -811,8 +860,9 @@ class _DragHandleState extends State<_DragHandle> {
             ),
             child: grip,
           )
-        : SizedBox(
+        : Container(
             width: _sideHandleWidth,
+            color: widget.overlay ? Palette.panel : null,
             child: Stack(
               alignment: Alignment.center,
               children: [

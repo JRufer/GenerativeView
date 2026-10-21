@@ -197,13 +197,8 @@ Future<void> openFilters(BuildContext context, AppState state) {
 }
 
 class FilterPanel extends StatefulWidget {
-  const FilterPanel({super.key, required this.state, this.docked = false});
+  const FilterPanel({super.key, required this.state});
   final AppState state;
-
-  /// In the folder panel's Filters tab, beside the grid, rather than a
-  /// panel of its own: it fills the tab, and the grid it narrows is in
-  /// sight, so it has no "Show" button.
-  final bool docked;
 
   @override
   State<FilterPanel> createState() => _FilterPanelState();
@@ -283,14 +278,13 @@ class _FilterPanelState extends State<FilterPanel> {
   Widget build(BuildContext context) {
     final stats = _stats;
     final matches = widget.state.items.length;
-    final docked = widget.docked;
     final query = widget.state.query.trim();
     final saved = widget.state.showingSmart;
     final list = stats == null
         ? const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
         : ListView(
-                  shrinkWrap: !docked,
-                  padding: EdgeInsets.fromLTRB(docked ? 12 : 18, 0, docked ? 12 : 18, 8),
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
                   children: [
                     if (_filters.free.isNotEmpty)
                       Text(
@@ -337,16 +331,16 @@ class _FilterPanelState extends State<FilterPanel> {
                 ? openSmartEditor(context, widget.state, existing: saved)
                 : openSmartEditor(context, widget.state, query: query),
       icon: const Icon(Icons.auto_awesome_motion_outlined, size: 17),
-      label: Text(saved != null ? 'Edit smart collection' : (docked ? 'Save as smart' : 'Save…')),
+      label: Text(saved != null ? 'Edit smart collection' : 'Save…'),
     );
     return Column(
-      mainAxisSize: docked ? MainAxisSize.max : MainAxisSize.min,
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (docked) Expanded(child: list) else Flexible(child: list),
+        Flexible(child: list),
         const Divider(height: 1),
         Padding(
-          padding: EdgeInsets.fromLTRB(docked ? 6 : 18, docked ? 6 : 10, docked ? 6 : 18, docked ? 8 : 14),
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
           child: Wrap(
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -356,20 +350,18 @@ class _FilterPanelState extends State<FilterPanel> {
               TextButton(
                 key: const ValueKey<String>('filters-clear'),
                 onPressed: _filters.isEmpty ? null : _clear,
-                child: Text(docked ? 'Clear' : 'Clear filters'),
+                child: const Text('Clear filters'),
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   save,
-                  if (!docked) ...[
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      key: const ValueKey<String>('filters-done'),
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
-                    ),
-                  ],
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    key: const ValueKey<String>('filters-done'),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
+                  ),
                 ],
               ),
             ],
