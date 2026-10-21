@@ -8,6 +8,7 @@ import 'src/core/native_core.dart';
 import 'src/core/thumb_cache.dart';
 import 'src/licenses.dart';
 import 'src/platform.dart';
+import 'src/remix_alerts.dart';
 import 'src/theme.dart';
 import 'src/ui/home_page.dart';
 import 'src/ui/shortcut_layer.dart';
@@ -70,6 +71,7 @@ class GenerativeViewApp extends StatefulWidget {
 class _GenerativeViewAppState extends State<GenerativeViewApp> {
   final RouteCounter _routes = RouteCounter();
   MouseNavigation? _mouse;
+  RemixAlerts? _remixAlerts;
 
   @override
   void initState() {
@@ -79,12 +81,14 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
     final state = widget.state;
     if (state != null) {
       _mouse = MouseNavigation(state: state, routes: _routes)..attach();
+      _remixAlerts = RemixAlerts(state)..attach();
     }
   }
 
   @override
   void dispose() {
     _mouse?.detach();
+    _remixAlerts?.detach();
     super.dispose();
   }
 

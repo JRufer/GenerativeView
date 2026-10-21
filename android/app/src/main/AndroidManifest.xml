@@ -11,9 +11,17 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
-    <!-- For one thing only: fetching the content-search model, once, when
-         the user asks for it. Nothing else in the app uses the network. -->
+    <!-- The network: fetching the content-search and upscale models when
+         the user asks for them, Civitai lookups when asked, and remixes sent
+         to the user's own generation servers. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- While a remix is being made on the user's server: a notification
+         that keeps the app waiting with the screen locked (a foreground
+         service and a partial wake lock), and one when it is done. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="GenerativeView"
         android:name="${applicationName}"
@@ -51,6 +59,11 @@
                 <data android:mimeType="video/*"/>
             </intent-filter>
         </activity>
+        <!-- Keeps the app waiting for remixes with the screen locked. -->
+        <service
+            android:name=".RemixService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- Serves a copied image to the app it is pasted into. Not exported:
              the clipboard grants the pasting app access to the one file that
              was copied, and to nothing else. -->

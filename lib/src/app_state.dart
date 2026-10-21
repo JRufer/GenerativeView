@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
-import 'core/backends.dart' show RemixImage;
+import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
 import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
@@ -475,6 +475,7 @@ class AppState extends ChangeNotifier {
     }
     _sharedIn ??= sharedFiles.listen((paths) => unawaited(showShared(paths)));
     notesTick.addListener(_smartSoon);
+    _resumeRemixes(saved['pending_remixes']);
   }
 
   StreamSubscription<List<String>>? _sharedIn;
@@ -1600,23 +1601,60 @@ class AppState extends ChangeNotifier {
   int highlightTick = 0;
   Timer? _highlightTimer;
 
-  /// Save each picture [results] brings back beside [original], as
+  /// Save each picture [ticket] brings back beside [original], as
   /// `<name>_remix1.png`, `<name>_remix2.png` and so on, saying so as each
-  /// lands, and put it in the [remixCollection]. Waits in the background
-  /// for as long as the app is open; how it goes shows in [remixes].
-  void collectRemix(MediaItem original, Stream<RemixImage> results) {
-    final cut = original.path.lastIndexOf(RegExp(r'[/\\]'));
-    final dir = cut < 0 ? '.' : original.path.substring(0, cut);
-    final file = original.path.substring(cut + 1);
+  /// lands, and put it in the [remixCollection]. Waits in the background;
+  /// how it goes shows in [remixes].
+  ///
+  /// What is still out is remembered (see [_pendingRemixes]), so if the app
+  /// is closed or the system stops it before the pictures come back, they
+  /// are fetched the next time it starts.
+  void collectRemix(MediaItem original, RemixTicket ticket) => _collectRemix(original.path, original.name, ticket);
+
+  void _collectRemix(String originalPath, String originalName, RemixTicket ticket, {_PendingRemix? resumed}) {
+    final results = ticket.results;
+    final record = resumed ??
+        (ticket.jobs.isEmpty
+            ? null
+            : _PendingRemix(
+                kind: ticket.kind,
+                base: ticket.base,
+                jobs: [...ticket.jobs],
+                path: originalPath,
+                name: originalName,
+                at: DateTime.now().millisecondsSinceEpoch,
+              ));
+    if (record != null && resumed == null) {
+      _pendingRemixes.add(record);
+      _savePendingRemixes();
+    }
+    final cut = originalPath.lastIndexOf(RegExp(r'[/\\]'));
+    final dir = cut < 0 ? '.' : originalPath.substring(0, cut);
+    final file = originalPath.substring(cut + 1);
     final dot = file.lastIndexOf('.');
     final stem = dot > 0 ? file.substring(0, dot) : file;
     final id = ++_remixIds;
     final saved = <String>[];
     var failed = false;
     var saving = Future<void>.value();
+    StreamSubscription<String>? finishedSub;
+    if (record != null) {
+      // Each job dealt with is not to be fetched again, once what it
+      // brought back is on disk.
+      finishedSub = ticket.finished.listen((job) {
+        saving = saving.then((_) {
+          record.jobs.remove(job);
+          if (record.jobs.isEmpty) _pendingRemixes.remove(record);
+          _savePendingRemixes();
+        });
+      });
+    }
     late final StreamSubscription<RemixImage> sub;
     void finish() {
       _remixSubs.remove(sub);
+      finishedSub?.cancel();
+      // However it ended, nothing of it is waited for any more.
+      if (record != null && _pendingRemixes.remove(record)) _savePendingRemixes();
       if (_disposed) return;
       final list = [...remixes.value];
       final at = list.indexWhere((j) => j.id == id);
@@ -1646,7 +1684,46 @@ class AppState extends ChangeNotifier {
       onDone: () => saving.whenComplete(finish),
     );
     _remixSubs.add(sub);
-    remixes.value = [...remixes.value, RemixJob(id, original.name)];
+    remixes.value = [...remixes.value, RemixJob(id, originalName)];
+  }
+
+  /// Remixes sent and not yet back, as they are kept between runs of the
+  /// app: the server, its names for the jobs, and the picture remixed.
+  final List<_PendingRemix> _pendingRemixes = [];
+
+  /// How long a remix sent is waited for across runs of the app before it
+  /// is given up on.
+  static const Duration _pendingKept = Duration(days: 7);
+
+  void _savePendingRemixes() {
+    if (_disposed) return;
+    _save('pending_remixes', jsonEncode([for (final r in _pendingRemixes) r.toJson()]));
+  }
+
+  /// Pick up the remixes that were still out when the app last closed.
+  void _resumeRemixes(Object? saved) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var resumed = 0;
+    for (final raw in _savedList(saved)) {
+      final record = raw is Map<String, dynamic> ? _PendingRemix.fromJson(raw) : null;
+      if (record == null || record.jobs.isEmpty || now - record.at > _pendingKept.inMilliseconds) continue;
+      final RemixTicket ticket;
+      try {
+        ticket = resumeRemix(record.kind, record.base, record.jobs);
+      } catch (_) {
+        continue;
+      }
+      _pendingRemixes.add(record);
+      _collectRemix(record.path, record.name, ticket, resumed: record);
+      resumed++;
+    }
+    // Dropped or given up on, those are forgotten.
+    _savePendingRemixes();
+    if (resumed > 0) {
+      _notices.add(resumed == 1
+          ? 'Waiting again for a remix sent before the app was closed'
+          : 'Waiting again for $resumed remixes sent before the app was closed');
+    }
   }
 
   /// Write [image] beside the original and put it in the remix collection;
@@ -1986,6 +2063,43 @@ class AppState extends ChangeNotifier {
 
 /// A remix sent to a server: waiting, or back with [saved] pictures.
 @immutable
+/// A remix sent and not yet back, as it is kept between runs of the app.
+class _PendingRemix {
+  _PendingRemix({required this.kind, required this.base, required this.jobs, required this.path, required this.name, required this.at});
+
+  /// The backend and where it is.
+  final String kind;
+  final String base;
+
+  /// The server's names for the jobs still to come back.
+  final List<String> jobs;
+
+  /// The picture remixed: the new ones are saved beside it.
+  final String path;
+  final String name;
+
+  /// When it was sent, milliseconds since the epoch.
+  final int at;
+
+  Map<String, Object> toJson() => {'kind': kind, 'base': base, 'jobs': jobs, 'path': path, 'name': name, 'at': at};
+
+  static _PendingRemix? fromJson(Map<String, dynamic> j) {
+    final kind = j['kind'];
+    final base = j['base'];
+    final path = j['path'];
+    final jobs = j['jobs'];
+    if (kind is! String || base is! String || path is! String || jobs is! List) return null;
+    return _PendingRemix(
+      kind: kind,
+      base: base,
+      jobs: [for (final job in jobs) '$job'],
+      path: path,
+      name: j['name'] as String? ?? path.split(RegExp(r'[/\\]')).last,
+      at: (j['at'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 class RemixJob {
   const RemixJob(this.id, this.name, {this.saved = const [], this.running = true});
   final int id;

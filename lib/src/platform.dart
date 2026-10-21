@@ -316,14 +316,64 @@ bool _sharedListening = false;
 Stream<List<String>> get sharedFiles {
   if (!_sharedListening && Platform.isAndroid) {
     _sharedListening = true;
-    _media.setMethodCallHandler((call) async {
-      if (call.method == 'sharedReady') await _takeShared();
-      return null;
-    });
+    _listenToAndroid();
     // Anything shared before the app was listening (it was opened by it).
     scheduleMicrotask(_takeShared);
   }
   return _shared.stream;
+}
+
+bool _androidListening = false;
+
+/// Calls from the Android side: pictures shared in, and a "remix done"
+/// notification tapped.
+void _listenToAndroid() {
+  if (_androidListening) return;
+  _androidListening = true;
+  _media.setMethodCallHandler((call) async {
+    switch (call.method) {
+      case 'sharedReady':
+        await _takeShared();
+      case 'openRemixes':
+        _openRemixes.add(null);
+    }
+    return null;
+  });
+}
+
+final StreamController<void> _openRemixes = StreamController<void>.broadcast();
+
+/// Each time a "remix done" notification is tapped (Android).
+Stream<void> get remixNotificationTaps {
+  if (Platform.isAndroid) _listenToAndroid();
+  return _openRemixes.stream;
+}
+
+/// Tell Android how many remixes are being waited for: while any are, a
+/// quiet notification says so and keeps the app waiting with the screen
+/// locked; at none it goes. Nothing elsewhere.
+Future<void> setRemixesWaiting(int count) async {
+  if (!Platform.isAndroid) return;
+  try {
+    await _media.invokeMethod<void>('remixWaiting', {'count': count});
+  } on PlatformException {
+    // Notifications refused or unavailable: the wait goes on regardless.
+  } on MissingPluginException {
+    // Not on this platform.
+  }
+}
+
+/// Tell the user, with a notification, that a remix is back (Android).
+/// Tapping it shows the Remixes collection.
+Future<void> notifyRemixDone(String title, String text) async {
+  if (!Platform.isAndroid) return;
+  try {
+    await _media.invokeMethod<void>('remixDone', {'title': title, 'text': text});
+  } on PlatformException {
+    // As above.
+  } on MissingPluginException {
+    // As above.
+  }
 }
 
 Future<void> _takeShared() async {
