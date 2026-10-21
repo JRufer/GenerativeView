@@ -2129,46 +2129,50 @@ void main() {
     await settle(tester);
     expect(gridWidth(), 700);
 
-    // ---- and the search box, short of room, grows over the tools as well ----
-    // The bar: 6 of padding, the folder button and a gap, then everything
-    // else; six tools of 36 at the far end and a gap of 4 before them.
-    const barLeft = 6.0 + 36 + 6;
-    const barRight = 700.0 - 6;
-    const toolsLeft = barRight - 6 * 36;
+    // ---- short of room, the bar is two rows -----------------------------------
+    // On top the folder button, the folder's name and count, and the tools;
+    // under them the search box, wide, and the tile size slider.
     Rect box() => tester.getRect(search);
-    expect(tester.getRect(find.byTooltip('Filters (F)')).left, toolsLeft);
-    expect(box().width, 170);
-    expect(box().right, closeTo(toolsLeft - 4, 0.01));
+    final bar = tester.getRect(find.byKey(const ValueKey<String>('top-bar')));
+    expect(bar.height, 48 + 44);
+    final filters = tester.getRect(find.byTooltip('Filters (F)'));
+    expect(filters.bottom, lessThanOrEqualTo(48));
+    expect(tester.getRect(find.byKey(const ValueKey<String>('more-menu'))).right, closeTo(700 - 6, 0.01));
+    expect(inBar('library'), findsOneWidget);
+    expect(inBar('9 items'), findsOneWidget);
+    expect(box().top, greaterThanOrEqualTo(48));
+    expect(box().left, closeTo(6 + 4, 0.01));
+    final slider = tester.getRect(find.byKey(const ValueKey<String>('tile-size-slider')));
+    expect(slider.right, closeTo(700 - 6, 0.01));
+    expect(slider.center.dy, closeTo(box().center.dy, 4));
+    expect(box().width, greaterThan(700 - 12 - 4 - slider.width - 30));
+    await screenshot(tester, boundary, '52-two-row-bar');
+    // The slider works there.
+    final before = state.tileSize;
+    await tester.tapAt(Offset(slider.right - 12, slider.center.dy));
+    await tester.pump();
+    expect(state.tileSize, greaterThan(before));
+    state.setTileSize(before);
+    // Typed in, the box keeps its row; the tools stay where they are, in reach.
+    final inRow = box();
     await tester.tap(search);
     await tester.pump();
-    await tester.pump();
-    await tester.pump(part);
-    await tester.pump(part);
-    expect(box().width, allOf(greaterThan(170), lessThan(barRight - barLeft)));
-    expect(box().right, allOf(greaterThan(toolsLeft), lessThan(barRight)));
     await tester.pump(rest);
-    expect(box().left, closeTo(barLeft, 0.01));
-    expect(box().right, closeTo(barRight, 0.01));
-    expect(inBar('library'), findsNothing);
-    // The tools are under it: a tap where one was goes to the box.
-    final info = tester.getCenter(find.byTooltip('Generation data (I)'));
-    await tester.tapAt(info);
-    await tester.pump();
-    expect(state.rightOpen, isFalse);
     expect(state.searchFocus.hasFocus, isTrue);
-
-    // Put down, it is out of their way at once, before it has shrunk back.
+    expect(box(), inRow);
+    expect(inBar('library'), findsOneWidget);
     state.searchFocus.unfocus();
     await tester.pump();
-    await tester.pump();
-    expect(box().width, greaterThan(170));
-    await tester.tapAt(info);
+    await tester.tap(find.byTooltip('Generation data (I)'));
     await tester.pump();
     expect(state.rightOpen, isTrue);
     await tester.pump(rest);
-    expect(box().width, 170);
-    expect(box().right, closeTo(toolsLeft - 4, 0.01));
-    expect(inBar('library'), findsOneWidget);
+    // In the focus view it is one row again.
+    state.openFocus(0);
+    await tester.pump();
+    expect(tester.getRect(find.byKey(const ValueKey<String>('top-bar'))).height, 48);
+    state.closeFocus();
+    await tester.pump();
     state.toggleRight();
     await settle(tester);
     expect(find.byType(MetaPanel), findsNothing);

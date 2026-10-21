@@ -321,3 +321,32 @@ void editInvokeLoras(Map<String, dynamic> graph, List<LoraChoice> choices) {
     }
   }
 }
+
+// ---------------------------------------------------------------- trigger words
+
+/// The phrases of one of a LoRA's trigger-word entries, which Civitai often
+/// lists several to an entry, comma-separated.
+List<String> triggerParts(String entry) => [
+      for (final part in entry.split(',')) if (part.trim().isNotEmpty) part.trim(),
+    ];
+
+String _flat(String text) => text.toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+/// Whether every phrase of trigger-word [entry] is in [prompt], case and
+/// spacing aside.
+bool triggerPresent(String prompt, String entry) {
+  final parts = triggerParts(entry);
+  if (parts.isEmpty) return true;
+  final text = _flat(prompt);
+  return parts.every((p) => text.contains(_flat(p)));
+}
+
+/// [prompt] with trigger-word [entry] put at its start, where trigger
+/// words are usually written (only the phrases not already there).
+String addTrigger(String prompt, String entry) {
+  final missing = [for (final p in triggerParts(entry)) if (!triggerPresent(prompt, p)) p];
+  if (missing.isEmpty) return prompt;
+  final head = missing.join(', ');
+  final rest = prompt.trimLeft();
+  return rest.isEmpty ? head : '$head, $rest';
+}

@@ -15,20 +15,26 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 - **Filter by what an image used**: right-click, or press and hold, the seed, a model, a LoRA or a sampler setting in the metadata panel and choose "Show only images…". On the **LoRAs** heading that means every image that uses all of the LoRAs listed, at any strength; on a single LoRA, every image that uses that one. The filter appears in the search box as ordinary search text, so it can be edited, cleared or pinned.
 - **Search** across the folder as you type. It finds whole words in prompts (`fox` is not `foxglove`), and names of files, models and LoRAs that start with what you typed. The best matches come first: see [Search syntax](#search-syntax).
 - **Content search**: the switch at the left end of the search box goes from searching the metadata (the magnifying glass) to describing what you are looking for (the magnifying glass over a picture): `a fox in the snow` then finds pictures that *show* that, whatever their prompts say. Only pictures that match are listed, the best match first. It needs a model (TinyCLIP, 337 MB), which the app offers to download the first time and then runs on your device; see [Content search](#content-search) below. Click the switch again to go back.
-- **Room to type**: while you are typing in it the search box grows over the folder's name and shrinks back when you are done; the count of matches stays in view beside it. Where the bar is too short for that to gain much (a tablet held upright, a narrow window) it takes the whole bar instead, tools included, until you press Enter or tap elsewhere. That, the search switch and the two panels move into place over a fifth of a second, or at once where the system is set to reduce motion.
+- **Room to type**: while you are typing in it the search box grows over the folder's name and shrinks back when you are done; the count of matches stays in view beside it. Where the window is too narrow for everything on one line (a phone, a tablet held upright, a narrow window), the bar becomes two rows: the folder's name and the tools on top, and the search box and the tile size slider underneath, each with room of its own. That, the search switch and the two panels move into place over a fifth of a second, or at once where the system is set to reduce motion.
 - **Pinned searches**: type a search and click the pin beside the ✕ to keep it. Clicking in the search box lists your pinned searches underneath; click one to run it, or its ✕ to remove it. Typing narrows the list to the pins that contain what you typed.
 - **Usage** (the bar-chart button; in a narrow window it is in the sort menu): which models, LoRAs, samplers, schedulers, step counts, CFG values, sizes and prompt words the folder's images use most, how each one's use is spread over time, and a timeline of images per day, week, month or year. Click anything to go back to the grid showing only the images behind that number.
 - **Ratings, flags and collections**: give a picture one to five stars (keys `1`–`5`, or the stars in the metadata panel), flag it to keep (`P`) or reject (`X`), and put it in any number of collections (`B`). Stars and flags show on the tiles; rejected pictures fade back. They are saved in a small `.generativeview.json` file in each picture's own folder, not inside the app, so a folder synced between machines carries them along: rate on the tablet, see the stars on the desktop. Edits made elsewhere show up as soon as the file changes. Collections are listed in the folder panel; tap one to see its pictures. See [Notes files](#notes-files).
 - **Filters** (the sliders button, or `F`): every model, LoRA, collection, prompt, prompt word, sampler, scheduler, step count, CFG, size and tool the folder's pictures used, with how many each, as chips to tap; plus a minimum star rating and keep / reject. Chips in one group widen the selection (this model or that one), groups narrow it (this model and that sampler). The filters are written into the search box as ordinary search text, so a typed search and filters work together, and the whole thing can be pinned. The button shows how many filters are on.
+- **Filters over the grid**: while any filter is on, a bar over the grid lists each one as a chip with a cross to take it off, **Clear all**, how many pictures are showing, and **Save as smart collection**.
+- **Smart collections**: filters or a search kept under a name, from the bar over the grid, the filter panel, or the **+** beside *Smart collections* in the folder panel. Each is a few rules that must all match (model is…, LoRA contains…, rating at least…, prompt word…, flag, sampler, steps, CFG, size, date, or any search text), with a live count and a strip of the pictures they match as you edit them. They are listed in the folder panel with how many pictures each matches now, which keeps up as pictures arrive, are rated or are deleted. Tap one to show it (and again to go back); right-click or press and hold it to edit or delete it. While one is showing, the bar over the grid names it, with **Edit**. They are saved in the `.generativeview.json` notes file of the folder they were made in (see [Notes files](#notes-files)), so they sync with the folder like ratings do, and they apply to that folder and every folder below it.
+- **Comes back where you left off**: on a fresh start the app reopens the folder, the search, filters, collection or smart collection that was showing. A folder given on the command line opens on its own, with no search.
 - **Filter by prompt** like any other value: right-click or press and hold the prompt (or the negative prompt) in the metadata panel and choose "Show only images with this prompt".
 - **More like this** (`L`, or from the image menu or the metadata panel): the pictures that look like the selected one, most alike first, using the content-search model. It can be combined with any other search, `rating:4+ similar:"…"`.
-- **Remix** (`R`): the picture's prompt and negative prompt in an editor, with its seed (or a random one each time), size and a count, and a button that queues them on **ComfyUI**, **InvokeAI** or **Forge / A1111**. ComfyUI and InvokeAI get the picture's own workflow with those values changed in place when it carries one; a picture from another program gets a standard text-to-image workflow built from its settings instead (the same model and LoRAs, matched by name against what that server has installed, with its prompt, seed, steps, CFG, sampler and size; InvokeAI builds for SD 1.x, SD 2.x and SDXL). Forge gets the settings as values. So any picture with generation data can go to any of the three. Width and height are locked to the picture's shape by default (the blue lock above the swap button): a new width brings the height along, and the side that changed glows for a moment; unlock it (white) to set each freely. A folded **LoRAs** section lists each LoRA the picture was made with, with a switch to leave it out and a slider from −1 to 2 that starts at the picture's weight and shows in grey how far it has been moved. The remix is made with those settings: ComfyUI and InvokeAI workflows have the LoRA nodes of those turned off taken out and the rest reweighted, and `<lora:…>` tags in the prompt follow suit (Forge is given tags for LoRAs it would otherwise not load). Server addresses are set once, under ⋮ › Generation servers, each with a Test button. Nothing is sent until Send is pressed. While a remix is out, a blue **Remix Running** chip moves at the top of the grid (in the top bar in the focus view); as each comes back a **Remix Done** chip appears beside it (**3 Remixes Done** when several are waiting), and tapping that opens the **Remixes** collection with the new pictures picked out by a short animation. Every remix is saved beside its original as `name_remix1.png` and put in the **Remixes** collection, which is made the first time.
+- **Remix** (`R`): the picture's prompt and negative prompt in an editor, with its seed (or a random one each time), size and a count, and a button that queues them on **ComfyUI**, **InvokeAI** or **Forge / A1111**. ComfyUI and InvokeAI get the picture's own workflow with those values changed in place when it carries one; a picture from another program gets a standard text-to-image workflow built from its settings instead (the same model and LoRAs, matched by name against what that server has installed, with its prompt, seed, steps, CFG, sampler and size; InvokeAI builds for SD 1.x, SD 2.x and SDXL). Forge gets the settings as values. So any picture with generation data can go to any of the three. Width and height are locked to the picture's shape by default (the blue lock above the swap button): a new width brings the height along, and the side that changed glows for a moment; unlock it (white) to set each freely. A folded **LoRAs** section lists each LoRA the picture was made with, with a switch to leave it out and a slider from −1 to 2 that starts at the picture's weight and shows in grey how far it has been moved. **Check trigger words** there looks each LoRA up on Civitai (by its name and hash, only when pressed) and lists the words that trigger it under it: those already in the prompt ticked, the others a tap away from being added to the start of the prompt. A LoRA left on with none of its trigger words in the prompt is outlined, and the heading says so even while the section is folded. What was found is remembered while the app is open. The remix is made with those settings: ComfyUI and InvokeAI workflows have the LoRA nodes of those turned off taken out and the rest reweighted, and `<lora:…>` tags in the prompt follow suit (Forge is given tags for LoRAs it would otherwise not load). Server addresses are set once, under ⋮ › Generation servers, each with a Test button. Nothing is sent until Send is pressed. While a remix is out, a blue **Remix Running** chip moves at the top of the grid (in the top bar in the focus view); as each comes back a **Remix Done** chip appears beside it (**3 Remixes Done** when several are waiting), and tapping that opens the **Remixes** collection with the new pictures picked out by a short animation. Every remix is saved beside its original as `name_remix1.png` and put in the **Remixes** collection, which is made the first time.
 - **Prompt editor**: spelling is checked as you type, with corrections offered when the caret is in an underlined word (or on right-click). It knows an English word list, the words of prompts (`bokeh`, `sdxl`, `isometric`), every word used in two or more of the folder's prompts, and words you add. **Select a word or several and a slider appears under them** for their weight: drag it and the words become `(words:1.2)`, anywhere from 0.1 to 2.0 in steps of 0.05, starting from 1.0. With the caret inside a weighted group, the slider edits that group; the cross takes the weight off. `Ctrl` `↑` / `↓` nudge the weight by a step, as in ComfyUI. Weighted words are tinted, warmer the heavier.
 - **Upscale** (`Shift` `U`): on the device, with no server and no upload. Pick Real-ESRGAN *general* (photos, renders) or *anime* (illustration, flat colour), 2× or 4×. The result is saved beside the original as `name_up2x.png` with **either an exact copy of the original's metadata** (its PNG text chunks, JPEG EXIF/XMP/comment segments or WebP EXIF/XMP chunks, byte for byte, so the upscale searches and remixes like the original) **or none at all**. These models need no prompt. Each model is a one-time download of 2.5 or 4.9 MB from the Real-ESRGAN releases on github.com. See [Upscaling](#upscaling).
 - **New pictures** that arrive while a folder is open get a blue dot and a "3 new pictures" button over the grid that jumps to them. **Follow new pictures** (`N`, or ⋮) goes further and selects each one as it lands, in the focus view too, so the app can sit on a second screen while you generate.
 - **Best rated** (on the usage page): models and LoRAs ranked by the average stars of their rated pictures, with how many are rated, kept and rejected, and their best three pictures.
 - **Look up on Civitai**: right-click a model or LoRA in the metadata panel. By the hash A1111 and Forge save (the exact file), or else by file name, it shows the base model, the trigger words (tap to copy) and a link to its page. Only the hash or name is sent, and only when asked.
 - **Keyboard shortcuts**: `?` or `F1` lists them all.
+- **Several at once**: each tile has a box in its top right corner; tap it to tick the picture (or `Ctrl`-click it, and `Shift`-click to tick a run, `Ctrl` `A` for all). Once one is ticked, a tap anywhere on a tile ticks or unticks it, and a bar over the grid says how many are ticked, with **Select all**, the menu for all of them (⋮) and a cross to untick them (`Esc` does too). The menu on any ticked picture then has only what works on many: **copy** them as files, **share** them (Android), **rate** them, **flag** them to keep or reject, add them to a **collection** (or take them out of the one being shown), **upscale** them (one after another, with how many are waiting in the corner) and **delete** them to the trash, after asking once. Remix and More like this are for one picture at a time. The keys `1`–`5`, `0`, `P`, `X`, `U`, `B`, `Shift` `U`, `Ctrl` `Shift` `C` and `Delete` act on all the ticked pictures too.
+- **Near-duplicates** (Filters › *Near-duplicates only*, or `is:duplicate` in the search box): only the pictures that have an all-but-identical twin among those listed (the same seed run again, a LoRA nudged, a resave), each group side by side, so the weaker ones are easy to tick and delete. Pictures are compared by a small fingerprint of what they look like (made from the thumbnail, once, and kept), at the same shape; no model is needed. It works with any other search or filter: `is:duplicate rating:<3`.
+- **Share in and out**: on Android, *Share…* in the image menu sends the file itself (one or many) to any app, generation data and all; and a picture shared *to* GenerativeView from a browser or a chat is saved, byte for byte, in `Pictures/GenerativeView/Shared` and opened in the focus view with its generation data beside it. On the desktop, drag a tile out of the window into a file manager, a browser's upload box or a chat to drop the file itself (all the ticked ones, if it is one of them).
 - **Image menu**: right-click, or press and hold, an image in the grid or the focus view. **Copy image** puts the file itself on the clipboard, bytes untouched, so the generation data goes with it wherever you paste. The menu also copies the prompt and the file path.
 - **Live**: images that appear, change or disappear while the folder is open show up in the grid and in search on their own.
 - **Folder panel** on the left: a lazily loaded tree, plus a box to paste a path into.
@@ -40,10 +46,12 @@ Point it at an output folder and it shows a resizable grid of everything in it, 
 | Ratings, flags and collections, saved beside the pictures | Filters, with counts |
 | ![The remix panel: a phrase weighted with the slider under it](docs/screenshot-remix.png) | ![Upscaling on the device, keeping the metadata](docs/screenshot-upscale.png) |
 | Remix: select words, drag their weight | Upscale on the device, metadata kept or stripped |
+| ![A smart collection listed with its count and showing, its filters as chips over the grid](docs/screenshot-smart-collections.png) | |
+| Smart collections, saved beside the pictures, their filters as chips over the grid | |
 | ![Models ranked by the stars of their pictures](docs/screenshot-best-rated.png) | ![Every keyboard shortcut](docs/screenshot-shortcuts.png) |
 | Best rated models and LoRAs | `?` lists every shortcut |
 
-Both panels collapse; on narrow screens they slide over the grid instead of sitting beside it. When the window is taller than it is wide — a tablet held upright, a window tiled to half the screen — the metadata panel moves under the grid or the focused image as a footer, with a top edge you can drag to resize it.
+Both panels collapse, and both resize by the grip on their inner edge (drag it past the panel's least width to shut it). On narrow screens, a phone or a Fold, they slide over the grid instead of sitting beside it, and keep their grips there, short of leaving no grid to tap. When the window is taller than it is wide — a tablet held upright, a window tiled to half the screen — the metadata panel moves under the grid or the focused image as a footer, with a top edge you can drag to resize it.
 
 ### Search syntax
 
@@ -66,6 +74,7 @@ Both panels collapse; on narrow screens they slide over the grid instead of sitt
 | `collection:fox` | in a collection whose name contains `fox` (`collection:="Night city"` for that one) |
 | `fullprompt:="a red fox"` | that whole prompt, give or take case and spacing (also `fullneg:` for the negative prompt) |
 | `similar:"/path/to/a.png"` | pictures that look like that one, most alike first |
+| `is:duplicate` | only pictures with a near-duplicate among the results, each group together |
 
 Matching is case-insensitive, and in prompts it is by whole word: `fox` finds `a red fox`, `fox's` and `red_fox`, but not `foxglove` or `firefox`, and `lond` does not find `blonde` (`*lond*` does). Names are not made of words in the same way, so in the names of files, models and LoRAs a search only has to start where a word starts: `flux` finds `flux1-dev.safetensors` and `dev` does too, but `lux` does not. The fields that name one of those (`model:`, `lora:`, `name:`, `sampler:`) match any part of it.
 
@@ -105,11 +114,13 @@ The model runs on the CPU in the Rust core (`core/src/clip`): no GPU, no extra l
 | --- | --- | --- |
 | Arrows, `W` `A` `S` `D` | move selection | previous / next image |
 | `Enter`, `Space` | open image | back to grid |
-| `Esc` | clear selection | back to grid |
+| `Esc` | untick the ticked pictures, or clear the selection | back to grid |
+| `Ctrl`-click, `Shift`-click | tick a picture, or a run of them | |
+| `Ctrl` `A` | tick every picture listed | |
 | `Home` / `End`, `PgUp` / `PgDn` | jump | jump |
 | `Ctrl` `F` or `/` | search | |
 | `Ctrl` `C` | copy the selected image's prompt | same |
-| `Ctrl` `Shift` `C` | copy the selected image itself | same |
+| `Ctrl` `Shift` `C` | copy the selected image itself (or every ticked one) | same |
 | `Ctrl` `+` / `-` | tile size | |
 | `I` or `]` | toggle metadata panel | same |
 | `[` | toggle folder panel | |
@@ -140,16 +151,21 @@ ComfyUI has no fixed schema, so prompts and settings are found by walking the gr
 
 ### Notes files
 
-Ratings, flags and collections are kept in a file called `.generativeview.json` in each folder that has any, beside the pictures they are about:
+Ratings, flags and collections are kept in a file called `.generativeview.json` in each folder that has any, beside the pictures they are about, along with the smart collections saved in that folder:
 
 ```json
 {
   "generativeview": 1,
   "images": {
     "ComfyUI_00012_.png": { "rating": 4, "flag": "keep", "collections": ["Night city"] }
-  }
+  },
+  "smart": [
+    { "name": "Best flux", "query": "model:=flux1-dev.safetensors rating:>=4" }
+  ]
 }
 ```
+
+A smart collection's `query` is ordinary search text ([Search syntax](#search-syntax)); editing it by hand works too.
 
 The file is small, readable, and written whole (to a temporary file that is then renamed over it), so a sync tool such as Syncthing never sees half of one. Every change reads the file first and changes only the pictures it is about, so notes made on two machines are merged rather than lost, and anything else in the file (fields from a newer version, or another tool) is kept as it is. A picture with no stars, flag or collections has no entry; a folder with none has no file. The app keeps a copy in its index for searching, which it rebuilds from the files whenever they change.
 
@@ -186,7 +202,7 @@ On Ubuntu / Debian: `sudo apt install ffmpeg` (and `mpv` for the `.tar.gz`).
 
 ### Signing key
 
-Android only installs an update over an existing app if both are signed with the same key. Until the repository has a key of its own, each CI run signs with a throwaway one, and you have to uninstall before installing a newer build. To fix that once:
+Android only installs an update over an existing app if both are signed with the same key and the new one has a higher version code. Every build's version code is its CI run number, so it always goes up; the key is what has to stay the same. Until the repository has a key of its own, each CI run signs with a throwaway one (the run says so in a notice), and Android refuses the update with "App not installed" until the old one is uninstalled. To fix that once and for all:
 
 ```sh
 keytool -genkeypair -keystore generativeview.jks -storetype PKCS12 -alias generativeview \
@@ -196,7 +212,9 @@ base64 -w0 generativeview.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo JRu
 gh secret set ANDROID_KEYSTORE_PASSWORD --repo JRufer/GenerativeView --body 'choose-a-password'
 ```
 
-Keep `generativeview.jks` somewhere safe and out of the repository. Builds from then on all carry that signature.
+Or, on github.com: **Settings › Secrets and variables › Actions › New repository secret**, once for `ANDROID_KEYSTORE_BASE64` (the output of `base64 -w0 generativeview.jks`) and once for `ANDROID_KEYSTORE_PASSWORD`.
+
+Keep `generativeview.jks` somewhere safe and out of the repository: a key that is lost means one more uninstall. Builds from then on all carry that signature, so a new APK installs straight over the last one, keeping the app's settings, index and thumbnails. The build that is installed when the key is first set up was signed with a throwaway key, so uninstall it one last time.
 
 ## Build from source
 
@@ -286,7 +304,9 @@ For guidelines on keeping features, path logic, native runners, and tests synchr
 - Dark theme only.
 - Video thumbnails on Linux need `ffmpeg` on the `PATH`; without it videos show a placeholder tile.
 - Video metadata is read from MP4, MOV and WebM. Animated WebP and GIF play in the focus view.
-- Nothing in the app deletes, moves or edits your pictures. It writes two kinds of file into your folders, and only when you ask: `.generativeview.json` notes files, and upscaled copies beside their originals.
+- Nothing in the app deletes, moves or edits your pictures unless you ask it to delete them (and then they go to the trash where there is one). It writes files into your folders only when you ask: `.generativeview.json` notes files, upscaled copies and remixes beside their originals, pasted pictures, and pictures shared to the app on Android.
+- Near-duplicates are found by what the pictures look like, roughly: two different pictures that are mostly one smooth gradient of the same colours can be taken for twins, and a twin cropped or turned on its side is not found. The first look at a large folder takes a moment while the fingerprints are made.
+- Dragging tiles out of the window works on Linux (X11 and Wayland), Windows and macOS; on Android use Share instead.
 - A remixed prompt is put into a ComfyUI or InvokeAI workflow by finding the text the prompt was read from. Where a workflow builds its prompt from several pieces (concatenation nodes, wildcards), an edited prompt cannot be placed and the app says so; an unchanged one is still sent.
 - The spelling check is English.
 - Whether a pasted image keeps its generation data is up to the program you paste into. File managers, and anything that takes the copied *file*, get it untouched; a program that takes the *picture* and re-encodes it (browsers do, for images pasted into a web page) drops the data.

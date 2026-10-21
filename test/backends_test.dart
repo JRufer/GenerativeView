@@ -521,6 +521,17 @@ void main() {
     expect(retagPrompt('a fox', [choice('fur_detail', 0.8)], addTo: 'a fox <lora:fur_detail:0.8>'), 'a fox');
   });
 
+  test('trigger words are found in a prompt and put at its start', () {
+    expect(triggerParts('soft fur, fluffy ,'), ['soft fur', 'fluffy']);
+    expect(triggerPresent('A red fox, SOFT  fur and fluffy', 'soft fur, fluffy'), isTrue);
+    expect(triggerPresent('a red fox, soft fur', 'soft fur, fluffy'), isFalse);
+    expect(addTrigger('a red fox', 'furry detail'), 'furry detail, a red fox');
+    // Only what is missing is added.
+    expect(addTrigger('soft fur, a red fox', 'soft fur, fluffy'), 'fluffy, soft fur, a red fox');
+    expect(addTrigger('furry detail, a fox', 'furry detail'), 'furry detail, a fox');
+    expect(addTrigger('  ', 'furry detail'), 'furry detail');
+  });
+
   test('a LoRA choice knows how far it has moved, CLIP weight and all', () {
     final c = choice('fur', 0.8, clip: 0.5, to: 1.1);
     expect(c.offset, closeTo(0.3, 1e-9));

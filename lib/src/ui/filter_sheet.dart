@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../theme.dart';
 import 'notes_widgets.dart' show starColor;
 import 'sheet.dart';
+import 'smart_editor.dart';
 
 /// The facets the filter panel offers, in order: (usage kind, search field,
 /// heading).
@@ -38,6 +39,7 @@ class FilterSet {
     this.unrated = false,
     Set<Flag>? flags,
     this.media = MediaShown.both,
+    this.duplicates = false,
   }) : flags = flags ?? {};
 
   /// Terms the panel does not manage: typed words, dates, negations.
@@ -49,6 +51,12 @@ class FilterSet {
   bool unrated;
   final Set<Flag> flags;
   MediaShown media;
+
+  /// Only pictures that have a near-duplicate, each group together
+  /// (`is:duplicate`).
+  bool duplicates;
+
+  static const Set<String> _duplicateWords = {'duplicate', 'duplicates', 'dupe', 'dupes', 'near-duplicate', 'near-duplicates'};
 
   /// The search fields that mean the kind of file (`type:video`).
   static const Set<String> _typeFields = {'type', 'kind', 'media', 'is'};
@@ -66,10 +74,15 @@ class FilterSet {
     var unrated = false;
     final flags = <Flag>{};
     var media = MediaShown.both;
+    var duplicates = false;
     for (final raw in splitTerms(query)) {
       final t = parseTerm(raw);
       if (t.negate || !_managed.contains(t.field)) {
         free.add(raw);
+        continue;
+      }
+      if (_typeFields.contains(t.field) && _duplicateWords.contains(t.value.toLowerCase().trim())) {
+        duplicates = true;
         continue;
       }
       if (_typeFields.contains(t.field)) {
@@ -105,18 +118,19 @@ class FilterSet {
       final values = _allOf.contains(t.field) || t.field == 'fullprompt' ? [t.value] : t.value.split('|');
       chosen.putIfAbsent(t.field, () => {}).addAll(values.where((v) => v.isNotEmpty));
     }
-    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media);
+    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media, duplicates: duplicates);
   }
 
   bool get isEmpty =>
-      chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty && media == MediaShown.both;
+      chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty && media == MediaShown.both && !duplicates;
 
   int get count =>
       chosen.values.fold(0, (n, s) => n + s.length) +
       (minRating > 0 ? 1 : 0) +
       (unrated ? 1 : 0) +
       flags.length +
-      (media == MediaShown.both ? 0 : 1);
+      (media == MediaShown.both ? 0 : 1) +
+      (duplicates ? 1 : 0);
 
   bool has(String field, String value) => chosen[field]?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
 
@@ -155,6 +169,7 @@ class FilterSet {
     if (flags.isNotEmpty) parts.add('flag:${flags.map((f) => f.word).join('|')}');
     if (media == MediaShown.images) parts.add('type:image');
     if (media == MediaShown.videos) parts.add('type:video');
+    if (duplicates) parts.add('is:duplicate');
     return parts.join(' ');
   }
 }
@@ -191,6 +206,7 @@ class FilterPanel extends StatefulWidget {
 
 class _FilterPanelState extends State<FilterPanel> {
   late FilterSet _filters = FilterSet.parse(widget.state.query);
+  late String _seenQuery = widget.state.query;
   UsageStats? _stats;
   String? _countedFor;
   final Set<String> _expanded = {};
@@ -209,21 +225,35 @@ class _FilterPanelState extends State<FilterPanel> {
   }
 
   void _onState() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // The search changed from outside (typed, a chip taken off over the
+    // grid, a collection opened): show what it now chooses.
+    final query = widget.state.query;
+    if (query != _seenQuery) {
+      _seenQuery = query;
+      _filters = FilterSet.parse(query);
+    }
+    _count();
+    setState(() {});
   }
 
   Future<void> _count() async {
+    final state = widget.state;
     final text = _filters.freeText;
-    if (_countedFor == text && _stats != null) return;
-    _countedFor = text;
+    // Counted again for another folder too, or with sub-folders in or out.
+    final key = '${state.folder}|${state.recursive}|$text';
+    if (_countedFor == key && _stats != null) return;
+    _countedFor = key;
     try {
-      final stats = await widget.state.usage(text: text);
-      if (mounted && _countedFor == text) setState(() => _stats = stats);
+      final stats = await state.usage(text: text);
+      if (mounted && _countedFor == key) setState(() => _stats = stats);
     } catch (_) {}
   }
 
   void _apply() {
-    widget.state.applySearch(_filters.toQuery(), content: false);
+    final query = _filters.toQuery();
+    _seenQuery = query;
+    widget.state.applySearch(query, content: false);
     setState(() {});
   }
 
@@ -248,14 +278,11 @@ class _FilterPanelState extends State<FilterPanel> {
   Widget build(BuildContext context) {
     final stats = _stats;
     final matches = widget.state.items.length;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Flexible(
-          child: stats == null
-              ? const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-              : ListView(
+    final query = widget.state.query.trim();
+    final saved = widget.state.showingSmart;
+    final list = stats == null
+        ? const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+        : ListView(
                   shrinkWrap: true,
                   padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
                   children: [
@@ -293,19 +320,49 @@ class _FilterPanelState extends State<FilterPanel> {
                     ),
                     for (final (kind, field, title) in _facets) ..._section(kind, field, title),
                   ],
-                ),
-        ),
+                );
+    // A search that is already a smart collection is edited there; any
+    // other can be kept as one.
+    final save = TextButton.icon(
+      key: const ValueKey<String>('filters-save-smart'),
+      onPressed: query.isEmpty || widget.state.contentSearch
+          ? null
+          : () => saved != null
+                ? openSmartEditor(context, widget.state, existing: saved)
+                : openSmartEditor(context, widget.state, query: query),
+      icon: const Icon(Icons.auto_awesome_motion_outlined, size: 17),
+      label: Text(saved != null ? 'Edit smart collection' : 'Save…'),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(child: list),
         const Divider(height: 1),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
-          child: Row(
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
-              TextButton(onPressed: _filters.isEmpty ? null : _clear, child: const Text('Clear filters')),
-              const Spacer(),
-              FilledButton(
-                key: const ValueKey<String>('filters-done'),
-                onPressed: () => Navigator.of(context).maybePop(),
-                child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
+              TextButton(
+                key: const ValueKey<String>('filters-clear'),
+                onPressed: _filters.isEmpty ? null : _clear,
+                child: const Text('Clear filters'),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  save,
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    key: const ValueKey<String>('filters-done'),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: Text(matches == 1 ? 'Show 1 picture' : 'Show $matches pictures'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -332,6 +389,17 @@ class _FilterPanelState extends State<FilterPanel> {
         choice(MediaShown.both, 'Images and videos', Icons.perm_media_outlined),
         choice(MediaShown.images, 'Images only', Icons.image_outlined),
         choice(MediaShown.videos, 'Videos only', Icons.videocam_outlined),
+        ChoiceChipButton(
+          key: const ValueKey<String>('filter-duplicates'),
+          label: 'Near-duplicates only',
+          icon: Icons.filter_none,
+          tooltip: 'Pictures that have an all-but-identical twin here (the same seed run again, a small change, a resave), each group side by side',
+          selected: _filters.duplicates,
+          onTap: () {
+            _filters.duplicates = !_filters.duplicates;
+            _apply();
+          },
+        ),
       ],
     );
   }
@@ -441,3 +509,20 @@ class _FilterPanelState extends State<FilterPanel> {
 
   static String _short(String s) => s.length > 64 ? '${s.substring(0, 61)}…' : s;
 }
+
+/// What a filter on [field] is called where it is shown on its own, as a
+/// chip over the grid.
+String facetLabel(String field) => switch (field) {
+  'model' => 'Model',
+  'lora' => 'LoRA',
+  'collection' => 'Collection',
+  'fullprompt' => 'Prompt',
+  'prompt' => 'Word',
+  'sampler' => 'Sampler',
+  'scheduler' => 'Scheduler',
+  'steps' => 'Steps',
+  'cfg' => 'CFG',
+  'size' => 'Size',
+  'source' => 'Made with',
+  _ => field,
+};

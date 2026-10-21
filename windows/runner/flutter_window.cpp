@@ -1,9 +1,12 @@
 #include "flutter_window.h"
 
 #include <flutter/standard_method_codec.h>
-#include <shellapi.h>
-#include <shlobj.h>
 #include <windows.h>
+#include <ole2.h>
+#include <shellapi.h>
+#include <shlguid.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 
 #include <fstream>
 #include <optional>
@@ -76,24 +79,38 @@ std::vector<uint8_t> ReadFileBytes(const std::wstring& wpath) {
   return {};
 }
 
-bool CopyFileToClipboard(HWND hwnd, const std::string& path) {
-  std::wstring wpath = ToWindowsPath(path);
-  if (wpath.empty()) {
+// Put files on the clipboard as files (CF_HDROP), so they paste into
+// Explorer, a chat or an editor as themselves, generation data and all.
+bool CopyFilesToClipboard(HWND hwnd, const std::vector<std::string>& paths) {
+  std::vector<std::wstring> wpaths;
+  for (const auto& path : paths) {
+    std::wstring wpath = ToWindowsPath(path);
+    if (wpath.empty()) {
+      continue;
+    }
+    DWORD attrs = GetFileAttributesW(wpath.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES ||
+        (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+      continue;
+    }
+    wpaths.push_back(wpath);
+  }
+  if (wpaths.empty()) {
     return false;
   }
 
-  DWORD attrs = GetFileAttributesW(wpath.c_str());
-  if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-    return false;
+  // The names one after another, each ended by a nul, and one more nul at
+  // the end of the list.
+  size_t chars = 1;
+  for (const auto& w : wpaths) {
+    chars += w.size() + 1;
   }
+  size_t total_bytes = sizeof(DROPFILES) + chars * sizeof(wchar_t);
 
   if (!OpenClipboard(hwnd)) {
     return false;
   }
   EmptyClipboard();
-
-  size_t path_bytes = (wpath.size() + 2) * sizeof(wchar_t);
-  size_t total_bytes = sizeof(DROPFILES) + path_bytes;
 
   HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, total_bytes);
   if (!hGlobal) {
@@ -113,8 +130,11 @@ bool CopyFileToClipboard(HWND hwnd, const std::string& path) {
 
   wchar_t* dest = reinterpret_cast<wchar_t*>(reinterpret_cast<char*>(df) +
                                              sizeof(DROPFILES));
-  memcpy(dest, wpath.c_str(), (wpath.size() + 1) * sizeof(wchar_t));
-  dest[wpath.size() + 1] = L'\0';
+  for (const auto& w : wpaths) {
+    memcpy(dest, w.c_str(), (w.size() + 1) * sizeof(wchar_t));
+    dest += w.size() + 1;
+  }
+  *dest = L'\0';
 
   GlobalUnlock(hGlobal);
 
@@ -126,6 +146,118 @@ bool CopyFileToClipboard(HWND hwnd, const std::string& path) {
 
   CloseClipboard();
   return true;
+}
+
+bool CopyFileToClipboard(HWND hwnd, const std::string& path) {
+  return CopyFilesToClipboard(hwnd, {path});
+}
+
+// The drag's say on how it goes: it ends when the button comes up, and is
+// called off by Escape.
+class FileDropSource final : public IDropSource {
+ public:
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
+                                           void** object) override {
+    if (riid == IID_IUnknown || riid == IID_IDropSource) {
+      *object = static_cast<IDropSource*>(this);
+      AddRef();
+      return S_OK;
+    }
+    *object = nullptr;
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&refs_);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG left = InterlockedDecrement(&refs_);
+    if (left == 0) {
+      delete this;
+    }
+    return left;
+  }
+  HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escape,
+                                              DWORD keys) override {
+    if (escape) {
+      return DRAGDROP_S_CANCEL;
+    }
+    if (!(keys & (MK_LBUTTON | MK_RBUTTON))) {
+      return DRAGDROP_S_DROP;
+    }
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override {
+    return DRAGDROP_S_USEDEFAULTCURSORS;
+  }
+
+ private:
+  LONG refs_ = 1;
+};
+
+// Drag files out of the window into Explorer, a browser or a chat, as the
+// files themselves. Returns once they are dropped (or the drag is called
+// off); true if they were dropped somewhere that took them.
+bool DragFiles(const std::vector<std::string>& paths) {
+  // Drag and drop needs OLE; the runner only started COM.
+  OleInitialize(nullptr);
+  std::vector<PIDLIST_ABSOLUTE> pidls;
+  for (const auto& path : paths) {
+    std::wstring wpath = ToWindowsPath(path);
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (SUCCEEDED(SHParseDisplayName(wpath.c_str(), nullptr, &pidl, 0,
+                                     nullptr)) &&
+        pidl != nullptr) {
+      pidls.push_back(pidl);
+    }
+  }
+  bool dropped = false;
+  if (!pidls.empty()) {
+    std::vector<PCIDLIST_ABSOLUTE> ids(pidls.begin(), pidls.end());
+    IShellItemArray* items = nullptr;
+    if (SUCCEEDED(SHCreateShellItemArrayFromIDLists(
+            static_cast<UINT>(ids.size()), ids.data(), &items))) {
+      IDataObject* data = nullptr;
+      if (SUCCEEDED(items->BindToHandler(nullptr, BHID_DataObject,
+                                         IID_PPV_ARGS(&data)))) {
+        auto* source = new FileDropSource();
+        DWORD effect = DROPEFFECT_NONE;
+        HRESULT hr = DoDragDrop(data, source,
+                                DROPEFFECT_COPY | DROPEFFECT_LINK, &effect);
+        dropped = hr == DRAGDROP_S_DROP && effect != DROPEFFECT_NONE;
+        source->Release();
+        data->Release();
+      }
+      items->Release();
+    }
+  }
+  for (auto pidl : pidls) {
+    CoTaskMemFree(pidl);
+  }
+  return dropped;
+}
+
+// The "paths" argument of a call, as a list of strings.
+std::vector<std::string> PathsArgument(
+    const flutter::MethodCall<flutter::EncodableValue>& call) {
+  std::vector<std::string> out;
+  const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+  if (!args) {
+    return out;
+  }
+  auto it = args->find(flutter::EncodableValue("paths"));
+  if (it == args->end()) {
+    return out;
+  }
+  const auto* list = std::get_if<flutter::EncodableList>(&it->second);
+  if (!list) {
+    return out;
+  }
+  for (const auto& value : *list) {
+    if (const auto* path = std::get_if<std::string>(&value)) {
+      out.push_back(*path);
+    }
+  }
+  return out;
 }
 
 std::vector<uint8_t> ReadCopiedFile(HWND hwnd) {
@@ -360,6 +492,12 @@ bool FlutterWindow::OnCreate() {
             }
           }
           result->Success(flutter::EncodableValue(false));
+        } else if (method == "copyFiles") {
+          result->Success(flutter::EncodableValue(
+              CopyFilesToClipboard(GetHandle(), PathsArgument(call))));
+        } else if (method == "dragFiles") {
+          result->Success(
+              flutter::EncodableValue(DragFiles(PathsArgument(call))));
         } else if (method == "readCopiedFile") {
           std::vector<uint8_t> bytes = ReadCopiedFile(GetHandle());
           if (!bytes.empty()) {

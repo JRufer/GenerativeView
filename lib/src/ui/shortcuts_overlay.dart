@@ -54,6 +54,20 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
     ],
   ),
   (
+    'Several pictures at once',
+    [
+      ('Corner box  or  Ctrl click', 'Tick a picture; once one is ticked, a tap ticks or unticks any'),
+      ('Shift click', 'Tick every picture from the last one ticked to this one'),
+      ('Ctrl A', 'Tick every picture listed'),
+      ('1 – 5   P   X   U   B', 'Rate, flag or collect all the ticked pictures'),
+      ('Shift U', 'Upscale them, one after another'),
+      ('Ctrl Shift C', 'Copy them as files'),
+      ('Delete', 'Move them to the trash (asks once)'),
+      ('Drag a tile out', 'Drop the files into another program (desktop)'),
+      ('Esc', 'Untick them all'),
+    ],
+  ),
+  (
     'Editing a prompt',
     [
       ('Select words', 'Weight them with the slider underneath'),

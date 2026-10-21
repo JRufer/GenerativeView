@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/platform.dart';
+import 'package:generativeview/src/ui/smart_editor.dart';
 
 /// Build a packed query result the way `core/src/db.rs` does.
 Uint8List pack(
@@ -247,6 +248,10 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
           };
         case 'trashFile':
           return nextTrashReply;
+        case 'copyFiles':
+          return ((call.arguments as Map)['paths'] as List).length == 2;
+        case 'dragFiles':
+          return true;
         default:
           return null;
       }
@@ -256,6 +261,12 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
     });
 
     expect(await copyFileToClipboard('C:/pics/a.png'), isTrue);
+    // Several files go as one list; one goes as before.
+    expect(await copyFilesToClipboard(['C:/pics/a.png', 'C:/pics/b.png']), isTrue);
+    expect(await copyFilesToClipboard(['C:/pics/a.png']), isTrue);
+    expect(await dragFilesOut(['C:/pics/a.png']), canDragFilesOut);
+    // No share sheet off Android.
+    expect(await shareFiles(['C:/pics/a.png']), canShareFiles);
     expect(await copyFileToClipboard('C:/pics/other.png'), isFalse);
     expect(await readCopiedFile(), Uint8List.fromList([1, 2, 3, 4]));
 
@@ -271,5 +282,47 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
     expect(await trashFile('C:/pics/a.png'), (TrashOutcome.unsupported, null));
     nextTrashReply = 'failed: permission denied';
     expect(await trashFile('C:/pics/a.png'), (TrashOutcome.failed, 'permission denied'));
+  });
+
+  group('smart collection rules', () {
+    String roundTrip(String query) => SmartRule.query(SmartRule.parse(query));
+
+    test('read from a search and written back the same', () {
+      for (final q in [
+        'fox lora:=fur_detail.safetensors',
+        'model:="flux1 dev.safetensors" rating:>=4',
+        'collection:=Foxes -model:=sdxl.safetensors',
+        'prompt:fox -prompt:snow',
+        'rating:none flag:keep',
+        'steps:30 cfg:7 size:1024x1024 source:comfyui date:2026-10',
+        'sampler:euler -flag:reject',
+        'is:duplicate type:image "red fox"',
+      ]) {
+        expect(roundTrip(q), q, reason: q);
+      }
+    });
+
+    test('each term becomes the rule it reads as', () {
+      final rules = SmartRule.parse('model:=flux.safetensors lora:detail rating:4+ rating:<3 rating:2 prompt:fox');
+      expect([for (final r in rules) (r.field, r.op, r.value)], [
+        (SmartField.model, SmartOp.isOne, 'flux.safetensors'),
+        (SmartField.lora, SmartOp.contains, 'detail'),
+        (SmartField.rating, SmartOp.atLeast, '4'),
+        (SmartField.rating, SmartOp.atMost, '2'),
+        (SmartField.rating, SmartOp.exactly, '2'),
+        (SmartField.word, SmartOp.has, 'fox'),
+      ]);
+      // Rewritten in the one way each is written.
+      expect(SmartRule.query(rules), 'model:=flux.safetensors lora:detail rating:>=4 rating:<3 rating:2 prompt:fox');
+    });
+
+    test('what no rule can say stays as search text, and empty rules drop out', () {
+      final rules = SmartRule.parse('-rating:5 flag:keep|none similar:"/a b.png"');
+      expect(rules.every((r) => r.field == SmartField.text), isTrue);
+      rules.add(SmartRule(SmartField.model, SmartOp.isOne, '  '));
+      expect(SmartRule.query(rules), '-rating:5 flag:keep|none similar:"/a b.png"');
+      expect(SmartRule(SmartField.lora, SmartOp.lacks, 'film grain').toTerm(), '-lora:"film grain"');
+      expect(SmartRule(SmartField.rating, SmartOp.atMost, '5').toTerm(), 'rating:<6');
+    });
   });
 }

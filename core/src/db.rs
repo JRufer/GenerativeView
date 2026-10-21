@@ -704,6 +704,17 @@ fn lines_match(lines: &str, needle: &str, exact: bool) -> bool {
     })
 }
 
+/// Whether a word of `is:…` asks for near-duplicates.
+fn is_duplicate_word(text: &str) -> bool {
+    matches!(text.trim().to_ascii_lowercase().as_str(), "duplicate" | "duplicates" | "dupe" | "dupes" | "near-duplicate" | "near-duplicates")
+}
+
+/// Whether a search asks for only the pictures that have a near-duplicate
+/// (`is:duplicate`), which [`crate::dupes`] answers, not SQL.
+pub fn wants_duplicates(text: &str) -> bool {
+    parse_terms(text).iter().any(|t| t.field == Some("kind") && !t.negate && is_duplicate_word(&t.text))
+}
+
 /// The picture a search's `similar:` term names, if it has one.
 pub fn similar_target(text: &str) -> Option<String> {
     parse_terms(text).into_iter().find(|t| t.field == Some("similar") && !t.negate).map(|t| t.text)
@@ -757,6 +768,8 @@ impl Term {
         let any = |parts: Vec<String>| if parts.len() == 1 { parts.into_iter().next().unwrap_or_default() } else { format!("({})", parts.join(" OR ")) };
         let pred = match (self.field, self.exact) {
             (Some("similar"), _) => return,
+            // Answered after the query, by comparing what the pictures look like.
+            (Some("kind"), _) if is_duplicate_word(&self.text) => return,
             (Some("seed"), true) => any(self.alternatives().into_iter().map(|v| format!("f.seed = ?{}", bind(v.to_string()))).collect()),
             (Some("seed"), false) => {
                 // Seeds are matched from the start: seed:123 finds 1234567.
@@ -1890,6 +1903,10 @@ mod tests {
         // `similar:` is left to content search.
         assert_eq!(names(&db, "/out", false, r#"similar:"/out/a.png""#).len(), 3);
         assert_eq!(similar_target(r#"fox similar:"/out/a b.png""#).as_deref(), Some("/out/a b.png"));
+        // `is:duplicate` is left to the near-duplicate finder, and asked for.
+        assert_eq!(names(&db, "/out", false, "is:duplicate"), names(&db, "/out", false, ""));
+        assert!(wants_duplicates("fox is:duplicates"));
+        assert!(!wants_duplicates("fox -is:duplicate type:image"));
 
         let usage = db.usage("/out", true, "").unwrap();
         let group = |kind: &str| usage.groups.iter().find(|g| g.kind == kind).unwrap();

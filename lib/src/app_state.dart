@@ -11,7 +11,7 @@ import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/thumb_cache.dart';
-import 'platform.dart' show PasteSource;
+import 'platform.dart' show PasteSource, sharedFiles;
 
 enum ViewMode { grid, focus }
 
@@ -67,6 +67,30 @@ class PinnedSearch {
 
   @override
   int get hashCode => Object.hash(query, content);
+}
+
+/// A search saved under a name, in the notes file of the folder it was
+/// saved in: whatever pictures match it, whenever it is looked at.
+@immutable
+class SmartCollection {
+  const SmartCollection({required this.name, required this.query, required this.dir, this.count = -1});
+  final String name;
+  final String query;
+
+  /// The folder whose notes file holds it.
+  final String dir;
+
+  /// How many pictures in view match it now; -1 when that is not known.
+  final int count;
+
+  static SmartCollection? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final name = json['name'];
+    final query = json['query'];
+    final dir = json['dir'];
+    if (name is! String || query is! String || dir is! String) return null;
+    return SmartCollection(name: name, query: query, dir: dir, count: (json['count'] as num?)?.toInt() ?? -1);
+  }
 }
 
 /// How far a download of the content-search model has come.
@@ -186,6 +210,11 @@ class AppState extends ChangeNotifier {
   int selectedIndex = -1;
   int? _selectedId;
 
+  /// Pictures ticked for acting on together (their tile's corner box, or
+  /// Ctrl-click), by id, in the order they were ticked. Only those still
+  /// listed count: a search that leaves one out unticks it.
+  final List<int> _checked = [];
+
   /// Bumped whenever the grid should scroll the selection into view.
   int revealTick = 0;
 
@@ -286,6 +315,42 @@ class AppState extends ChangeNotifier {
 
   /// Whether the folder panel's "Pinned" section is showing its contents.
   bool pinsOpen = true;
+
+  /// The search last saved as the one to come back to, so it is written
+  /// only when it changes.
+  String? _rememberedQuery;
+
+  /// The smart collections that apply to the open folder, with how many
+  /// pictures each matches. Kept up to date as pictures and notes change.
+  List<SmartCollection> smart = const [];
+  Timer? _smartTimer;
+
+  /// The smart collection whose search is the one showing, if any.
+  SmartCollection? get showingSmart {
+    final q = query.trim();
+    if (q.isEmpty || contentSearch) return null;
+    for (final s in smart) {
+      if (s.query.trim() == q) return s;
+    }
+    return null;
+  }
+
+  /// Read the smart collections (and their counts) again now.
+  Future<void> refreshSmart() async {
+    _smartTimer?.cancel();
+    final dir = folder;
+    final list = await smartCollections();
+    if (_disposed || dir != folder) return;
+    smart = list;
+    notifyListeners();
+  }
+
+  /// Read them again shortly: after a burst of changes, once.
+  void _smartSoon() {
+    if (_disposed) return;
+    _smartTimer?.cancel();
+    _smartTimer = Timer(const Duration(milliseconds: 700), () => unawaited(refreshSmart()));
+  }
 
   // ---------------------------------------------------------------- internals
 
@@ -389,11 +454,53 @@ class AppState extends ChangeNotifier {
 
     await loadPlaces();
     final start = initialFolder ?? saved['folder'] as String?;
+    // Back to exactly what was showing last time: the folder, and the
+    // search, filters or collection it was showing. A folder asked for by
+    // name (on the command line) starts clean instead.
+    final lastQuery = saved['query'] as String? ?? '';
+    _rememberedQuery = lastQuery;
+    if (initialFolder == null && lastQuery.trim().isNotEmpty) {
+      query = lastQuery;
+      searchText.value = TextEditingValue(
+        text: lastQuery,
+        selection: TextSelection.collapsed(offset: lastQuery.length),
+      );
+    }
     if (start != null && start.isNotEmpty) {
       await openFolder(start, remember: initialFolder == null);
       await treeRevealing;
     } else {
       notifyListeners();
+    }
+    _sharedIn ??= sharedFiles.listen((paths) => unawaited(showShared(paths)));
+    notesTick.addListener(_smartSoon);
+  }
+
+  StreamSubscription<List<String>>? _sharedIn;
+
+  /// The picture to open in the focus view once a query lists it: the first
+  /// of some shared to the app.
+  String? _openWhenListed;
+
+  /// Pictures shared to the app from another: open the folder they were put
+  /// in, with the first of them in the focus view and how it was made
+  /// beside it.
+  Future<void> showShared(List<String> paths) async {
+    if (paths.isEmpty || _disposed) return;
+    final first = normalizePath(paths.first);
+    final cut = first.lastIndexOf('/');
+    if (cut <= 0) return;
+    final dir = first.substring(0, cut);
+    _openWhenListed = first;
+    if (query.isNotEmpty) {
+      query = '';
+      searchText.clear();
+    }
+    if (normalizePath(folder ?? '') != dir) {
+      await openFolder(dir);
+    } else {
+      rescan();
+      await _reload();
     }
   }
 
@@ -527,9 +634,11 @@ class AppState extends ChangeNotifier {
     var dir = normalizePath(path.trim());
     if (dir.isEmpty) return;
     folder = dir;
+    smart = const [];
     items = ItemList.empty;
     loaded = false;
     fresh.clear();
+    _checked.clear();
     _knownIds = null;
     _openedAt = DateTime.now().millisecondsSinceEpoch;
     selectedIndex = -1;
@@ -552,6 +661,7 @@ class AppState extends ChangeNotifier {
     treeRevealing = rev;
     unawaited(rev);
     await _reload();
+    unawaited(refreshSmart());
     if (contentSearch) unawaited(refreshContent());
   }
 
@@ -826,6 +936,7 @@ class AppState extends ChangeNotifier {
         _onContentEvent(e);
       case 'changed':
         _contentSoon();
+        _smartSoon();
         // Coalesce bursts (a scan reports every few hundred files).
         _reloadTimer ??= Timer(const Duration(milliseconds: 120), () {
           _reloadTimer = null;
@@ -841,6 +952,7 @@ class AppState extends ChangeNotifier {
           );
         } else if (state == 'done') {
           scan.value = ScanStatus.idle;
+          _smartSoon();
           if (prewarm) _warm();
           _contentSoon();
         } else {
@@ -860,6 +972,11 @@ class AppState extends ChangeNotifier {
   Future<void> _reload() async {
     final dir = folder;
     if (dir == null || _disposed) return;
+    if (query != _rememberedQuery) {
+      // What is showing now is what to come back to next time.
+      _rememberedQuery = query;
+      _save('query', query);
+    }
     final ticket = ++_queryTicket;
     final describing = contentSearch && searching;
     ItemList list;
@@ -921,6 +1038,26 @@ class AppState extends ChangeNotifier {
       }
     }
     if (mode == ViewMode.focus && list.isEmpty) mode = ViewMode.grid;
+    final open = _openWhenListed;
+    if (open != null) {
+      for (var i = 0; i < list.length; i++) {
+        if (normalizePath(list[i].path) != open) continue;
+        _openWhenListed = null;
+        selectedIndex = i;
+        _selectedId = list.idAt(i);
+        fresh.remove(_selectedId);
+        mode = ViewMode.focus;
+        if (!rightOpen) {
+          rightOpen = true;
+          _save('right_open', 'true');
+        }
+        break;
+      }
+    }
+    if (_checked.isNotEmpty) {
+      final listed = list.ids.toSet();
+      _checked.retainWhere(listed.contains);
+    }
     _resolveHighlight(list);
     if (_revealAfterReload) {
       _revealAfterReload = false;
@@ -997,6 +1134,57 @@ class AppState extends ChangeNotifier {
     fresh.remove(_selectedId);
     if (reveal) revealTick++;
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------- ticked
+
+  /// How many pictures are ticked.
+  int get checkedCount => _checked.length;
+
+  bool isChecked(int id) => _checked.contains(id);
+
+  /// The ticked pictures, in the order they are listed.
+  List<MediaItem> get checkedItems {
+    if (_checked.isEmpty) return const [];
+    final ids = _checked.toSet();
+    return [
+      for (var i = 0; i < items.length; i++)
+        if (ids.contains(items.idAt(i))) items[i],
+    ];
+  }
+
+  /// Tick [item], or untick it if it is ticked.
+  void toggleChecked(MediaItem item) {
+    if (!_checked.remove(item.id)) _checked.add(item.id);
+    notifyListeners();
+  }
+
+  /// Tick every picture listed.
+  void checkAll() {
+    _checked
+      ..clear()
+      ..addAll(items.ids);
+    notifyListeners();
+  }
+
+  void clearChecked() {
+    if (_checked.isEmpty) return;
+    _checked.clear();
+    notifyListeners();
+  }
+
+  /// What an action on [item] should act on: every ticked picture when
+  /// [item] is one of them and there is more than one, else [item] alone.
+  List<MediaItem> targetsFor(MediaItem item) {
+    if (_checked.length < 2 || !_checked.contains(item.id)) return [item];
+    return checkedItems;
+  }
+
+  /// What a keyboard shortcut should act on: the ticked pictures when there
+  /// are two or more, else the selected one.
+  List<MediaItem> get keyTargets {
+    if (_checked.length >= 2) return checkedItems;
+    return [?selected];
   }
 
   void clearSelection() {
@@ -1154,19 +1342,26 @@ class AppState extends ChangeNotifier {
     await _reload();
   }
 
-  /// Give the selected picture [stars]; the same number again clears it.
-  Future<void> rateSelected(int stars, {bool toggle = false}) async {
-    final item = selected;
-    if (item == null) return;
-    final value = toggle && item.rating == stars ? 0 : stars;
-    await changeNotes(rating: value);
+  /// Give the selected picture (or the ticked ones, see [keyTargets])
+  /// [stars]; the same number again, on all of them, clears it.
+  Future<void> rateSelected(int stars, {bool toggle = false}) => rate(keyTargets, stars, toggle: toggle);
+
+  /// Flag the selected picture (or the ticked ones); the same flag again,
+  /// on all of them, clears it.
+  Future<void> flagSelected(Flag flag) => setFlag(keyTargets, flag);
+
+  /// Give [targets] [stars]; with [toggle], when they all have that many
+  /// already, take them away.
+  Future<void> rate(List<MediaItem> targets, int stars, {bool toggle = false}) async {
+    if (targets.isEmpty) return;
+    final value = toggle && targets.every((t) => t.rating == stars) ? 0 : stars;
+    await changeNotes(targets: targets, rating: value);
   }
 
-  /// Flag the selected picture; the same flag again clears it.
-  Future<void> flagSelected(Flag flag) async {
-    final item = selected;
-    if (item == null) return;
-    await changeNotes(flag: item.flag == flag ? Flag.none : flag);
+  /// Flag [targets]; when they all have that flag already, clear it.
+  Future<void> setFlag(List<MediaItem> targets, Flag flag) async {
+    if (targets.isEmpty) return;
+    await changeNotes(targets: targets, flag: targets.every((t) => t.flag == flag) ? Flag.none : flag);
   }
 
   /// Every collection known, with how many pictures are in each.
@@ -1177,6 +1372,73 @@ class AppState extends ChangeNotifier {
         for (final c in raw)
           if (c is Map) (c['name'] as String, (c['count'] as num).toInt()),
       ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// The smart collections saved in the open folder and the folders above
+  /// it, each with how many pictures in view match it now.
+  Future<List<SmartCollection>> smartCollections() async {
+    final dir = folder;
+    if (dir == null) return const [];
+    try {
+      final raw = await core.call('smart_list', {'dir': dir, 'recursive': recursive}) as List;
+      return [for (final s in raw) ?SmartCollection.fromJson(s)];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Save [query] as the smart collection [name] in [dir] (the open folder,
+  /// if left out). With [oldName] that one is changed, renamed if need be.
+  /// Showing it then is showing what it matches.
+  Future<bool> saveSmartCollection({required String name, required String query, String? oldName, String? dir}) async {
+    final where = dir ?? folder;
+    if (where == null) return false;
+    try {
+      await core.call('smart_set', {'dir': where, 'name': name, 'query': query, 'old_name': ?oldName});
+    } catch (e) {
+      _notices.add('Could not save the smart collection: $e');
+      return false;
+    }
+    await refreshSmart();
+    return true;
+  }
+
+  /// Forget the smart collection [target]. No picture is touched.
+  Future<bool> deleteSmartCollection(SmartCollection target) async {
+    try {
+      await core.call('smart_delete', {'dir': target.dir, 'name': target.name});
+    } catch (e) {
+      _notices.add('Could not delete the smart collection: $e');
+      return false;
+    }
+    if (query.trim() == target.query.trim()) applyFilter('');
+    await refreshSmart();
+    return true;
+  }
+
+  /// How many pictures in view a metadata search for [text] would list.
+  Future<int?> countMatches(String text) async {
+    final dir = folder;
+    if (dir == null) return null;
+    try {
+      final json = await core.call('count', {'dir': dir, 'recursive': recursive, 'text': text});
+      return ((json as Map)['count'] as num).toInt();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The first pictures in view that a metadata search for [text] lists, in
+  /// the grid's order, for a preview.
+  Future<List<MediaItem>> previewMatches(String text, {int limit = 8}) async {
+    final dir = folder;
+    if (dir == null) return const [];
+    try {
+      final list = ItemList.parse(await core.query(dir: dir, recursive: recursive, text: text, sort: sort, then: sort));
+      return [for (var i = 0; i < list.length && i < limit; i++) list[i]];
     } catch (_) {
       return const [];
     }
@@ -1204,13 +1466,20 @@ class AppState extends ChangeNotifier {
 
   /// [item] was deleted or moved to the trash: drop it from the index and
   /// its folder's notes. In the grid the selection moves to its neighbour.
-  Future<void> forgetFile(MediaItem item) async {
-    final wasSelected = selected?.id == item.id;
+  Future<void> forgetFile(MediaItem item) => forgetFiles([item]);
+
+  /// [gone] were deleted or moved to the trash, as [forgetFile].
+  Future<void> forgetFiles(List<MediaItem> gone) async {
+    if (gone.isEmpty) return;
+    final wasSelected = gone.any((g) => g.id == selected?.id);
     final at = selectedIndex;
-    try {
-      await core.call('forget', {'path': item.path});
-    } catch (e) {
-      _notices.add('Could not update the index: $e');
+    for (final item in gone) {
+      try {
+        await core.call('forget', {'path': item.path});
+      } catch (e) {
+        _notices.add('Could not update the index: $e');
+      }
+      _checked.remove(item.id);
     }
     notesTick.value++;
     await _reload();
@@ -1557,6 +1826,54 @@ class AppState extends ChangeNotifier {
   void cancelUpscaleDownload() => _upscaleDownload?.cancel();
 
   /// Upscale [item] in the background; how it goes shows in [upscales].
+  /// Upscales asked for together, waiting for the one before to finish:
+  /// they run one at a time, since each uses every core.
+  final List<_QueuedUpscale> _upscaleQueue = [];
+
+  /// How many upscales are waiting their turn.
+  final ValueNotifier<int> upscalesWaiting = ValueNotifier(0);
+
+  /// Upscale each of [targets] in turn, as [startUpscale]. Videos are
+  /// left out.
+  Future<void> startUpscales(
+    List<MediaItem> targets, {
+    required String model,
+    required int factor,
+    required bool keepMetadata,
+  }) async {
+    for (final item in targets) {
+      if (!item.isVideo) _upscaleQueue.add(_QueuedUpscale(item, model, factor, keepMetadata));
+    }
+    upscalesWaiting.value = _upscaleQueue.length;
+    if (upscales.value.isEmpty) await _nextUpscale();
+  }
+
+  /// Stop the upscale running and forget those waiting.
+  void cancelAllUpscales() {
+    _upscaleQueue.clear();
+    upscalesWaiting.value = 0;
+    for (final job in upscales.value) {
+      cancelUpscale(job.id);
+    }
+  }
+
+  bool _startingUpscale = false;
+
+  Future<void> _nextUpscale() async {
+    if (_startingUpscale) return;
+    _startingUpscale = true;
+    try {
+      while (_upscaleQueue.isNotEmpty && !_disposed && upscales.value.isEmpty) {
+        final next = _upscaleQueue.removeAt(0);
+        upscalesWaiting.value = _upscaleQueue.length;
+        // One that will not start leaves the way open for the next.
+        await startUpscale(next.item, model: next.model, factor: next.factor, keepMetadata: next.keepMetadata);
+      }
+    } finally {
+      _startingUpscale = false;
+    }
+  }
+
   Future<void> startUpscale(
     MediaItem item, {
     required String model,
@@ -1609,6 +1926,7 @@ class AppState extends ChangeNotifier {
         _notices.add('Upscale failed: ${e['error'] ?? 'unknown error'}');
     }
     upscales.value = list;
+    if (list.isEmpty && _upscaleQueue.isNotEmpty) unawaited(_nextUpscale());
   }
 
   /// The watcher normally sees new files; on storage where it cannot, look.
@@ -1622,9 +1940,11 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _events.cancel();
+    _sharedIn?.cancel();
     _reloadTimer?.cancel();
     _queryTimer?.cancel();
     _contentTimer?.cancel();
+    _smartTimer?.cancel();
     _download?.cancel();
     content.dispose();
     download.dispose();
@@ -1663,6 +1983,15 @@ class RemixJob {
   final bool running;
 
   RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false);
+}
+
+/// An upscale waiting for the one before it to finish.
+class _QueuedUpscale {
+  const _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata);
+  final MediaItem item;
+  final String model;
+  final int factor;
+  final bool keepMetadata;
 }
 
 /// An upscale under way.

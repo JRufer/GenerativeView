@@ -269,6 +269,96 @@ impl Notes {
         self.load_dir(db, dir, true);
         Ok(out)
     }
+
+    /// The smart collections saved in `dir`'s notes file, in the order they
+    /// were saved.
+    pub fn smart(&self, dir: &str) -> Vec<Smart> {
+        parse_smart(&read_file(&join(dir, FILE_NAME)))
+    }
+
+    /// Save the smart collection `name` with `query` in `dir`'s notes file.
+    /// With `old`, the one of that name is replaced (renamed, if the name
+    /// changed) and keeps its place; otherwise one of the same name is.
+    pub fn set_smart(&self, dir: &str, name: &str, query: &str, old: Option<&str>) -> Result<(), String> {
+        let name = clean_name(name);
+        let query = query.trim();
+        if name.is_empty() {
+            return Err("a smart collection needs a name".into());
+        }
+        if query.is_empty() {
+            return Err("a smart collection needs at least one rule".into());
+        }
+        self.edit_smart(dir, |list| {
+            let replaced = old.map(clean_name).filter(|o| !o.is_empty()).unwrap_or_else(|| name.clone());
+            let entry = Smart { name: name.clone(), query: query.to_string() };
+            // A different one already called `name` gives way.
+            list.retain(|s| s.name.eq_ignore_ascii_case(&replaced) || !s.name.eq_ignore_ascii_case(&name));
+            match list.iter().position(|s| s.name.eq_ignore_ascii_case(&replaced)) {
+                Some(i) => list[i] = entry,
+                None => list.push(entry),
+            }
+        })
+    }
+
+    /// Take the smart collection `name` out of `dir`'s notes file. The
+    /// pictures it showed are not touched.
+    pub fn delete_smart(&self, dir: &str, name: &str) -> Result<(), String> {
+        self.edit_smart(dir, |list| list.retain(|s| !s.name.eq_ignore_ascii_case(name.trim())))
+    }
+
+    fn edit_smart(&self, dir: &str, edit: impl FnOnce(&mut Vec<Smart>)) -> Result<(), String> {
+        let _guard = self.lock.lock();
+        let path = join(dir, FILE_NAME);
+        let mut file = read_file(&path);
+        let mut list = parse_smart(&file);
+        edit(&mut list);
+        if list.is_empty() {
+            file.remove("smart");
+        } else {
+            file.insert("smart".into(), Value::Array(list.iter().map(Smart::to_json).collect()));
+        }
+        file.insert("generativeview".into(), json!(1));
+        let images_empty = file.get("images").and_then(Value::as_object).is_none_or(Map::is_empty);
+        let others = file.keys().filter(|k| *k != "generativeview" && *k != "images").count();
+        if images_empty && others == 0 {
+            match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(format!("cannot update {}: {e}", path.display())),
+            }
+        } else {
+            write_atomic(&path, &file)
+        }
+    }
+}
+
+/// A saved search with a name: the pictures that match it, whenever it is
+/// looked at. Kept in the notes file of the folder it was saved in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Smart {
+    pub name: String,
+    pub query: String,
+}
+
+impl Smart {
+    fn to_json(&self) -> Value {
+        json!({ "name": self.name, "query": self.query })
+    }
+}
+
+/// The smart collections in a notes file, skipping any that are unreadable
+/// or repeat a name already listed.
+pub fn parse_smart(file: &Map<String, Value>) -> Vec<Smart> {
+    let mut out: Vec<Smart> = Vec::new();
+    for entry in file.get("smart").and_then(Value::as_array).into_iter().flatten() {
+        let name = entry.get("name").and_then(Value::as_str).map(clean_name).unwrap_or_default();
+        let query = entry.get("query").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+        if name.is_empty() || query.is_empty() || out.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        out.push(Smart { name, query: query.to_string() });
+    }
+    out
 }
 
 /// Write `file` to `path` so that a reader (or a sync tool) never sees half
@@ -356,6 +446,43 @@ mod tests {
         std::fs::remove_file(Path::new(&dir).join(FILE_NAME)).unwrap();
         assert!(notes.load_dir(&db, &dir, false));
         assert!(db.note(&dir, "b.png").is_empty());
+    }
+
+    #[test]
+    fn smart_collections_save_rename_and_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(&tmp.path().join("data")).unwrap();
+        let dir = tmp.path().join("pics");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.to_str().unwrap().to_string();
+        let file = Path::new(&dir).join(FILE_NAME);
+        let notes = Notes::new();
+
+        notes.set_smart(&dir, "  Best   flux ", "model:=flux rating:>=4", None).unwrap();
+        notes.set_smart(&dir, "Unrated", "rating:none", None).unwrap();
+        assert_eq!(
+            notes.smart(&dir),
+            [
+                Smart { name: "Best flux".into(), query: "model:=flux rating:>=4".into() },
+                Smart { name: "Unrated".into(), query: "rating:none".into() },
+            ]
+        );
+        // Saving under the same name, in another case, replaces it in place.
+        notes.set_smart(&dir, "best FLUX", "model:=flux rating:5", None).unwrap();
+        assert_eq!(notes.smart(&dir)[0], Smart { name: "best FLUX".into(), query: "model:=flux rating:5".into() });
+        // Renaming keeps its place; a rename onto another's name replaces that one.
+        notes.set_smart(&dir, "Unrated", "model:=flux", Some("best flux")).unwrap();
+        assert_eq!(notes.smart(&dir), [Smart { name: "Unrated".into(), query: "model:=flux".into() }]);
+        assert!(notes.set_smart(&dir, "  ", "x", None).is_err());
+        assert!(notes.set_smart(&dir, "x", "  ", None).is_err());
+
+        // Notes and smart collections live side by side in one file.
+        notes.change(&db, &dir, &["a.png".into()], &Change { rating: Some(3), ..Default::default() }).unwrap();
+        notes.change(&db, &dir, &["a.png".into()], &Change { rating: Some(0), ..Default::default() }).unwrap();
+        assert!(file.exists(), "a smart collection keeps the file");
+        notes.delete_smart(&dir, "UNRATED").unwrap();
+        assert!(notes.smart(&dir).is_empty());
+        assert!(!file.exists(), "nothing left, no file");
     }
 
     #[test]
