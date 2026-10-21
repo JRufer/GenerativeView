@@ -4,7 +4,7 @@
 name: ci-report
 on:
   push:
-    branches: [fold-handles-no-filter-tab]
+    branches: [feature/ratings-filters-upscale]
 permissions:
   contents: write
 env:
