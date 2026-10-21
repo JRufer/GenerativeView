@@ -792,6 +792,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       graph = jsonDecode(raw) as Map<String, dynamic>;
       final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
       final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
+      invokeSeed(graph, seed);
       if (run == 0) _requirePrompt(found, remix);
       if (remix.loras != null) editInvokeLoras(graph, remix.loras!);
       if (start != null) invokeImageToImage(graph, image: start.image, keepMask: start.mask, strength: start.strength);
@@ -828,6 +829,37 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
             'pictures stay in its gallery. Updating InvokeAI fixes this.',
           )),
   );
+}
+
+/// The seed inputs of InvokeAI nodes.
+const Set<String> _seedFields = {'seed', 'noise_seed', 'variance_seed'};
+
+/// Give an InvokeAI graph [seed] wherever it takes one. InvokeAI's own
+/// graphs (InvokeAI 4 and later, and 7's new canvas) keep the seed in an
+/// `integer` node of its own, whose value is wired into the denoise or
+/// noise step, the metadata and the like; a value wired in wins over the
+/// field's own, so that node is the one to change. A seed wired from
+/// anything else (a random-number node) is cut off and set directly.
+void invokeSeed(Map<String, dynamic> graph, int seed) {
+  final nodes = graph['nodes'];
+  final edges = graph['edges'];
+  if (nodes is! Map || edges is! List) return;
+  final cut = <Object?>[];
+  for (final e in edges) {
+    if (e is! Map) continue;
+    final from = e['source'];
+    final to = e['destination'];
+    if (from is! Map || to is! Map || !_seedFields.contains(to['field'])) continue;
+    final source = nodes[from['node_id']];
+    if (source is Map && source['type'] == 'integer' && from['field'] == 'value') {
+      source['value'] = seed;
+    } else {
+      cut.add(e);
+      final target = nodes[to['node_id']];
+      if (target is Map) target[to['field']] = seed;
+    }
+  }
+  edges.removeWhere(cut.contains);
 }
 
 /// Make an InvokeAI graph (the picture's own, as InvokeAI saved it) start
