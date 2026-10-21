@@ -11,6 +11,7 @@ import '../core/lora_edits.dart';
 import '../core/models.dart';
 import '../core/spelling.dart';
 import '../theme.dart';
+import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
 import 'prompt_editor.dart';
 import 'sheet.dart';
@@ -71,6 +72,16 @@ class _RemixPanelState extends State<RemixPanel> {
   late final List<LoraChoice> _loras = [for (final l in widget.info.loras) LoraChoice(l)];
   bool _random = false;
   int _count = 1;
+
+  /// Start from the picture itself (image to image) rather than from noise.
+  /// Only when the user picks it.
+  bool _imageToImage = false;
+
+  /// How much of the picture image to image redraws, 0 to 1.
+  double _strength = 0.6;
+
+  /// Where image to image redraws; nothing painted means all of it.
+  List<MaskOp> _mask = const [];
   String? _backend;
   bool _sending = false;
   String? _error;
@@ -139,7 +150,23 @@ class _RemixPanelState extends State<RemixPanel> {
       _sending = true;
       _error = null;
     });
+    final width = int.tryParse(_width.text) ?? 1024;
+    final height = int.tryParse(_height.text) ?? 1024;
     try {
+      ImageInput? init;
+      if (_imageToImage) {
+        try {
+          init = await prepareImageInput(
+            path: widget.item.path,
+            width: width,
+            height: height,
+            strength: _strength,
+            ops: _mask,
+          );
+        } catch (e) {
+          throw BackendException('Could not read the picture to start from: $e');
+        }
+      }
       final ticket = await sendRemix(
         kind,
         widget.state.backendUrls[kind]!,
@@ -150,9 +177,10 @@ class _RemixPanelState extends State<RemixPanel> {
           seed: int.tryParse(_seed.text.trim()) ?? 0,
           randomSeed: _random || int.tryParse(_seed.text.trim()) == null,
           count: _count,
-          width: int.tryParse(_width.text) ?? 1024,
-          height: int.tryParse(_height.text) ?? 1024,
+          width: width,
+          height: height,
           loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
+          init: init,
         ),
       );
       // Waited for in the background, panel or no panel.
@@ -175,11 +203,39 @@ class _RemixPanelState extends State<RemixPanel> {
   Widget build(BuildContext context) {
     final support = backendSupport(info);
     final urls = widget.state.backendUrls;
+    final video = widget.item.isVideo;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Text to image unless the user picks otherwise.
+          Align(
+            alignment: Alignment.centerLeft,
+            child: SegmentedButton<bool>(
+              key: const ValueKey<String>('remix-mode'),
+              showSelectedIcon: false,
+              segments: [
+                const ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.text_fields, size: 17),
+                  label: Text('Text to image'),
+                  tooltip: 'Make new pictures from the prompt and settings',
+                ),
+                ButtonSegment(
+                  value: true,
+                  icon: const Icon(Icons.image_outlined, size: 17),
+                  label: const Text('Image to image'),
+                  tooltip: video ? 'Videos cannot be started from' : 'Start from this picture and redraw some or all of it',
+                  enabled: !video,
+                ),
+              ],
+              selected: {_imageToImage},
+              onSelectionChanged: (s) => setState(() => _imageToImage = s.first),
+            ),
+          ),
+          if (_imageToImage) _imageSection(),
+          const SizedBox(height: 14),
           PromptEditor(
             key: const ValueKey<String>('remix-prompt'),
             controller: _prompt,
@@ -281,7 +337,18 @@ class _RemixPanelState extends State<RemixPanel> {
               child: Text(urls[_backend]!, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
             ),
           // Said in the panel, not only in a tooltip, so it reads on a tablet.
-          if (_backend != null && _backend != 'forge' && !carriesGraph(_backend!, info))
+          if (_imageToImage && _backend == 'invokeai' && !carriesGraph('invokeai', info))
+            const Padding(
+              key: ValueKey<String>('remix-built-graph'),
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'This picture was not made in InvokeAI, so it will get a standard graph built from its '
+                'settings that starts from the picture: the same model and LoRAs (by name), prompt, seed, '
+                'steps, CFG and sampler. That works for SD 1.x, SD 2.x and SDXL models.',
+                style: TextStyle(fontSize: 11.5, color: Palette.muted),
+              ),
+            )
+          else if (_backend != null && _backend != 'forge' && !carriesGraph(_backend!, info))
             Padding(
               key: const ValueKey<String>('remix-built-graph'),
               padding: const EdgeInsets.only(top: 6),
@@ -325,6 +392,133 @@ class _RemixPanelState extends State<RemixPanel> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// The picture to start from, how much of it to redraw, and where.
+  Widget _imageSection() {
+    final item = widget.item;
+    final aspect = item.width > 0 && item.height > 0
+        ? item.width / item.height
+        : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
+    final painted = maskPaints(_mask);
+    Future<void> edit() async {
+      final ops = await editMask(context, path: item.path, name: item.name, aspect: aspect, ops: _mask);
+      if (ops != null && mounted) {
+        setState(() => _mask = ops);
+      }
+    }
+
+    final strength = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Text('Denoising strength', style: TextStyle(fontSize: 13)),
+            const Spacer(),
+            Text(
+              _strength.toStringAsFixed(2),
+              key: const ValueKey<String>('remix-strength-value'),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Palette.accent, fontFeatures: [FontFeature.tabularFigures()]),
+            ),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(activeTrackColor: Palette.accent, thumbColor: Palette.accent),
+          child: Slider(
+            key: const ValueKey<String>('remix-strength'),
+            value: _strength,
+            min: 0,
+            max: 1,
+            divisions: 100,
+            label: _strength.toStringAsFixed(2),
+                onChanged: (v) => setState(() => _strength = v),
+          ),
+        ),
+        const Text(
+          'Low keeps the picture and touches it up; around 0.5 to 0.7 reworks it; near 1 redraws it almost from scratch.',
+          style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+        ),
+      ],
+    );
+
+    final mask = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          painted ? 'Only the painted part is redrawn; the rest is kept.' : 'No mask: all of the picture is redrawn.',
+          key: const ValueKey<String>('remix-mask-status'),
+          style: const TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.35),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            OutlinedButton.icon(
+              key: const ValueKey<String>('remix-mask-edit'),
+              onPressed: edit,
+              icon: const Icon(Icons.brush, size: 16),
+              label: Text(painted ? 'Edit mask…' : 'Paint a mask…'),
+            ),
+            if (_mask.isNotEmpty)
+              TextButton.icon(
+                key: const ValueKey<String>('remix-mask-clear'),
+                        onPressed: () => setState(() => _mask = const []),
+                icon: const Icon(Icons.layers_clear_outlined, size: 16),
+                label: const Text('Clear'),
+              ),
+          ],
+        ),
+      ],
+    );
+
+    return Padding(
+      key: const ValueKey<String>('remix-image-section'),
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(8)),
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final preview = InkWell(
+              key: const ValueKey<String>('remix-mask-preview'),
+              onTap: edit,
+              borderRadius: BorderRadius.circular(6),
+              child: Tooltip(
+                message: 'Paint where to redraw',
+                child: MaskPreview(path: item.path, ops: _mask, aspect: aspect),
+              ),
+            );
+            // Picture beside the controls when there is room, else above.
+            if (box.maxWidth < 460) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(child: ConstrainedBox(constraints: const BoxConstraints(maxHeight: 200), child: preview)),
+                  const SizedBox(height: 10),
+                  strength,
+                  const SizedBox(height: 12),
+                  mask,
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ConstrainedBox(constraints: const BoxConstraints(maxWidth: 170, maxHeight: 200), child: preview),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [strength, const SizedBox(height: 12), mask],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

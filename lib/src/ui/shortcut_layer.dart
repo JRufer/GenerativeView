@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../platform.dart';
+import 'compare_view.dart';
 import 'filter_sheet.dart';
 import 'image_menu.dart';
 import 'meta_panel.dart' show toast;
@@ -354,6 +355,11 @@ class ShortcutLayer extends StatelessWidget {
     }
     if (key == LogicalKeyboardKey.delete) {
       if (panel != null && targets.isNotEmpty) deleteFiles(panel, state, targets);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyV) {
+      // The ticked pictures side by side.
+      if (panel != null) openCompare(panel, state, targets);
       return true;
     }
     if (targets.length > 1) {

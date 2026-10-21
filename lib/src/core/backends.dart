@@ -39,6 +39,7 @@ class Remix {
     required this.width,
     required this.height,
     this.loras,
+    this.init,
   });
 
   final GenInfo info;
@@ -58,6 +59,10 @@ class Remix {
   /// strong); null to send them as the picture had them.
   final List<LoraChoice>? loras;
 
+  /// The picture to start from, for image to image; null to start from
+  /// noise (text to image).
+  final ImageInput? init;
+
   /// [prompt] with its LoRA tags following [loras].
   String get sentPrompt => loras == null ? prompt : retagPrompt(prompt, loras!);
 
@@ -75,6 +80,29 @@ class Remix {
 
   int seedFor(int run, math.Random random) =>
       randomSeed ? random.nextInt(1 << 32) : seed + run;
+}
+
+/// The picture a remix starts from, for image to image: the picture itself,
+/// how much of it to redraw, and where.
+class ImageInput {
+  ImageInput({required this.image, required this.strength, this.mask, this.keepMask});
+
+  /// The picture as a PNG, already at the remix's width and height.
+  final Uint8List image;
+
+  /// How much is redrawn, from 0 (nothing) to 1 (all of it, as though from
+  /// noise): the denoising strength.
+  final double strength;
+
+  /// Where to redraw, as a PNG the same size: white where the picture is
+  /// redrawn, black where it is kept. Null to redraw all of it.
+  final Uint8List? mask;
+
+  /// [mask] the other way round (white kept, black redrawn), as InvokeAI
+  /// takes it. Made alongside [mask], since only the app can draw.
+  final Uint8List? keepMask;
+
+  bool get masked => mask != null;
 }
 
 /// A finished picture from a backend, as the file it should be saved as.
@@ -272,6 +300,40 @@ Future<Map<String, dynamic>> _post(
   request.headers.contentType = ContentType.json;
   request.add(utf8.encode(jsonEncode(body)));
   final response = await request.close().timeout(timeout);
+  return _answer(url, response);
+}
+
+/// Send [bytes] to [url] as the file [filename] in the form field [field],
+/// alongside the plain [fields]: how ComfyUI and InvokeAI take pictures.
+Future<Map<String, dynamic>> _upload(
+  HttpClient client,
+  String url, {
+  required String field,
+  required String filename,
+  required Uint8List bytes,
+  Map<String, String> fields = const {},
+}) async {
+  final boundary = '----generativeview${DateTime.now().microsecondsSinceEpoch}';
+  final body = BytesBuilder(copy: false);
+  void text(String s) => body.add(utf8.encode(s));
+  for (final MapEntry(:key, :value) in fields.entries) {
+    text('--$boundary\r\nContent-Disposition: form-data; name="$key"\r\n\r\n$value\r\n');
+  }
+  text('--$boundary\r\nContent-Disposition: form-data; name="$field"; filename="$filename"\r\n'
+      'Content-Type: image/png\r\n\r\n');
+  body.add(bytes);
+  text('\r\n--$boundary--\r\n');
+  final data = body.takeBytes();
+  final request = await client.postUrl(Uri.parse(url));
+  request.headers.set(HttpHeaders.contentTypeHeader, 'multipart/form-data; boundary=$boundary');
+  request.contentLength = data.length;
+  request.add(data);
+  final response = await request.close().timeout(const Duration(minutes: 2));
+  return _answer(url, response);
+}
+
+/// A server's JSON answer to a request to [url]; its message, if it says no.
+Future<Map<String, dynamic>> _answer(String url, HttpClientResponse response) async {
   final text = await response.transform(utf8.decoder).join();
   if (response.statusCode >= 300) {
     var detail = text;
@@ -349,6 +411,18 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
   final random = math.Random();
   final ids = <String>[];
   final skipped = <String>[];
+  // For image to image, the picture (and mask) go up first, under names
+  // of their own so two remixes at once do not take each other's.
+  final init = remix.init;
+  String? image;
+  String? mask;
+  if (init != null) {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    image = await _comfyUpload(client, base, init.image, 'generativeview_${stamp}_image.png');
+    if (init.mask != null) {
+      mask = await _comfyUpload(client, base, init.mask!, 'generativeview_${stamp}_mask.png');
+    }
+  }
   ComfyModels? installed;
   if (raw == null) {
     if (!remix.info.hasGeneration) throw BackendException(backendSupport(remix.info)['comfyui']!);
@@ -387,6 +461,7 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
         throw BackendException(e.message);
       }
     }
+    if (init != null) comfyImageToImage(graph, image: image!, mask: mask, strength: init.strength);
     final reply = await _post(client, '$base/prompt', {
       'prompt': graph,
       'client_id': 'generativeview',
@@ -394,10 +469,128 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     ids.add('${reply['prompt_id'] ?? ''}');
   }
   return RemixTicket(
-    'Queued ${_count(remix.count)} in ComfyUI${_built(raw == null, skipped)}',
+    'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped)}',
     remix.count,
     _comfyResults(base, ids),
   );
+}
+
+/// What to add to the "queued" line for image to image.
+String _mode(Remix remix) {
+  final init = remix.init;
+  if (init == null) return '';
+  final what = init.masked ? 'the painted area redrawn' : 'image to image';
+  return ', $what at strength ${init.strength.toStringAsFixed(2)}';
+}
+
+/// Put [bytes] in ComfyUI's input folder as [name]; the name to load it by.
+Future<String> _comfyUpload(HttpClient client, String base, Uint8List bytes, String name) async {
+  final reply = await _upload(
+    client,
+    '$base/upload/image',
+    field: 'image',
+    filename: name,
+    bytes: bytes,
+    fields: const {'type': 'input', 'overwrite': 'true'},
+  );
+  final saved = '${reply['name'] ?? name}';
+  final folder = '${reply['subfolder'] ?? ''}';
+  return folder.isEmpty ? saved : '$folder/$saved';
+}
+
+/// Make a ComfyUI API graph start from the uploaded picture [image] rather
+/// than an empty one: each empty latent is replaced by the picture, encoded
+/// with the VAE the graph decodes with, and every sampler's denoise is set
+/// to [strength]. With [mask] (uploaded, white where the picture is to be
+/// redrawn), only that part is redrawn.
+///
+/// Works on the picture's own workflow and on a built one alike. Throws a
+/// [BackendException] for a workflow it cannot do this to.
+void comfyImageToImage(
+  Map<String, dynamic> graph, {
+  required String image,
+  String? mask,
+  required double strength,
+}) {
+  String type(Object? node) => node is Map ? '${node['class_type'] ?? ''}' : '';
+  Map<String, dynamic> inputs(Object? node) =>
+      node is Map<String, dynamic> ? (node['inputs'] as Map<String, dynamic>? ?? <String, dynamic>{}) : <String, dynamic>{};
+
+  final empties = {
+    for (final e in graph.entries)
+      if (RegExp(r'^Empty.*Latent').hasMatch(type(e.value))) e.key,
+  };
+  if (empties.isEmpty) {
+    throw BackendException(
+      'This workflow does not start from an empty picture, so it cannot be '
+      'given one to start from. Try text to image, or another server.',
+    );
+  }
+  // The VAE the graph decodes its result with is the one to encode with.
+  Object? vae;
+  for (final node in graph.values) {
+    if (type(node).startsWith('VAEDecode')) {
+      vae = inputs(node)['vae'];
+      if (vae is List) break;
+    }
+  }
+  if (vae is! List) {
+    throw BackendException('This workflow has no VAE Decode node, so the picture cannot be encoded to start from.');
+  }
+
+  var next = 1;
+  for (final id in graph.keys) {
+    final n = int.tryParse(id);
+    if (n != null && n >= next) next = n + 1;
+  }
+  String add(String type, Map<String, dynamic> inputs) {
+    final id = '${next++}';
+    graph[id] = {'class_type': type, 'inputs': inputs};
+    return id;
+  }
+
+  final load = add('LoadImage', {'image': image});
+  final encode = add('VAEEncode', {'pixels': [load, 0], 'vae': List<Object?>.of(vae)});
+  var latent = <Object>[encode, 0];
+  if (mask != null) {
+    final m = add('LoadImageMask', {'image': mask, 'channel': 'red'});
+    final noise = add('SetLatentNoiseMask', {'samples': latent, 'mask': [m, 0]});
+    latent = [noise, 0];
+  }
+
+  // Whatever took an empty latent takes the picture instead.
+  for (final node in graph.values) {
+    final f = inputs(node);
+    for (final key in f.keys.toList()) {
+      final v = f[key];
+      if (v is List && v.length == 2 && empties.contains('${v[0]}')) f[key] = List<Object>.of(latent);
+    }
+  }
+  for (final id in empties) {
+    graph.remove(id);
+  }
+
+  // How much of it is redrawn.
+  var set = 0;
+  for (final node in graph.values) {
+    final f = inputs(node);
+    if (f['denoise'] is num) {
+      f['denoise'] = strength;
+      set++;
+    } else if (type(node) == 'KSamplerAdvanced' && f['steps'] is num) {
+      // No denoise here: it starts that far into its steps instead.
+      final steps = (f['steps'] as num).toInt();
+      f['start_at_step'] = ((1 - strength) * steps).round().clamp(0, steps);
+      f['add_noise'] = 'enable';
+      set++;
+    }
+  }
+  if (set == 0) {
+    throw BackendException(
+      'This workflow\'s sampler has no denoise setting, so how much of the '
+      'picture to redraw cannot be set. Try text to image, or another server.',
+    );
+  }
 }
 
 /// What to add to the "queued" line when a graph was built rather than the
@@ -476,6 +669,10 @@ String _comfyError(Map<dynamic, dynamic> status) {
 }
 
 Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
+  // The picture's own graph when it has one, for image to image too: it
+  // names the right loaders for any kind of model (Krea 2's separate VAE
+  // and text encoder, say), which a graph built from settings cannot.
+  final init = remix.init;
   final raw = carriesGraph('invokeai', remix.info) ? rawBlock(remix.info, 'invokeai_graph') : null;
   final random = math.Random();
   final ids = <int>[];
@@ -494,6 +691,14 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       loras = listed(await _get(client, '$base/api/v2/models/?model_type=lora'));
     }
   }
+  GraphInit? start;
+  if (init != null) {
+    start = GraphInit(
+      image: await _invokeUpload(client, base, init.image),
+      mask: init.keepMask == null ? null : await _invokeUpload(client, base, init.keepMask!),
+      strength: init.strength,
+    );
+  }
   final recipe = Recipe.from(
     remix.info,
     prompt: remix.sentPrompt,
@@ -511,9 +716,10 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
       if (run == 0) _requirePrompt(found, remix);
       if (remix.loras != null) editInvokeLoras(graph, remix.loras!);
+      if (start != null) invokeImageToImage(graph, image: start.image, keepMask: start.mask, strength: start.strength);
     } else {
       try {
-        graph = invokeGraph(recipe, seed, mains, loras, skipped: run == 0 ? skipped : null);
+        graph = invokeGraph(recipe, seed, mains, loras, skipped: run == 0 ? skipped : null, init: start);
       } on StateError catch (e) {
         throw BackendException(e.message);
       }
@@ -530,7 +736,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     }
   }
   return RemixTicket(
-    'Queued ${_count(remix.count)} in InvokeAI${_built(raw == null, skipped)}',
+    'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped)}',
     remix.count,
     fetchable
         ? _invokeResults(base, ids)
@@ -539,6 +745,99 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
             'pictures stay in its gallery. Updating InvokeAI fixes this.',
           )),
   );
+}
+
+/// Make an InvokeAI graph (the picture's own, as InvokeAI saved it) start
+/// from the uploaded picture [image]: the picture is encoded by the
+/// image-to-latents node that matches the graph's latents-to-image node
+/// (`i2l` for `l2i`, `qwen_image_i2l` for Krea 2's `qwen_image_l2i`,
+/// `flux_vae_encode` for `flux_vae_decode`, and so on) with the same VAE,
+/// and fed to the denoise node, which starts [strength] of the way from the
+/// end. With [keepMask] (uploaded, white where the picture is kept), only
+/// the rest is redrawn. How InvokeAI's own canvas does it, for any model.
+///
+/// Throws a [BackendException] for a graph it cannot do this to.
+void invokeImageToImage(
+  Map<String, dynamic> graph, {
+  required String image,
+  String? keepMask,
+  required double strength,
+}) {
+  final nodes = graph['nodes'];
+  final edges = graph['edges'];
+  if (nodes is! Map<String, dynamic> || edges is! List) {
+    throw BackendException('This picture\'s InvokeAI graph is not one this app can read.');
+  }
+  String type(String id) => '${(nodes[id] as Map?)?['type'] ?? ''}';
+  Map<String, dynamic>? into(String node, String field) {
+    for (final e in edges) {
+      if (e is Map<String, dynamic> && (e['destination'] as Map?)?['node_id'] == node && (e['destination'] as Map?)?['field'] == field) {
+        return e;
+      }
+    }
+    return null;
+  }
+
+  // The node that makes the picture: the one kept, if there are several.
+  final decoders = [
+    for (final MapEntry(:key, :value) in nodes.entries)
+      if (RegExp(r'(^|_)l2i$|_vae_decode$').hasMatch(type(key)) && value is Map) key,
+  ];
+  if (decoders.isEmpty) {
+    throw BackendException('This InvokeAI graph has no latents-to-image node, so it cannot be started from a picture.');
+  }
+  final decode = decoders.firstWhere((id) => (nodes[id] as Map)['is_intermediate'] == false, orElse: () => decoders.last);
+  final encodeType = type(decode).endsWith('l2i')
+      ? '${type(decode).substring(0, type(decode).length - 3)}i2l'
+      : type(decode).replaceFirst(RegExp(r'_vae_decode$'), '_vae_encode');
+
+  final vae = into(decode, 'vae')?['source'] as Map?;
+  final latents = into(decode, 'latents')?['source'] as Map?;
+  final denoise = latents?['node_id'] as String?;
+  if (vae == null || denoise == null || !type(denoise).contains('denoise')) {
+    throw BackendException('This InvokeAI graph does not decode straight from its denoise step, so it cannot be started from a picture.');
+  }
+
+  // Replace whatever the denoise step started from before, and its mask.
+  edges.removeWhere((e) {
+    final d = e is Map ? e['destination'] as Map? : null;
+    return d?['node_id'] == denoise && (d?['field'] == 'latents' || d?['field'] == 'denoise_mask');
+  });
+  void node(String id, Map<String, dynamic> fields) =>
+      nodes[id] = {'id': id, 'is_intermediate': true, 'use_cache': false, ...fields};
+  void edge(Object? from, String out, String to, String field) => edges.add({
+        'source': {'node_id': from, 'field': out},
+        'destination': {'node_id': to, 'field': field},
+      });
+
+  node('generativeview_i2l', {'type': encodeType, 'image': {'image_name': image}});
+  edge(vae['node_id'], '${vae['field']}', 'generativeview_i2l', 'vae');
+  edge('generativeview_i2l', 'latents', denoise, 'latents');
+  if (keepMask != null) {
+    node('generativeview_mask', {'type': 'create_denoise_mask', 'mask': {'image_name': keepMask}});
+    edge(vae['node_id'], '${vae['field']}', 'generativeview_mask', 'vae');
+    edge('generativeview_mask', 'denoise_mask', denoise, 'denoise_mask');
+  }
+  final step = nodes[denoise] as Map<String, dynamic>;
+  step['denoising_start'] = 1 - strength.clamp(0.0, 1.0);
+  step['denoising_end'] ??= 1.0;
+}
+
+/// Put [bytes] among InvokeAI's images, out of sight in its gallery; the
+/// name to use it by.
+Future<String> _invokeUpload(HttpClient client, String base, Uint8List bytes) async {
+  final reply = await _upload(
+    client,
+    '$base/api/v1/images/upload?image_category=general&is_intermediate=true',
+    field: 'file',
+    filename: 'generativeview.png',
+    bytes: bytes,
+  );
+  final name = reply['image_name'];
+  if (name is! String || name.isEmpty) {
+    throw BackendException('InvokeAI took the picture but did not say what it called it.');
+  }
+  return name;
 }
 
 /// Wait for each of the InvokeAI queue items [ids] and fetch the pictures
@@ -624,13 +923,28 @@ Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
     'send_images': true,
     if (info.model.isNotEmpty)
       'override_settings': {'sd_model_checkpoint': info.model},
+    // Image to image: the picture, how much of it to redraw, and where
+    // (white in the mask), the rest left as it was.
+    if (remix.init case final init?) ...{
+      'init_images': [base64Encode(init.image)],
+      'denoising_strength': init.strength,
+      'resize_mode': 0,
+      if (init.mask != null) ...{
+        'mask': base64Encode(init.mask!),
+        'mask_blur': 4,
+        'inpainting_fill': 1,
+        'inpaint_full_res': false,
+        'inpainting_mask_invert': 0,
+      },
+    },
   };
+  final endpoint = remix.init == null ? 'txt2img' : 'img2img';
   // Forge answers when the pictures are done, with them in the answer.
   // That can take a while, so only wait long enough to know it started; the
   // rest is waited for in the background. Its own client, since the one
   // passed in is closed as soon as this returns.
   final own = HttpClient()..connectionTimeout = const Duration(seconds: 8);
-  final pending = _post(own, '$base/sdapi/v1/txt2img', payload, timeout: remixPatience)
+  final pending = _post(own, '$base/sdapi/v1/$endpoint', payload, timeout: remixPatience)
       .whenComplete(() => own.close(force: true));
   // Read by the stream below, or (if this throws first) not at all.
   pending.ignore();
@@ -640,7 +954,7 @@ Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
     // Still working on it: queued.
   }
   return RemixTicket(
-    'Sent ${_count(remix.count)} to Forge / A1111',
+    'Sent ${_count(remix.count)} to Forge / A1111${_mode(remix)}',
     remix.count,
     _forgeResults(pending),
   );

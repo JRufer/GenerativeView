@@ -10,6 +10,7 @@ import 'core/backends.dart' show RemixImage;
 import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
+import 'core/taste.dart';
 import 'core/thumb_cache.dart';
 import 'platform.dart' show PasteSource, sharedFiles;
 
@@ -1281,6 +1282,20 @@ class AppState extends ChangeNotifier {
   // ================================================================ metadata
 
   /// Full generation metadata for an item, read from the file itself.
+  /// What the model of the user's taste has learned from their stars and
+  /// flags, or what it still needs.
+  Future<TasteStatus> tasteStatus() async {
+    final json = await core.call('taste_status');
+    return json is Map<String, dynamic> ? TasteStatus.fromJson(json) : const TasteStatus();
+  }
+
+  /// What the taste model makes of [item]; null when there is no model yet
+  /// or content search has not looked at it.
+  Future<TasteScore?> tasteScore(MediaItem item) async {
+    final json = await core.call('taste_score', {'path': item.path});
+    return json is Map<String, dynamic> ? TasteScore.fromJson(json) : null;
+  }
+
   Future<GenInfo> metadata(MediaItem item) async {
     final key = '${item.path}/${item.mtime}/${item.size}';
     final hit = _metaCache.remove(key);

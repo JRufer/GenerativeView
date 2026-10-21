@@ -590,6 +590,7 @@ fn field_alias(s: &str) -> Option<&'static str> {
         "flag" | "flagged" => "flag",
         "collection" | "col" | "in" => "collection",
         "similar" | "like" => "similar",
+        "taste" | "likely" => "taste",
         "type" | "kind" | "media" | "is" => "kind",
         _ => return None,
     })
@@ -715,6 +716,20 @@ pub fn wants_duplicates(text: &str) -> bool {
     parse_terms(text).iter().any(|t| t.field == Some("kind") && !t.negate && is_duplicate_word(&t.text))
 }
 
+/// What a search's `taste:` term asks for: the pictures the user has not
+/// judged yet that their taste suggests keeping (`taste:keep`) or
+/// rejecting (`taste:reject`). None for a search with no such term, or one
+/// that asks for neither.
+pub fn taste_term(text: &str) -> Option<crate::taste::Verdict> {
+    parse_terms(text).into_iter().filter(|t| t.field == Some("taste") && !t.negate).find_map(|t| {
+        match t.text.trim().to_ascii_lowercase().as_str() {
+            "keep" | "keeper" | "keepers" | "like" | "liked" | "good" => Some(crate::taste::Verdict::Keep),
+            "reject" | "rejects" | "dislike" | "disliked" | "bad" => Some(crate::taste::Verdict::Reject),
+            _ => None,
+        }
+    })
+}
+
 /// The picture a search's `similar:` term names, if it has one.
 pub fn similar_target(text: &str) -> Option<String> {
     parse_terms(text).into_iter().find(|t| t.field == Some("similar") && !t.negate).map(|t| t.text)
@@ -754,7 +769,7 @@ impl Term {
 
     /// Whether this term's predicate reads the `ftext` table.
     fn reads_text(&self) -> bool {
-        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar" | "kind"))
+        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar" | "taste" | "kind"))
     }
 
     /// Append this term's predicate.
@@ -768,6 +783,8 @@ impl Term {
         let any = |parts: Vec<String>| if parts.len() == 1 { parts.into_iter().next().unwrap_or_default() } else { format!("({})", parts.join(" OR ")) };
         let pred = match (self.field, self.exact) {
             (Some("similar"), _) => return,
+            // Answered after the query, by the model of the user's taste.
+            (Some("taste"), _) => return,
             // Answered after the query, by comparing what the pictures look like.
             (Some("kind"), _) if is_duplicate_word(&self.text) => return,
             (Some("seed"), true) => any(self.alternatives().into_iter().map(|v| format!("f.seed = ?{}", bind(v.to_string()))).collect()),
@@ -1907,6 +1924,12 @@ mod tests {
         assert_eq!(names(&db, "/out", false, "is:duplicate"), names(&db, "/out", false, ""));
         assert!(wants_duplicates("fox is:duplicates"));
         assert!(!wants_duplicates("fox -is:duplicate type:image"));
+        // `taste:` is left to the taste model, and asked for.
+        assert_eq!(names(&db, "/out", false, "taste:reject"), names(&db, "/out", false, ""));
+        assert_eq!(taste_term("fox taste:keep"), Some(crate::taste::Verdict::Keep));
+        assert_eq!(taste_term("likely:reject"), Some(crate::taste::Verdict::Reject));
+        assert_eq!(taste_term("fox -taste:keep"), None);
+        assert_eq!(taste_term("taste:maybe"), None);
 
         let usage = db.usage("/out", true, "").unwrap();
         let group = |kind: &str| usage.groups.iter().find(|g| g.kind == kind).unwrap();

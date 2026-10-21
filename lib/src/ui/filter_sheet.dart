@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../core/models.dart';
+import '../core/taste.dart';
 import '../theme.dart';
 import 'notes_widgets.dart' show starColor;
 import 'sheet.dart';
@@ -40,6 +41,7 @@ class FilterSet {
     Set<Flag>? flags,
     this.media = MediaShown.both,
     this.duplicates = false,
+    this.taste,
   }) : flags = flags ?? {};
 
   /// Terms the panel does not manage: typed words, dates, negations.
@@ -56,12 +58,18 @@ class FilterSet {
   /// (`is:duplicate`).
   bool duplicates;
 
+  /// Only pictures not judged yet that the user's taste suggests keeping
+  /// ('keep', `taste:keep`) or rejecting ('reject'); null for neither.
+  String? taste;
+
+  static const Set<String> _tasteFields = {'taste', 'likely'};
+
   static const Set<String> _duplicateWords = {'duplicate', 'duplicates', 'dupe', 'dupes', 'near-duplicate', 'near-duplicates'};
 
   /// The search fields that mean the kind of file (`type:video`).
   static const Set<String> _typeFields = {'type', 'kind', 'media', 'is'};
 
-  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag', ..._typeFields};
+  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag', ..._typeFields, ..._tasteFields};
 
   /// The same search with every filter taken off and typed words kept.
   FilterSet cleared() => FilterSet(free: free, chosen: {});
@@ -75,10 +83,22 @@ class FilterSet {
     final flags = <Flag>{};
     var media = MediaShown.both;
     var duplicates = false;
+    String? taste;
     for (final raw in splitTerms(query)) {
       final t = parseTerm(raw);
       if (t.negate || !_managed.contains(t.field)) {
         free.add(raw);
+        continue;
+      }
+      if (_tasteFields.contains(t.field)) {
+        final v = t.value.toLowerCase().trim();
+        if (v.startsWith('keep') || v == 'like' || v == 'liked' || v == 'good') {
+          taste = 'keep';
+        } else if (v.startsWith('reject') || v == 'dislike' || v == 'disliked' || v == 'bad') {
+          taste = 'reject';
+        } else {
+          free.add(raw);
+        }
         continue;
       }
       if (_typeFields.contains(t.field) && _duplicateWords.contains(t.value.toLowerCase().trim())) {
@@ -118,11 +138,17 @@ class FilterSet {
       final values = _allOf.contains(t.field) || t.field == 'fullprompt' ? [t.value] : t.value.split('|');
       chosen.putIfAbsent(t.field, () => {}).addAll(values.where((v) => v.isNotEmpty));
     }
-    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media, duplicates: duplicates);
+    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media, duplicates: duplicates, taste: taste);
   }
 
   bool get isEmpty =>
-      chosen.values.every((s) => s.isEmpty) && minRating == 0 && !unrated && flags.isEmpty && media == MediaShown.both && !duplicates;
+      chosen.values.every((s) => s.isEmpty) &&
+      minRating == 0 &&
+      !unrated &&
+      flags.isEmpty &&
+      media == MediaShown.both &&
+      !duplicates &&
+      taste == null;
 
   int get count =>
       chosen.values.fold(0, (n, s) => n + s.length) +
@@ -130,7 +156,8 @@ class FilterSet {
       (unrated ? 1 : 0) +
       flags.length +
       (media == MediaShown.both ? 0 : 1) +
-      (duplicates ? 1 : 0);
+      (duplicates ? 1 : 0) +
+      (taste == null ? 0 : 1);
 
   bool has(String field, String value) => chosen[field]?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
 
@@ -170,6 +197,7 @@ class FilterSet {
     if (media == MediaShown.images) parts.add('type:image');
     if (media == MediaShown.videos) parts.add('type:video');
     if (duplicates) parts.add('is:duplicate');
+    if (taste != null) parts.add('taste:$taste');
     return parts.join(' ');
   }
 }
@@ -210,6 +238,10 @@ class _FilterPanelState extends State<FilterPanel> {
   UsageStats? _stats;
   String? _countedFor;
   final Set<String> _expanded = {};
+
+  /// Asked once, when the panel opens: nothing in the panel rates
+  /// pictures, so it stays current while the panel is open.
+  late final Future<TasteStatus> _taste = widget.state.tasteStatus();
 
   @override
   void initState() {
@@ -318,6 +350,8 @@ class _FilterPanelState extends State<FilterPanel> {
                           ),
                       ],
                     ),
+                    const PanelHeading('Your taste'),
+                    _tasteRow(),
                     for (final (kind, field, title) in _facets) ..._section(kind, field, title),
                   ],
                 );
@@ -401,6 +435,55 @@ class _FilterPanelState extends State<FilterPanel> {
           },
         ),
       ],
+    );
+  }
+
+  /// What the user's own ratings suggest about the pictures they have not
+  /// judged yet, and how far that can be trusted.
+  Widget _tasteRow() {
+    Widget choice(String value, String label, IconData icon, String tooltip, bool enabled) => ChoiceChipButton(
+          key: ValueKey<String>('filter-taste-$value'),
+          label: label,
+          icon: icon,
+          tooltip: tooltip,
+          selected: _filters.taste == value,
+          onTap: enabled || _filters.taste == value
+              ? () {
+                  _filters.taste = _filters.taste == value ? null : value;
+                  _apply();
+                }
+              : null,
+        );
+    return FutureBuilder<TasteStatus>(
+      future: _taste,
+      builder: (context, snapshot) {
+        final status = snapshot.data;
+        final useful = status?.useful ?? false;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                choice('keep', 'Likely keepers', Icons.thumb_up_alt_outlined,
+                    'Pictures you have not rated or flagged that look like the ones you liked', useful),
+                choice('reject', 'Suggested rejects', Icons.thumb_down_alt_outlined,
+                    'Pictures you have not rated or flagged that look like the ones you rejected', useful),
+              ],
+            ),
+            if (status != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  status.describe(),
+                  key: const ValueKey<String>('filter-taste-status'),
+                  style: const TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

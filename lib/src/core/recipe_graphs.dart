@@ -308,6 +308,22 @@ class InvokeModel {
   Iterable<String> get names => [name, if (path.isNotEmpty) path];
 }
 
+/// A picture already on the server for a built graph to start from, for
+/// image to image.
+class GraphInit {
+  const GraphInit({required this.image, required this.strength, this.mask});
+
+  /// The server's name for the picture.
+  final String image;
+
+  /// How much of it is redrawn, 0 to 1.
+  final double strength;
+
+  /// The server's name for the mask, if only part is redrawn. For InvokeAI
+  /// it is white where the picture is kept.
+  final String? mask;
+}
+
 /// An InvokeAI graph making [recipe] with [seed], with the main model and
 /// LoRAs found among [mains] and [loras]. [skipped] collects the LoRAs left
 /// out because the server does not have them (or has them only for another
@@ -321,6 +337,7 @@ Map<String, dynamic> invokeGraph(
   List<InvokeModel> mains,
   List<InvokeModel> loras, {
   List<String>? skipped,
+  GraphInit? init,
 }) {
   final main = findModel(recipe.model, mains, (m) => m.names);
   if (main == null) {
@@ -400,22 +417,44 @@ Map<String, dynamic> invokeGraph(
   final steps = recipe.steps ?? 30;
   final cfg = recipe.cfg ?? (xl ? 5.0 : 7.5);
   node('noise', 'noise', {'seed': seed, 'width': recipe.width, 'height': recipe.height, 'use_cpu': true});
+  final strength = init?.strength.clamp(0.0, 1.0);
   node('denoise', 'denoise_latents', {
     'cfg_scale': cfg,
     'scheduler': scheduler,
     'steps': steps,
-    'denoising_start': 0.0,
+    // Starting part way along is how much of the picture is kept.
+    'denoising_start': strength == null ? 0.0 : 1 - strength,
     'denoising_end': 1.0,
   });
   edge(unet, 'unet', 'denoise', 'unet');
   edge('positive', 'conditioning', 'denoise', 'positive_conditioning');
   edge('negative', 'conditioning', 'denoise', 'negative_conditioning');
   edge('noise', 'noise', 'denoise', 'noise');
+  if (init != null) {
+    // The picture to start from, encoded.
+    node('i2l', 'i2l', {
+      'image': {'image_name': init.image},
+      'fp32': xl,
+    });
+    edge('model_loader', 'vae', 'i2l', 'vae');
+    edge('i2l', 'latents', 'denoise', 'latents');
+    if (init.mask != null) {
+      // Only the part not kept is redrawn.
+      node('denoise_mask', 'create_denoise_mask', {
+        'image': {'image_name': init.image},
+        'mask': {'image_name': init.mask},
+        'fp32': xl,
+      });
+      edge('model_loader', 'vae', 'denoise_mask', 'vae');
+      edge('denoise_mask', 'denoise_mask', 'denoise', 'denoise_mask');
+    }
+  }
 
   // So the picture carries its settings, and reads (and remixes) like any
   // other InvokeAI picture.
   node('metadata', 'core_metadata', {
-    'generation_mode': xl ? 'sdxl_txt2img' : 'txt2img',
+    'generation_mode': '${xl ? 'sdxl_' : ''}${init == null ? 'txt2img' : init.mask == null ? 'img2img' : 'inpaint'}',
+    'strength': ?strength,
     'positive_prompt': recipe.prompt,
     'negative_prompt': recipe.negative,
     'width': recipe.width,
@@ -436,5 +475,5 @@ Map<String, dynamic> invokeGraph(
   edge('model_loader', 'vae', 'l2i', 'vae');
   edge('metadata', 'metadata', 'l2i', 'metadata');
 
-  return {'id': 'generativeview_txt2img', 'nodes': nodes, 'edges': edges};
+  return {'id': init == null ? 'generativeview_txt2img' : 'generativeview_img2img', 'nodes': nodes, 'edges': edges};
 }

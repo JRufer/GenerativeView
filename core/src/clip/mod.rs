@@ -160,6 +160,11 @@ impl ContentSearch {
         let _ = self.tx.send(Job::Close);
     }
 
+    /// The vector of the picture `row` (in `dir`), if it has been looked at.
+    pub fn vector(&self, dir: &str, row: &crate::db::Row) -> Option<Vec<f32>> {
+        self.inner.vectors.get(&self.inner.key(dir, row)).map(|v| store::unpack(&v))
+    }
+
     /// Whether the model is here, what fetching it involves, and how far
     /// along the folder's pictures are.
     pub fn status(&self, root: &str, recursive: bool) -> Value {

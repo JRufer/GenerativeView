@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/models.dart';
+import '../core/taste.dart';
 import '../theme.dart';
 import 'civitai_sheet.dart';
 import 'context_menu.dart';
@@ -179,6 +180,7 @@ class _MetaPanelState extends State<MetaPanel> {
     final lead = <Widget>[
       _FileHeader(item: item, info: info),
       NotesBar(state: state, item: item),
+      TasteHint(state: state, item: item),
       Wrap(
         spacing: 6,
         runSpacing: 6,
@@ -874,6 +876,99 @@ class _WorkflowSectionState extends State<_WorkflowSection> {
               ),
           ],
       ],
+    );
+  }
+}
+
+/// What the user's taste, learned from their stars and flags, makes of a
+/// picture they have not judged yet: the stars it would likely get, and
+/// whether it looks like a keeper or a reject. Nothing until there is a
+/// model and content search has looked at the picture.
+class TasteHint extends StatefulWidget {
+  const TasteHint({super.key, required this.state, required this.item});
+  final AppState state;
+  final MediaItem item;
+
+  @override
+  State<TasteHint> createState() => _TasteHintState();
+}
+
+class _TasteHintState extends State<TasteHint> {
+  TasteScore? _score;
+  String? _for;
+
+  @override
+  void initState() {
+    super.initState();
+    // A new rating anywhere can change the model.
+    widget.state.notesTick.addListener(_load);
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(TasteHint old) {
+    super.didUpdateWidget(old);
+    if (old.item.path != widget.item.path) _load();
+  }
+
+  @override
+  void dispose() {
+    widget.state.notesTick.removeListener(_load);
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final path = widget.item.path;
+    try {
+      final score = await widget.state.tasteScore(widget.item);
+      if (!mounted || widget.item.path != path) return;
+      setState(() {
+        _score = score;
+        _for = path;
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final score = _score;
+    // Once judged, the user has said; the guess is no longer wanted.
+    if (score == null || _for != item.path || item.rating > 0 || item.flag != Flag.none) {
+      return const SizedBox.shrink();
+    }
+    final (verdict, color) = switch (score.verdict) {
+      'keep' => (' · looks like a keeper', const Color(0xFF7BC88F)),
+      'reject' => (' · looks like a reject', Palette.danger),
+      _ => ('', Palette.muted),
+    };
+    return Padding(
+      key: const ValueKey<String>('taste-hint'),
+      padding: const EdgeInsets.only(top: 2, bottom: 8),
+      child: Tooltip(
+        message: score.useful
+            ? 'A guess from the pictures you have rated and flagged'
+            : 'A guess from the pictures you have rated and flagged; they show no clear pattern yet, so take it lightly',
+        child: Row(
+          children: [
+            const Icon(Icons.auto_awesome_outlined, size: 14, color: Palette.faint),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    const TextSpan(text: 'Your taste: about '),
+                    TextSpan(text: '★ ${score.stars.toStringAsFixed(1)}', style: const TextStyle(color: starColor)),
+                    TextSpan(text: verdict, style: TextStyle(color: color)),
+                  ],
+                ),
+                style: const TextStyle(fontSize: 12, color: Palette.muted),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
