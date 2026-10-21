@@ -9,7 +9,7 @@ void main() {
   });
 
   test('a build that was never published says so', () {
-    expect(buildLabel(release: 'test-171', commit: 'beefcafe0000'), 'test build 171, not published · beefcafe');
+    expect(buildLabel(release: 'test-171', commit: 'beefcafe0000'), 'test build 171, not published · beefcaf');
   });
 
   test('a build made by hand says so', () {
