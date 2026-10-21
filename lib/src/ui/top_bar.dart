@@ -44,8 +44,9 @@ class TopBar extends StatelessWidget {
   final AppState state;
 
   /// The bar's width (padding included) from which everything fits on one
-  /// line, slider and all.
-  static const double oneRowWidth = 772;
+  /// line, slider and all, with room left for the folder's name and count.
+  /// (A Fold opened flat is just under it, and gets two rows.)
+  static const double oneRowWidth = 880;
 
   @override
   Widget build(BuildContext context) {
@@ -484,12 +485,17 @@ class _FolderTitle extends StatelessWidget {
           ),
           if (state.loaded) ...[
             const SizedBox(width: 10),
-            Text(
-              state.query.trim().isEmpty
-                  ? '${_groupThousands(count)} $noun'
-                  : '${_groupThousands(count)} ${count == 1 ? 'match' : 'matches'}',
-              maxLines: 1,
-              style: const TextStyle(fontSize: 12.5, color: Palette.muted),
+            // Short of room, the count gives way too rather than overflow.
+            Flexible(
+              child: Text(
+                state.query.trim().isEmpty
+                    ? '${_groupThousands(count)} $noun'
+                    : '${_groupThousands(count)} ${count == 1 ? 'match' : 'matches'}',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.fade,
+                style: const TextStyle(fontSize: 12.5, color: Palette.muted),
+              ),
             ),
           ],
         ],
