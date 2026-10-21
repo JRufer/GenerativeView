@@ -968,6 +968,98 @@ void main() {
     expect(nodes['denoise']['denoising_start'], closeTo(0.45, 1e-9));
   });
 
+  // ------------------------------------------------ picked up again
+
+  test('ComfyUI: a remix sent earlier is picked up again by its job', () async {
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/history/p7') {
+        json(request, {
+          'p7': {
+            'status': {'status_str': 'success'},
+            'outputs': {
+              '9': {
+                'images': [
+                  {'filename': 'out.png', 'subfolder': '', 'type': 'output'},
+                ],
+              },
+            },
+          },
+        });
+      } else if (path == '/view') {
+        request.response.add(tinyPng(7));
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = resumeRemix('comfyui', base, ['p7']);
+    expect(ticket.jobs, ['p7']);
+    final finished = ticket.finished.toList();
+    final images = await ticket.results.toList();
+    expect(images.single.bytes[28], 7);
+    expect(await finished, ['p7'], reason: 'so it is not fetched again');
+  });
+
+  test('ComfyUI: a sent remix it no longer has is given up on, not waited for', () async {
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path.startsWith('/history/')) {
+        json(request, {});
+      } else if (path == '/queue') {
+        json(request, {'queue_running': [], 'queue_pending': []});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = resumeRemix('comfyui', base, ['lost']);
+    final finished = ticket.finished.toList();
+    final errors = <Object>[];
+    await ticket.results.handleError(errors.add).toList();
+    expect(errors.single.toString(), contains('no longer has'));
+    expect(await finished, ['lost']);
+  });
+
+  test('InvokeAI: a queue item it no longer has is given up on', () async {
+    final (server, base) = await serve((request) async {
+      request.response.statusCode = 404;
+      request.response.write('{"detail": "Queue item not found"}');
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = resumeRemix('invokeai', base, ['12']);
+    final finished = ticket.finished.toList();
+    final errors = <Object>[];
+    await ticket.results.handleError(errors.add).toList();
+    expect(errors.single.toString(), contains('no longer has'));
+    expect(await finished, ['12']);
+  });
+
+  test('a ticket says which jobs to pick up again; Forge has none to give', () async {
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/prompt') {
+        await request.drain<void>();
+        json(request, {'prompt_id': 'abc'});
+      } else if (path == '/sdapi/v1/txt2img') {
+        await request.drain<void>();
+        json(request, {'images': <String>[]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final graph = jsonEncode({
+      '6': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'a red fox'}},
+    });
+    final comfy = await sendRemix('comfyui', base, remix(info(source: 'comfyui', raw: [['prompt', graph]])));
+    expect((comfy.kind, comfy.base, comfy.jobs), ('comfyui', base, ['abc']));
+    final forge = await sendRemix('forge', base, remix(info(source: 'a1111')));
+    expect(forge.jobs, isEmpty);
+    await forge.results.toList();
+    expect(() => resumeRemix('forge', base, ['x']), throwsA(isA<BackendException>()));
+  });
+
   test('Forge: image to image goes to img2img with the picture and mask', () async {
     late String path;
     late Map<String, dynamic> payload;

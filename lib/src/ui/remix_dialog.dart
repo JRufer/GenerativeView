@@ -184,7 +184,7 @@ class _RemixPanelState extends State<RemixPanel> {
         ),
       );
       // Waited for in the background, panel or no panel.
-      widget.state.collectRemix(widget.item, ticket.results);
+      widget.state.collectRemix(widget.item, ticket);
       if (!mounted) return;
       toast(
         context,
@@ -357,6 +357,17 @@ class _RemixPanelState extends State<RemixPanel> {
                 'text-to-image ${_backend == 'comfyui' ? 'workflow' : 'graph'} built from its settings: '
                 'the same model and LoRAs (by name), prompt, seed, steps, CFG, sampler and size.',
                 style: const TextStyle(fontSize: 11.5, color: Palette.muted),
+              ),
+            ),
+          if (_backend == 'forge')
+            const Padding(
+              key: ValueKey<String>('remix-forge-note'),
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'Forge hands the pictures back only to the app that asked, so keep the app open until they '
+                'arrive (on Android the screen can lock; it keeps waiting). If it is closed, Forge still saves '
+                'them in its own outputs folder. ComfyUI and InvokeAI remixes are picked up again when the app reopens.',
+                style: TextStyle(fontSize: 11.5, color: Palette.muted),
               ),
             ),
           if (support.values.any((why) => why != null))
