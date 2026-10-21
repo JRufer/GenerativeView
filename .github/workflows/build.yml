@@ -451,7 +451,9 @@ jobs:
 
   release:
     name: Publish release
-    if: github.event_name == 'push'
+    # A push to main or a tag, or a build started by hand on main (Actions ›
+    # build › Run workflow), which makes a release of main as it stands.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs: [core, libmpv, linux, android, emulator, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
@@ -464,7 +466,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          COMMIT_SUBJECT: ${{ github.event.head_commit.message }}
+          COMMIT_SUBJECT: ${{ github.event.head_commit.message || 'started by hand' }}
           # Whether the APKs carry the repository's own key (and so install
           # over the last build) or a throwaway one.
           SIGNED: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
