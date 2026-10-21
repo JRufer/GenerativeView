@@ -63,6 +63,9 @@ class FilterBar extends StatelessWidget {
       chip('media', filters.media == MediaShown.images ? 'Images only' : 'Videos only', (f) => f.media = MediaShown.both);
     }
     if (filters.duplicates) chip('duplicates', 'Near-duplicates', (f) => f.duplicates = false);
+    if (filters.taste != null) {
+      chip('taste', filters.taste == 'keep' ? 'Likely keepers' : 'Suggested rejects', (f) => f.taste = null);
+    }
 
     final count = state.items.length;
     return Container(

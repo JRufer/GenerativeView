@@ -29,6 +29,17 @@ pub struct Engine {
     sink: crate::index::EventSink,
     /// Upscales under way; one that is taken out of here stops.
     upscales: Arc<parking_lot::Mutex<Vec<u64>>>,
+    /// The model of the user's taste, with a fingerprint of the ratings it
+    /// learned from: fitted again only when they change.
+    taste: parking_lot::Mutex<Option<(u64, Arc<Taste>)>>,
+}
+
+/// The taste model, or why there is none yet, with how many of the
+/// pictures the user judged have been looked at by content search.
+pub struct Taste {
+    pub model: Result<crate::taste::Model, crate::taste::NotYet>,
+    pub judged: usize,
+    pub seen: usize,
 }
 
 static NEXT_JOB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -49,7 +60,7 @@ impl Engine {
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
         let dupes = crate::dupes::Duplicates::open(data_dir);
-        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default() })
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default() })
     }
 
     pub fn close(&self) {
@@ -75,10 +86,125 @@ impl Engine {
     fn search(&self, args: &Value) -> Result<crate::db::QueryResult, String> {
         let found = self.search_plain(args)?;
         let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+        let sort = args.get("sort").and_then(Value::as_str).unwrap_or("newest");
         if crate::db::wants_duplicates(text) {
-            return Ok(self.dupes.only_duplicates(&self.thumbs, &found));
+            // Duplicates stay in their groups, whatever the order asked for.
+            let groups = self.dupes.only_duplicates(&self.thumbs, &found);
+            return Ok(self.by_taste(groups, "", text));
         }
-        Ok(found)
+        Ok(self.by_taste(found, sort, text))
+    }
+
+    /// The taste model, fitted to what the user has rated and flagged
+    /// across every folder, kept until that changes.
+    pub fn taste(&self) -> Arc<Taste> {
+        use std::hash::{Hash, Hasher};
+        let all = self.db.query(&Query { dir: String::new(), recursive: true, ..Default::default() }).unwrap_or_default();
+        let mut samples: Vec<crate::taste::Sample> = Vec::new();
+        let mut print = std::collections::hash_map::DefaultHasher::new();
+        let mut judged = 0;
+        for (i, row) in all.rows.iter().enumerate() {
+            let mark = all.marks.get(i).copied().unwrap_or(0);
+            let Some(target) = crate::taste::target(mark & 7, (mark >> 3) & 3) else { continue };
+            judged += 1;
+            let Some(vector) = self.content.vector(&all.dirs[row.1 as usize], row) else { continue };
+            (row.0, mark, row.6, row.7).hash(&mut print);
+            samples.push(crate::taste::Sample { vector, target });
+        }
+        // Vectors from another model, should there ever be one, are left out.
+        if let Some(dim) = samples.first().map(|s| s.vector.len()) {
+            samples.retain(|s| s.vector.len() == dim);
+        }
+        let print = print.finish();
+        if let Some((known, taste)) = &*self.taste.lock() {
+            if *known == print {
+                return taste.clone();
+            }
+        }
+        let taste = Arc::new(Taste { seen: samples.len(), judged, model: crate::taste::fit(&samples) });
+        *self.taste.lock() = Some((print, taste.clone()));
+        taste
+    }
+
+    /// `found` narrowed by a `taste:` term in `text` (to the pictures not
+    /// yet judged that the model suggests keeping or rejecting) and, when
+    /// `sort` is "taste", best liked first; pictures not looked at yet last.
+    fn by_taste(&self, found: crate::db::QueryResult, sort: &str, text: &str) -> crate::db::QueryResult {
+        let want = crate::db::taste_term(text);
+        if want.is_none() && sort != "taste" {
+            return found;
+        }
+        let taste = self.taste();
+        let Ok(model) = &taste.model else {
+            // No model yet: nothing to suggest, and the order as it was.
+            return if want.is_some() { found.pick(std::iter::empty()) } else { found };
+        };
+        let scores: Vec<f32> = found
+            .rows
+            .iter()
+            .map(|row| self.content.vector(&found.dirs[row.1 as usize], row).map_or(f32::NAN, |v| model.score(&v)))
+            .collect();
+        let mut keep: Vec<usize> = (0..found.rows.len()).collect();
+        if let Some(want) = want {
+            keep.retain(|&i| found.marks.get(i).copied().unwrap_or(0) == 0 && model.verdict(scores[i]) == want);
+        }
+        if sort == "taste" {
+            keep.sort_by(|&a, &b| match (scores[a].is_nan(), scores[b].is_nan()) {
+                (false, false) => scores[b].total_cmp(&scores[a]).then(a.cmp(&b)),
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                (true, true) => a.cmp(&b),
+            });
+        }
+        found.pick(keep)
+    }
+
+    /// What the taste model is, for the UI: how much it learned from and
+    /// how far to trust it, or what it still needs.
+    fn taste_status(&self) -> Value {
+        let taste = self.taste();
+        let mut out = match &taste.model {
+            Ok(m) => json!({
+                "ready": true,
+                "useful": m.useful(),
+                "learned_from": m.learned_from,
+                "liked": m.liked,
+                "disliked": m.disliked,
+                "agreement": m.agreement,
+            }),
+            Err(n) => json!({ "ready": false, "liked": n.liked, "disliked": n.disliked }),
+        };
+        out["needs"] = json!(crate::taste::AT_LEAST);
+        out["judged"] = json!(taste.judged);
+        out["seen"] = json!(taste.seen);
+        out
+    }
+
+    /// What the taste model makes of the picture at `path`: stars it would
+    /// likely get and whether it looks like a keeper or a reject. Null when
+    /// there is no model yet or the picture has not been looked at.
+    fn taste_score(&self, path: &str) -> Value {
+        let path = normalize(path);
+        let (dir, name) = match path.rfind('/') {
+            Some(0) => ("/".to_string(), path[1..].to_string()),
+            Some(i) => (path[..i].to_string(), path[i + 1..].to_string()),
+            None => return Value::Null,
+        };
+        let taste = self.taste();
+        let Ok(model) = &taste.model else { return Value::Null };
+        let Ok(found) = self.db.query(&Query { dir: dir.clone(), recursive: false, ..Default::default() }) else { return Value::Null };
+        let Some(row) = found.rows.iter().find(|row| row.2 == name) else { return Value::Null };
+        let Some(vector) = self.content.vector(&dir, row) else { return Value::Null };
+        let score = model.score(&vector);
+        if score.is_nan() {
+            return Value::Null;
+        }
+        let verdict = match model.verdict(score) {
+            crate::taste::Verdict::Keep => "keep",
+            crate::taste::Verdict::Reject => "reject",
+            crate::taste::Verdict::Unsure => "unsure",
+        };
+        json!({ "stars": model.stars(score), "verdict": verdict, "useful": model.useful() })
     }
 
     fn search_plain(&self, args: &Value) -> Result<crate::db::QueryResult, String> {
@@ -241,7 +367,9 @@ impl Engine {
         let dir = normalize(str_arg(args, "dir")?);
         let sort = args.get("sort").and_then(Value::as_str).unwrap_or("relevance");
         let bar = args.get("bar").and_then(Value::as_f64).map(|bar| bar as f32);
-        self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?, sort, bar)
+        let found = self.content.search(&dir, bool_arg(args, "recursive"), str_arg(args, "text")?, sort, bar)?;
+        // A description is not search terms: only the order can be taste's.
+        Ok(self.by_taste(found, sort, ""))
     }
 
     /// The smart collections that apply to the folder being viewed: those
@@ -352,6 +480,8 @@ impl Engine {
             "forget" => self.forget(str_arg(args, "path")?),
             "collection_delete" => self.delete_collection(str_arg(args, "name")?),
             "describe" => Ok(self.content.describe(str_arg(args, "path")?)?.to_string()),
+            "taste_status" => Ok(self.taste_status().to_string()),
+            "taste_score" => Ok(self.taste_score(str_arg(args, "path")?).to_string()),
             "upscale_models" => {
                 let dir = crate::sr::model_dir(&self.data_dir);
                 let models: Vec<Value> = crate::sr::MODELS

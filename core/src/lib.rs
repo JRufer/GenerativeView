@@ -12,5 +12,6 @@ pub mod index;
 pub mod meta;
 pub mod notes;
 pub mod sr;
+pub mod taste;
 pub mod thumbs;
 pub mod upscale;

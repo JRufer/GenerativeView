@@ -963,6 +963,8 @@ class _SortMenu extends StatelessWidget {
     'name_desc': 'Name Z to A',
     'size': 'Largest first',
     'rating': 'Best rated first',
+    // Learned from the stars and flags given so far.
+    'taste': 'Likely keepers first',
   };
 
   @override
