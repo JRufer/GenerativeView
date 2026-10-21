@@ -917,7 +917,7 @@ void main() {
     // A new width brings the height along, and the height glows for a moment.
     await tester.enterText(find.byKey(const ValueKey('remix-width')), '1024');
     await tester.pump();
-    expect(height.text, '${(1024 * 1216 / 832).round()}');
+    expect(height.text, '${snapSize((1024 * 1216 / 832).round())}', reason: 'rounded to a size every server takes');
     expect((glow('height').border! as Border).top.color, isNot(Colors.transparent));
     expect((glow('width').border! as Border).top.color, Colors.transparent);
     await tester.pump(const Duration(seconds: 1));
@@ -926,7 +926,7 @@ void main() {
     // And the other way.
     await tester.enterText(find.byKey(const ValueKey('remix-height')), '608');
     await tester.pump();
-    expect(width.text, '${(608 * 832 / 1216).round()}');
+    expect(width.text, '${snapSize((608 * 832 / 1216).round())}');
     expect((glow('width').border! as Border).top.color, isNot(Colors.transparent));
     await tester.pumpAndSettle(const Duration(seconds: 1));
 

@@ -92,8 +92,8 @@ class _RemixPanelState extends State<RemixPanel> {
   void initState() {
     super.initState();
     final (w, h) = recipeSize(info);
-    _width = TextEditingController(text: w > 0 ? '$w' : '1024');
-    _height = TextEditingController(text: h > 0 ? '$h' : '1024');
+    _width = TextEditingController(text: w > 0 ? '${snapSize(w)}' : '1024');
+    _height = TextEditingController(text: h > 0 ? '${snapSize(h)}' : '1024');
     _aspect = w > 0 && h > 0 ? w / h : 1;
     final support = backendSupport(info);
     // The program that made it, if it is set up and can take it; else the
@@ -150,8 +150,12 @@ class _RemixPanelState extends State<RemixPanel> {
       _sending = true;
       _error = null;
     });
-    final width = int.tryParse(_width.text) ?? 1024;
-    final height = int.tryParse(_height.text) ?? 1024;
+    // Every server takes multiples of 16 (some, like Krea 2 and FLUX, only
+    // those): a size typed otherwise is rounded, and shown rounded.
+    final width = snapSize(int.tryParse(_width.text) ?? 1024);
+    final height = snapSize(int.tryParse(_height.text) ?? 1024);
+    _width.text = '$width';
+    _height.text = '$height';
     try {
       ImageInput? init;
       if (_imageToImage) {
@@ -299,6 +303,12 @@ class _RemixPanelState extends State<RemixPanel> {
               SizeField(width: _width, height: _height, aspect: _aspect),
               _Stepper(value: _count, min: 1, max: 16, label: _count == 1 ? 'picture' : 'pictures', onChanged: (v) => setState(() => _count = v)),
             ],
+          ),
+          SizeSlider(
+            key: const ValueKey<String>('remix-size-slider'),
+            width: _width,
+            height: _height,
+            original: recipeSize(info),
           ),
           if (!_random && _count > 1)
             const Padding(
@@ -576,7 +586,7 @@ class _SizeFieldState extends State<SizeField> {
     if (!_locked) return;
     final v = int.tryParse(text);
     if (v == null || v <= 0) return;
-    final other = math.max(1, (isWidth ? v / _aspect : v * _aspect).round());
+    final other = snapSize((isWidth ? v / _aspect : v * _aspect).round());
     (isWidth ? widget.height : widget.width).text = '$other';
     _flash(isWidth ? 'height' : 'width');
   }
@@ -606,14 +616,25 @@ class _SizeFieldState extends State<SizeField> {
             if (glow) BoxShadow(color: Palette.accent.withValues(alpha: 0.45), blurRadius: 8),
           ],
         ),
-        child: TextField(
-          key: ValueKey<String>('remix-$side'),
-          controller: controller,
-          keyboardType: TextInputType.number,
-          textAlign: TextAlign.center,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: _box(label).copyWith(fillColor: Colors.transparent),
-          onChanged: (text) => _typed(side == 'width', text),
+        child: Focus(
+          // Left: rounded to a size every server takes.
+          onFocusChange: (focused) {
+            if (focused) return;
+            final v = int.tryParse(controller.text);
+            if (v != null && snapSize(v) != v) {
+              controller.text = '${snapSize(v)}';
+              _typed(side == 'width', controller.text);
+            }
+          },
+          child: TextField(
+            key: ValueKey<String>('remix-$side'),
+            controller: controller,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: _box(label).copyWith(fillColor: Colors.transparent),
+            onChanged: (text) => _typed(side == 'width', text),
+          ),
         ),
       );
     }
@@ -665,6 +686,149 @@ class _SizeFieldState extends State<SizeField> {
             ],
           ),
           field(widget.height, 'Height', 'height'),
+        ],
+      ),
+    );
+  }
+}
+
+/// What every server takes as a side: a multiple of this. SD needs 8;
+/// FLUX, Krea 2 and others need 16.
+const int sizeStep = 16;
+
+/// [v] rounded to the nearest size every server takes, and at least one
+/// step.
+int snapSize(int v) => math.max(sizeStep, (v / sizeStep).round() * sizeStep);
+
+/// The sizes of [aspect] (width over height) a size slider stops at: every
+/// long side from [least] to [most] in steps of [sizeStep], the short side
+/// rounded to a step too, each size once. [most] is raised to take in
+/// [keep] (the picture's own size) where that is bigger.
+List<(int, int)> sizeStops(double aspect, {int least = 256, int most = 2048, (int, int)? keep}) {
+  final a = aspect > 0 ? aspect : 1.0;
+  if (keep != null) most = math.max(most, snapSize(math.max(keep.$1, keep.$2)));
+  final out = <(int, int)>[];
+  for (var long = snapSize(least); long <= most; long += sizeStep) {
+    final short = snapSize((a >= 1 ? long / a : long * a).round());
+    final size = a >= 1 ? (long, short) : (short, long);
+    if (out.isEmpty || out.last != size) out.add(size);
+  }
+  return out;
+}
+
+/// A slider for the remix's size, in the shape the width and height boxes
+/// have now. It stops only at sizes every server takes (multiples of
+/// [sizeStep] both ways), says the size and how many megapixels it is, and
+/// offers to go back to the picture's own size.
+class SizeSlider extends StatefulWidget {
+  const SizeSlider({super.key, required this.width, required this.height, required this.original});
+  final TextEditingController width;
+  final TextEditingController height;
+
+  /// The picture's own size.
+  final (int, int) original;
+
+  @override
+  State<SizeSlider> createState() => _SizeSliderState();
+}
+
+class _SizeSliderState extends State<SizeSlider> {
+  /// The shape slid along: set when sliding starts, so the stops do not
+  /// shift under the thumb as the boxes are rounded.
+  double? _sliding;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.width.addListener(_changed);
+    widget.height.addListener(_changed);
+  }
+
+  @override
+  void dispose() {
+    widget.width.removeListener(_changed);
+    widget.height.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  (int, int) get _size {
+    final (ow, oh) = widget.original;
+    return (int.tryParse(widget.width.text) ?? ow, int.tryParse(widget.height.text) ?? oh);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (w, h) = _size;
+    final (ow, oh) = widget.original;
+    final aspect = _sliding ?? (w > 0 && h > 0 ? w / h : (ow > 0 && oh > 0 ? ow / oh : 1.0));
+    final stops = sizeStops(aspect, keep: widget.original);
+    // The stop nearest the size in the boxes.
+    var at = 0;
+    for (var i = 0; i < stops.length; i++) {
+      final d = (math.max(stops[i].$1, stops[i].$2) - math.max(w, h)).abs();
+      final best = (math.max(stops[at].$1, stops[at].$2) - math.max(w, h)).abs();
+      if (d < best) at = i;
+    }
+    final mp = w * h / 1e6;
+    final own = snapSize(ow) == w && snapSize(oh) == h;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          const Text('Size', style: TextStyle(fontSize: 13)),
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(activeTrackColor: Palette.accent, thumbColor: Palette.accent),
+              child: Slider(
+                value: at.toDouble(),
+                min: 0,
+                max: math.max(1, stops.length - 1).toDouble(),
+                divisions: math.max(1, stops.length - 1),
+                label: '${stops[at].$1} × ${stops[at].$2}',
+                onChangeStart: (_) => setState(() => _sliding = aspect),
+                onChangeEnd: (_) => setState(() => _sliding = null),
+                onChanged: stops.length < 2
+                    ? null
+                    : (v) {
+                        final (sw, sh) = stops[v.round()];
+                        widget.width.text = '$sw';
+                        widget.height.text = '$sh';
+                      },
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 128,
+            child: Text(
+              '$w × $h · ${mp.toStringAsFixed(mp < 10 ? 2 : 1)} MP',
+              key: const ValueKey<String>('remix-size-label'),
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 12,
+                color: w % sizeStep == 0 && h % sizeStep == 0 ? Palette.muted : const Color(0xFFE6B450),
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 36,
+            child: own || ow <= 0 || oh <= 0
+                ? null
+                : IconButton(
+                    key: const ValueKey<String>('remix-size-reset'),
+                    tooltip: 'Back to the picture\'s own size, ${snapSize(ow)} × ${snapSize(oh)}',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.undo, size: 16),
+                    onPressed: () {
+                      widget.width.text = '${snapSize(ow)}';
+                      widget.height.text = '${snapSize(oh)}';
+                    },
+                  ),
+          ),
         ],
       ),
     );
