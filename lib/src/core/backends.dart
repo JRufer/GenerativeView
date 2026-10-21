@@ -669,10 +669,11 @@ String _comfyError(Map<dynamic, dynamic> status) {
 }
 
 Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
-  // Image to image always gets a graph built from the settings: InvokeAI's
-  // own saved graphs come in too many shapes to turn into one reliably.
+  // The picture's own graph when it has one, for image to image too: it
+  // names the right loaders for any kind of model (Krea 2's separate VAE
+  // and text encoder, say), which a graph built from settings cannot.
   final init = remix.init;
-  final raw = init == null && carriesGraph('invokeai', remix.info) ? rawBlock(remix.info, 'invokeai_graph') : null;
+  final raw = carriesGraph('invokeai', remix.info) ? rawBlock(remix.info, 'invokeai_graph') : null;
   final random = math.Random();
   final ids = <int>[];
   final skipped = <String>[];
@@ -715,6 +716,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
       if (run == 0) _requirePrompt(found, remix);
       if (remix.loras != null) editInvokeLoras(graph, remix.loras!);
+      if (start != null) invokeImageToImage(graph, image: start.image, keepMask: start.mask, strength: start.strength);
     } else {
       try {
         graph = invokeGraph(recipe, seed, mains, loras, skipped: run == 0 ? skipped : null, init: start);
@@ -743,6 +745,82 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
             'pictures stay in its gallery. Updating InvokeAI fixes this.',
           )),
   );
+}
+
+/// Make an InvokeAI graph (the picture's own, as InvokeAI saved it) start
+/// from the uploaded picture [image]: the picture is encoded by the
+/// image-to-latents node that matches the graph's latents-to-image node
+/// (`i2l` for `l2i`, `qwen_image_i2l` for Krea 2's `qwen_image_l2i`,
+/// `flux_vae_encode` for `flux_vae_decode`, and so on) with the same VAE,
+/// and fed to the denoise node, which starts [strength] of the way from the
+/// end. With [keepMask] (uploaded, white where the picture is kept), only
+/// the rest is redrawn. How InvokeAI's own canvas does it, for any model.
+///
+/// Throws a [BackendException] for a graph it cannot do this to.
+void invokeImageToImage(
+  Map<String, dynamic> graph, {
+  required String image,
+  String? keepMask,
+  required double strength,
+}) {
+  final nodes = graph['nodes'];
+  final edges = graph['edges'];
+  if (nodes is! Map<String, dynamic> || edges is! List) {
+    throw BackendException('This picture\'s InvokeAI graph is not one this app can read.');
+  }
+  String type(String id) => '${(nodes[id] as Map?)?['type'] ?? ''}';
+  Map<String, dynamic>? into(String node, String field) {
+    for (final e in edges) {
+      if (e is Map<String, dynamic> && (e['destination'] as Map?)?['node_id'] == node && (e['destination'] as Map?)?['field'] == field) {
+        return e;
+      }
+    }
+    return null;
+  }
+
+  // The node that makes the picture: the one kept, if there are several.
+  final decoders = [
+    for (final MapEntry(:key, :value) in nodes.entries)
+      if (RegExp(r'(^|_)l2i$|_vae_decode$').hasMatch(type(key)) && value is Map) key,
+  ];
+  if (decoders.isEmpty) {
+    throw BackendException('This InvokeAI graph has no latents-to-image node, so it cannot be started from a picture.');
+  }
+  final decode = decoders.firstWhere((id) => (nodes[id] as Map)['is_intermediate'] == false, orElse: () => decoders.last);
+  final encodeType = type(decode).endsWith('l2i')
+      ? '${type(decode).substring(0, type(decode).length - 3)}i2l'
+      : type(decode).replaceFirst(RegExp(r'_vae_decode$'), '_vae_encode');
+
+  final vae = into(decode, 'vae')?['source'] as Map?;
+  final latents = into(decode, 'latents')?['source'] as Map?;
+  final denoise = latents?['node_id'] as String?;
+  if (vae == null || denoise == null || !type(denoise).contains('denoise')) {
+    throw BackendException('This InvokeAI graph does not decode straight from its denoise step, so it cannot be started from a picture.');
+  }
+
+  // Replace whatever the denoise step started from before, and its mask.
+  edges.removeWhere((e) {
+    final d = e is Map ? e['destination'] as Map? : null;
+    return d?['node_id'] == denoise && (d?['field'] == 'latents' || d?['field'] == 'denoise_mask');
+  });
+  void node(String id, Map<String, dynamic> fields) =>
+      nodes[id] = {'id': id, 'is_intermediate': true, 'use_cache': false, ...fields};
+  void edge(Object? from, String out, String to, String field) => edges.add({
+        'source': {'node_id': from, 'field': out},
+        'destination': {'node_id': to, 'field': field},
+      });
+
+  node('generativeview_i2l', {'type': encodeType, 'image': {'image_name': image}});
+  edge(vae['node_id'], '${vae['field']}', 'generativeview_i2l', 'vae');
+  edge('generativeview_i2l', 'latents', denoise, 'latents');
+  if (keepMask != null) {
+    node('generativeview_mask', {'type': 'create_denoise_mask', 'mask': {'image_name': keepMask}});
+    edge(vae['node_id'], '${vae['field']}', 'generativeview_mask', 'vae');
+    edge('generativeview_mask', 'denoise_mask', denoise, 'denoise_mask');
+  }
+  final step = nodes[denoise] as Map<String, dynamic>;
+  step['denoising_start'] = 1 - strength.clamp(0.0, 1.0);
+  step['denoising_end'] ??= 1.0;
 }
 
 /// Put [bytes] among InvokeAI's images, out of sight in its gallery; the

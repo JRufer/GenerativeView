@@ -827,7 +827,7 @@ void main() {
     expect((sent['3'] as Map)['inputs']['denoise'], 0.55);
   });
 
-  test('InvokeAI: image to image builds a graph that starts from the picture', () async {
+  test('InvokeAI: a picture from elsewhere gets a built graph that starts from it', () async {
     final batches = <Map<String, dynamic>>[];
     var uploaded = 0;
     Map<String, dynamic> model(String key, String name, String base, String type) =>
@@ -851,7 +851,7 @@ void main() {
       }
     });
     addTearDown(() => server.close(force: true));
-    // Even a picture that carries InvokeAI's own graph gets a built one.
+    // A picture with settings but no InvokeAI graph of its own.
     final own = GenInfo.fromJson({
       'source': 'invokeai',
       'prompt': 'a red fox',
@@ -860,9 +860,6 @@ void main() {
       'model': 'juggernautXL_v9',
       'params': [
         ['Steps', '30'],
-      ],
-      'raw': [
-        ['invokeai_graph', '{"nodes": {}}'],
       ],
       'width': 512,
       'height': 512,
@@ -889,6 +886,86 @@ void main() {
       expect(nodes.containsKey(e['source']['node_id']), isTrue, reason: '$e');
       expect(nodes.containsKey(e['destination']['node_id']), isTrue, reason: '$e');
     }
+  });
+
+  /// A Krea 2 graph as InvokeAI 7 saves it with a picture, cut down to
+  /// what matters here.
+  Map<String, dynamic> krea2Graph() => {
+        'id': 'krea2_graph',
+        'nodes': {
+          'loader': {'id': 'loader', 'type': 'krea2_model_loader', 'model': {'key': 'k2'}, 'vae_model': {'key': 'qvae'}},
+          'pos': {'id': 'pos', 'type': 'krea2_text_encoder', 'prompt': 'a red fox'},
+          'denoise': {'id': 'denoise', 'type': 'krea2_denoise', 'steps': 8, 'width': 512, 'height': 512, 'seed': 1, 'denoising_start': 0.0, 'denoising_end': 1.0},
+          'l2i': {'id': 'l2i', 'type': 'qwen_image_l2i', 'is_intermediate': false},
+        },
+        'edges': [
+          {'source': {'node_id': 'loader', 'field': 'transformer'}, 'destination': {'node_id': 'denoise', 'field': 'transformer'}},
+          {'source': {'node_id': 'pos', 'field': 'conditioning'}, 'destination': {'node_id': 'denoise', 'field': 'positive_conditioning'}},
+          {'source': {'node_id': 'loader', 'field': 'vae'}, 'destination': {'node_id': 'l2i', 'field': 'vae'}},
+          {'source': {'node_id': 'denoise', 'field': 'latents'}, 'destination': {'node_id': 'l2i', 'field': 'latents'}},
+        ],
+      };
+
+  bool joins(List<dynamic> edges, String from, String out, String to, String into) => edges.any((e) =>
+      e['source']['node_id'] == from && e['source']['field'] == out && e['destination']['node_id'] == to && e['destination']['field'] == into);
+
+  test('InvokeAI: a Krea 2 graph starts from the picture, encoded by its own VAE', () {
+    final graph = krea2Graph();
+    invokeImageToImage(graph, image: 'up1.png', keepMask: 'up2.png', strength: 0.4);
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    final edges = graph['edges'] as List;
+    expect(nodes['generativeview_i2l']['type'], 'qwen_image_i2l', reason: 'the encoder that matches its decoder');
+    expect(nodes['generativeview_i2l']['image'], {'image_name': 'up1.png'});
+    expect(joins(edges, 'loader', 'vae', 'generativeview_i2l', 'vae'), isTrue, reason: 'the VAE the picture was decoded with');
+    expect(joins(edges, 'generativeview_i2l', 'latents', 'denoise', 'latents'), isTrue);
+    expect(nodes['generativeview_mask']['type'], 'create_denoise_mask');
+    expect(nodes['generativeview_mask']['mask'], {'image_name': 'up2.png'});
+    expect(joins(edges, 'generativeview_mask', 'denoise_mask', 'denoise', 'denoise_mask'), isTrue);
+    expect(nodes['denoise']['denoising_start'], closeTo(0.6, 1e-9));
+    expect((nodes['loader'] as Map)['vae_model'], {'key': 'qvae'}, reason: 'its own loaders are left as they were');
+  });
+
+  test('InvokeAI: other families get their matching encoder', () {
+    for (final (decoder, encoder) in [('l2i', 'i2l'), ('flux_vae_decode', 'flux_vae_encode'), ('z_image_l2i', 'z_image_i2l')]) {
+      final graph = krea2Graph();
+      (graph['nodes'] as Map)['l2i']['type'] = decoder;
+      (graph['nodes'] as Map)['denoise']['type'] = 'denoise_latents';
+      invokeImageToImage(graph, image: 'in.png', strength: 0.5);
+      expect((graph['nodes'] as Map)['generativeview_i2l']['type'], encoder);
+      expect((graph['nodes'] as Map).containsKey('generativeview_mask'), isFalse, reason: 'no mask, none made');
+    }
+  });
+
+  test('InvokeAI: image to image of an InvokeAI picture uses its own graph', () async {
+    final batches = <Map<String, dynamic>>[];
+    var uploaded = 0;
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/api/v1/images/upload') {
+        await request.drain<void>();
+        json(request, {'image_name': 'up${++uploaded}.png'});
+      } else if (path == '/api/v1/queue/default/enqueue_batch') {
+        batches.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'item_ids': [1]});
+      } else {
+        // No model listing: its own graph needs none.
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = await sendRemix(
+      'invokeai',
+      base,
+      fromPicture(info(source: 'invokeai', raw: [['invokeai_graph', jsonEncode(krea2Graph())]]), masked: true),
+    );
+    expect(ticket.message, 'Queued 1 picture in InvokeAI, the painted area redrawn at strength 0.55');
+    final graph = (batches.single['batch'] as Map)['graph'] as Map<String, dynamic>;
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    expect(nodes['loader']['type'], 'krea2_model_loader');
+    expect(nodes['generativeview_i2l']['image'], {'image_name': 'up1.png'});
+    expect(nodes['generativeview_mask']['mask'], {'image_name': 'up2.png'});
+    expect(nodes['denoise']['seed'], 7, reason: 'the seed asked for');
+    expect(nodes['denoise']['denoising_start'], closeTo(0.45, 1e-9));
   });
 
   test('Forge: image to image goes to img2img with the picture and mask', () async {

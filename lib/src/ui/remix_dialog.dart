@@ -337,14 +337,14 @@ class _RemixPanelState extends State<RemixPanel> {
               child: Text(urls[_backend]!, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
             ),
           // Said in the panel, not only in a tooltip, so it reads on a tablet.
-          if (_imageToImage && _backend == 'invokeai')
+          if (_imageToImage && _backend == 'invokeai' && !carriesGraph('invokeai', info))
             const Padding(
               key: ValueKey<String>('remix-built-graph'),
               padding: EdgeInsets.only(top: 6),
               child: Text(
-                'Image to image on InvokeAI uses a standard graph built from the picture\'s settings: '
-                'the same model and LoRAs (by name), prompt, seed, steps, CFG and sampler. '
-                'It works for SD 1.x, SD 2.x and SDXL models.',
+                'This picture was not made in InvokeAI, so it will get a standard graph built from its '
+                'settings that starts from the picture: the same model and LoRAs (by name), prompt, seed, '
+                'steps, CFG and sampler. That works for SD 1.x, SD 2.x and SDXL models.',
                 style: TextStyle(fontSize: 11.5, color: Palette.muted),
               ),
             )
