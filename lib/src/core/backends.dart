@@ -38,6 +38,8 @@ class Remix {
     required this.count,
     required this.width,
     required this.height,
+    this.steps,
+    this.cfg,
     this.loras,
     this.init,
   });
@@ -54,6 +56,11 @@ class Remix {
   final int count;
   final int width;
   final int height;
+
+  /// Sampling steps and CFG scale as the user set them; null to send them
+  /// as the picture had them.
+  final int? steps;
+  final double? cfg;
 
   /// The picture's LoRAs as the user has set them (on or off, and how
   /// strong); null to send them as the picture had them.
@@ -251,6 +258,21 @@ String? param(GenInfo info, List<String> names) {
   return (info.width, info.height);
 }
 
+/// Sampling steps from the metadata, if it says.
+int? recipeSteps(GenInfo info) {
+  final v = param(info, ['steps'])?.trim() ?? '';
+  return int.tryParse(v) ?? double.tryParse(v)?.round();
+}
+
+/// CFG scale from the metadata, if it says.
+double? recipeCfg(GenInfo info) =>
+    double.tryParse(param(info, ['cfg scale', 'cfg', 'cfg_scale'])?.trim() ?? '');
+
+/// The node fields that hold sampling steps, and CFG scale, in ComfyUI's
+/// and InvokeAI's graphs.
+const Set<String> _stepFields = {'steps', 'num_steps'};
+const Set<String> _cfgFields = {'cfg', 'cfg_scale'};
+
 /// Queue [remix] on the backend [kind] at [base]. The ticket says what was
 /// queued, and brings the pictures back as they finish.
 Future<RemixTicket> sendRemix(String kind, String base, Remix remix) async {
@@ -385,7 +407,7 @@ Future<Map<String, dynamic>> _answer(String url, HttpClientResponse response) as
 }
 
 /// Change a node graph in place: text inputs equal to the old prompts get
-/// the new ones; seeds, sizes and batch sizes get the new values. Works on
+/// the new ones; seeds, sizes, steps and CFG get the new values. Works on
 /// ComfyUI's `{id: {class_type, inputs}}` and InvokeAI's `{nodes: {id:
 /// {...fields}}}` alike, since both keep these as plain fields of a node.
 /// Returns how many prompt fields were found.
@@ -399,6 +421,8 @@ int _patchGraph(
   final oldPrompt = norm(remix.info.prompt);
   final oldNegative = norm(remix.info.negative);
   final (oldW, oldH) = recipeSize(remix.info);
+  final oldSteps = recipeSteps(remix.info);
+  final oldCfg = recipeCfg(remix.info);
   var found = 0;
   for (final node in nodes.values) {
     if (node is! Map<String, dynamic>) continue;
@@ -421,6 +445,12 @@ int _patchGraph(
             if (oldW == 0 || v == oldW) f[key] = remix.width;
           case 'height':
             if (oldH == 0 || v == oldH) f[key] = remix.height;
+          // Only where it is the picture's own, so a second pass (a
+          // refiner, an upscale) with settings of its own keeps them.
+          case _ when _stepFields.contains(key):
+            if (remix.steps != null && (oldSteps == null || v == oldSteps)) f[key] = remix.steps;
+          case _ when _cfgFields.contains(key):
+            if (remix.cfg != null && (oldCfg == null || (v - oldCfg).abs() < 1e-6)) f[key] = remix.cfg;
         }
       }
     }
@@ -472,6 +502,8 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     negative: remix.sentNegative,
     width: remix.width,
     height: remix.height,
+    steps: remix.steps,
+    cfg: remix.cfg,
     loras: remix.sentLoras,
   );
   for (var run = 0; run < remix.count; run++) {
@@ -784,6 +816,8 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     negative: remix.sentNegative,
     width: remix.width,
     height: remix.height,
+    steps: remix.steps,
+    cfg: remix.cfg,
     loras: remix.sentLoras,
   );
   for (var run = 0; run < remix.count; run++) {
@@ -794,6 +828,8 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
       final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
       invokeSeed(graph, seed);
+      if (remix.steps case final steps?) invokeSetting(graph, _stepFields, steps, old: recipeSteps(remix.info));
+      if (remix.cfg case final cfg?) invokeSetting(graph, _cfgFields, cfg, old: recipeCfg(remix.info));
       if (run == 0) _requirePrompt(found, remix);
       if (remix.loras != null) editInvokeLoras(graph, remix.loras!);
       if (start != null) invokeImageToImage(graph, image: start.image, keepMask: start.mask, strength: start.strength);
@@ -861,6 +897,28 @@ void invokeSeed(Map<String, dynamic> graph, int seed) {
     }
   }
   edges.removeWhere(cut.contains);
+}
+
+/// Give an InvokeAI graph [value] where one of [fields] is wired in from an
+/// `integer` or `float` node holding the picture's own value [old] (or
+/// any, when [old] is not known): that node's value is what counts, as with
+/// [invokeSeed]. Fields set directly are left to [_patchGraph].
+void invokeSetting(Map<String, dynamic> graph, Set<String> fields, num value, {num? old}) {
+  final nodes = graph['nodes'];
+  final edges = graph['edges'];
+  if (nodes is! Map || edges is! List) return;
+  for (final e in edges) {
+    if (e is! Map) continue;
+    final from = e['source'];
+    final to = e['destination'];
+    if (from is! Map || to is! Map || !fields.contains(to['field'])) continue;
+    final source = nodes[from['node_id']];
+    if (source is! Map || from['field'] != 'value') continue;
+    if (source['type'] != 'integer' && source['type'] != 'float') continue;
+    final v = source['value'];
+    if (old != null && v is num && (v - old).abs() > 1e-6) continue;
+    source['value'] = source['type'] == 'integer' ? value.round() : value.toDouble();
+  }
 }
 
 /// Make an InvokeAI graph (the picture's own, as InvokeAI saved it) start
@@ -1054,8 +1112,8 @@ Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
     'batch_size': 1,
     'width': remix.width,
     'height': remix.height,
-    'steps': ?number(['steps'])?.round(),
-    'cfg_scale': ?number(['cfg scale', 'cfg']),
+    'steps': ?(remix.steps ?? number(['steps'])?.round()),
+    'cfg_scale': ?(remix.cfg ?? number(['cfg scale', 'cfg'])),
     'sampler_name': ?sampler,
     'scheduler': ?scheduler,
     'save_images': true,

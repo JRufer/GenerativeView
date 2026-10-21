@@ -1024,6 +1024,108 @@ void main() {
     }
   });
 
+  // ------------------------------------------------ steps and CFG
+
+  Remix tuned(GenInfo info, {int? steps, double? cfg}) => Remix(
+        info: info,
+        prompt: 'a red fox',
+        negative: 'blurry',
+        seed: 7,
+        randomSeed: false,
+        count: 1,
+        width: 512,
+        height: 512,
+        steps: steps,
+        cfg: cfg,
+      );
+
+  test('ComfyUI: steps and CFG set in the sampler, a second pass left alone', () async {
+    final queued = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      if (request.uri.path == '/prompt') {
+        queued.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'prompt_id': 'p1'});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final graph = jsonEncode({
+      '3': {'class_type': 'KSampler', 'inputs': {'seed': 1, 'steps': 20, 'cfg': 7, 'denoise': 1}},
+      '4': {'class_type': 'KSampler', 'inputs': {'seed': 1, 'steps': 12, 'cfg': 4.5, 'denoise': 0.4}},
+      '6': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'a red fox'}},
+    });
+    final picture = info(source: 'comfyui', raw: [['prompt', graph]]);
+    await sendRemix('comfyui', base, tuned(picture, steps: 35, cfg: 3.5));
+    final sent = queued.single['prompt'] as Map;
+    expect(sent['3']['inputs']['steps'], 35);
+    expect(sent['3']['inputs']['cfg'], 3.5);
+    expect(sent['4']['inputs']['steps'], 12, reason: 'not the picture\'s own steps');
+    expect(sent['4']['inputs']['cfg'], 4.5);
+
+    // Left unset, both are sent as the picture had them.
+    queued.clear();
+    await sendRemix('comfyui', base, tuned(picture));
+    final same = queued.single['prompt'] as Map;
+    expect(same['3']['inputs']['steps'], 20);
+    expect(same['3']['inputs']['cfg'], 7);
+  });
+
+  test('InvokeAI: steps and CFG set, wired in from a node or not, metadata too', () async {
+    late Map<String, dynamic> batch;
+    final (server, base) = await serve((request) async {
+      if (request.uri.path == '/api/v1/queue/default/enqueue_batch') {
+        batch = jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>;
+        json(request, {'item_ids': [1]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final graph = jsonEncode({
+      'nodes': {
+        'steps': {'id': 'steps', 'type': 'integer', 'value': 20},
+        'pos': {'id': 'pos', 'type': 'krea2_text_encoder', 'prompt': 'a red fox'},
+        'denoise': {'id': 'denoise', 'type': 'krea2_denoise', 'seed': 0, 'steps': 20, 'cfg_scale': 7},
+        'meta': {'id': 'meta', 'type': 'core_metadata', 'steps': 20, 'cfg_scale': 7},
+      },
+      'edges': [
+        {'source': {'node_id': 'steps', 'field': 'value'}, 'destination': {'node_id': 'denoise', 'field': 'steps'}},
+      ],
+    });
+    await sendRemix('invokeai', base, tuned(info(source: 'invokeai', raw: [['invokeai_graph', graph]]), steps: 40, cfg: 4));
+    final nodes = (batch['batch'] as Map)['graph']['nodes'] as Map;
+    expect(nodes['steps']['value'], 40, reason: 'the node wired in is what counts');
+    expect(nodes['denoise']['steps'], 40);
+    expect(nodes['denoise']['cfg_scale'], 4);
+    expect(nodes['meta']['steps'], 40, reason: 'so the picture records what it was made with');
+    expect(nodes['meta']['cfg_scale'], 4);
+  });
+
+  test('Forge: steps and CFG as set, else as the picture had them', () async {
+    final payloads = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      payloads.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+      json(request, {'images': <String>[]});
+    });
+    addTearDown(() => server.close(force: true));
+    await (await sendRemix('forge', base, tuned(info(source: 'a1111'), steps: 8, cfg: 2.5))).results.drain<void>();
+    await (await sendRemix('forge', base, tuned(info(source: 'a1111')))).results.drain<void>();
+    expect(payloads[0]['steps'], 8);
+    expect(payloads[0]['cfg_scale'], 2.5);
+    expect(payloads[1]['steps'], 20);
+    expect(payloads[1]['cfg_scale'], 7);
+  });
+
+  test('a built graph takes the steps and CFG as set', () {
+    final recipe = Recipe.from(forgePicture(), prompt: 'a red fox', negative: '', width: 832, height: 1216, steps: 12, cfg: 3);
+    expect(recipe.steps, 12);
+    expect(recipe.cfg, 3);
+    final own = Recipe.from(forgePicture(), prompt: 'a red fox', negative: '', width: 832, height: 1216);
+    expect(own.steps, 28);
+    expect(own.cfg, 6.5);
+  });
+
   // ------------------------------------------------ picked up again
 
   test('ComfyUI: a remix sent earlier is picked up again by its job', () async {

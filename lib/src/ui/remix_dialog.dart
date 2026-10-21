@@ -68,6 +68,9 @@ class _RemixPanelState extends State<RemixPanel> {
   /// Width over height, as the picture is: kept while the size is locked.
   late final double _aspect;
 
+  /// Sampling steps and CFG scale, as the user sets them.
+  late final SamplingChoice _sampling = SamplingChoice(steps: recipeSteps(widget.info), cfg: recipeCfg(widget.info));
+
   /// The picture's LoRAs, as the user sets them.
   late final List<LoraChoice> _loras = [for (final l in widget.info.loras) LoraChoice(l)];
   bool _random = false;
@@ -183,6 +186,8 @@ class _RemixPanelState extends State<RemixPanel> {
           count: _count,
           width: width,
           height: height,
+          steps: _sampling.sentSteps,
+          cfg: _sampling.sentCfg,
           loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
           init: init,
         ),
@@ -315,6 +320,7 @@ class _RemixPanelState extends State<RemixPanel> {
               padding: EdgeInsets.only(top: 6),
               child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
             ),
+          SamplingSection(key: const ValueKey<String>('remix-sampling'), choice: _sampling),
           if (_loras.isNotEmpty) LoraSection(loras: _loras, prompt: _prompt),
           PanelHeading(
             'Send to',
@@ -831,6 +837,261 @@ class _SizeSliderState extends State<SizeSlider> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Sampling steps and CFG scale for a remix: where the picture had them,
+/// and where the user has moved them. Null where the picture does not say
+/// (and the user has not set one).
+class SamplingChoice {
+  SamplingChoice({this.steps, this.cfg}) : originalSteps = steps, originalCfg = cfg;
+
+  final int? originalSteps;
+  final double? originalCfg;
+  int? steps;
+  double? cfg;
+
+  static const int minSteps = 1;
+  static const int maxSteps = 150;
+  static const double minCfg = 0;
+  static const double maxCfg = 30;
+
+  /// The slider's range, wide enough for the picture's own value.
+  int get stepsCeiling => math.max(maxSteps, originalSteps ?? 0);
+  double get cfgCeiling => math.max(maxCfg, originalCfg ?? 0.0);
+
+  bool get stepsChanged => steps != originalSteps;
+  bool get cfgChanged => cfg != null && (originalCfg == null || (cfg! - originalCfg!).abs() > 1e-9);
+
+  /// What to send: null to leave it as the picture had it.
+  int? get sentSteps => stepsChanged ? steps : null;
+  double? get sentCfg => cfgChanged ? cfg : null;
+}
+
+/// A CFG scale as it is shown and typed: 7, 3.5, 4.25.
+String cfgText(double v) {
+  final s = v.toStringAsFixed(2);
+  return s.replaceFirst(RegExp(r'\.?0+$'), '');
+}
+
+/// Sampling steps and CFG scale, folded away until opened like the LoRAs:
+/// each a slider and a box to type a number into, starting where the
+/// picture had it, with a way back to that.
+class SamplingSection extends StatefulWidget {
+  const SamplingSection({super.key, required this.choice});
+  final SamplingChoice choice;
+
+  @override
+  State<SamplingSection> createState() => _SamplingSectionState();
+}
+
+class _SamplingSectionState extends State<SamplingSection> {
+  bool _open = false;
+  late final TextEditingController _steps = TextEditingController(text: widget.choice.steps?.toString() ?? '');
+  late final TextEditingController _cfg = TextEditingController(text: widget.choice.cfg == null ? '' : cfgText(widget.choice.cfg!));
+
+  SamplingChoice get c => widget.choice;
+
+  @override
+  void dispose() {
+    _steps.dispose();
+    _cfg.dispose();
+    super.dispose();
+  }
+
+  void _setSteps(int? v, {bool box = true}) {
+    setState(() => c.steps = v?.clamp(SamplingChoice.minSteps, 1000).toInt());
+    if (box) _steps.text = c.steps?.toString() ?? '';
+  }
+
+  void _setCfg(double? v, {bool box = true}) {
+    setState(() => c.cfg = v?.clamp(SamplingChoice.minCfg, 100).toDouble());
+    if (box) _cfg.text = c.cfg == null ? '' : cfgText(c.cfg!);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final still = MediaQuery.of(context).disableAnimations;
+    final changed = c.stepsChanged || c.cfgChanged;
+    final summary = [
+      c.steps == null ? 'server\'s steps' : '${c.steps} steps',
+      c.cfg == null ? 'server\'s CFG' : 'CFG ${cfgText(c.cfg!)}',
+    ].join(' · ');
+    final rows = !_open
+        ? const SizedBox(width: double.infinity)
+        : Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
+            decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _row(
+                  label: 'Steps',
+                  sliderKey: 'remix-steps-slider',
+                  boxKey: 'remix-steps',
+                  resetKey: 'remix-steps-reset',
+                  controller: _steps,
+                  value: (c.steps ?? 30).toDouble(),
+                  min: SamplingChoice.minSteps.toDouble(),
+                  max: c.stepsCeiling.toDouble(),
+                  divisions: c.stepsCeiling - SamplingChoice.minSteps,
+                  label2: '${c.steps ?? 30}',
+                  onSlide: (v) => _setSteps(v.round()),
+                  onType: (t) => _setSteps(int.tryParse(t) ?? c.originalSteps, box: false),
+                  formatter: FilteringTextInputFormatter.digitsOnly,
+                  changed: c.stepsChanged,
+                  original: c.originalSteps?.toString(),
+                  onReset: () => _setSteps(c.originalSteps),
+                ),
+                _row(
+                  label: 'CFG',
+                  sliderKey: 'remix-cfg-slider',
+                  boxKey: 'remix-cfg',
+                  resetKey: 'remix-cfg-reset',
+                  controller: _cfg,
+                  value: c.cfg ?? 7,
+                  min: SamplingChoice.minCfg,
+                  max: c.cfgCeiling,
+                  // Half steps on the slider; finer ones can be typed.
+                  divisions: ((c.cfgCeiling - SamplingChoice.minCfg) * 2).round(),
+                  label2: cfgText(c.cfg ?? 7),
+                  onSlide: (v) => _setCfg((v * 2).round() / 2),
+                  onType: (t) => _setCfg(double.tryParse(t) ?? c.originalCfg, box: false),
+                  formatter: FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+                  changed: c.cfgChanged,
+                  original: c.originalCfg == null ? null : cfgText(c.originalCfg!),
+                  onReset: () => _setCfg(c.originalCfg),
+                ),
+                if (c.originalSteps == null || c.originalCfg == null)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      'Left empty, a setting the picture does not record is left to the server.',
+                      style: TextStyle(fontSize: 11.5, color: Palette.faint),
+                    ),
+                  ),
+              ],
+            ),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        InkWell(
+          key: const ValueKey<String>('remix-sampling-toggle'),
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                AnimatedRotation(
+                  turns: _open ? 0.25 : 0,
+                  duration: still ? Duration.zero : const Duration(milliseconds: 180),
+                  child: const Icon(Icons.chevron_right, size: 18, color: Palette.faint),
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  'STEPS & CFG',
+                  style: TextStyle(fontSize: 10.5, letterSpacing: 0.9, fontWeight: FontWeight.w600, color: Palette.faint),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    summary,
+                    key: const ValueKey<String>('remix-sampling-summary'),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11.5, color: changed ? Palette.accent : Palette.faint),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (still)
+          rows
+        else
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: rows,
+          ),
+      ],
+    );
+  }
+
+  Widget _row({
+    required String label,
+    required String sliderKey,
+    required String boxKey,
+    required String resetKey,
+    required TextEditingController controller,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String label2,
+    required ValueChanged<double> onSlide,
+    required ValueChanged<String> onType,
+    required TextInputFormatter formatter,
+    required bool changed,
+    required String? original,
+    required VoidCallback onReset,
+  }) {
+    return Row(
+      children: [
+        SizedBox(width: 44, child: Text(label, style: const TextStyle(fontSize: 13))),
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(activeTrackColor: Palette.accent, thumbColor: Palette.accent),
+            child: Slider(
+              key: ValueKey<String>(sliderKey),
+              value: value.clamp(min, max).toDouble(),
+              min: min,
+              max: max,
+              divisions: math.max(1, divisions),
+              label: label2,
+              onChanged: onSlide,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 72,
+          child: TextField(
+            key: ValueKey<String>(boxKey),
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [formatter],
+            textAlign: TextAlign.right,
+            onChanged: onType,
+            style: const TextStyle(fontSize: 13, fontFeatures: [FontFeature.tabularFigures()]),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: Palette.hover,
+              hintText: original == null ? 'unset' : null,
+              hintStyle: const TextStyle(fontSize: 12, color: Palette.faint),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 36,
+          child: changed
+              ? IconButton(
+                  key: ValueKey<String>(resetKey),
+                  tooltip: original == null ? 'Leave it to the server' : 'Back to $original, as the picture had it',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.undo, size: 16),
+                  onPressed: onReset,
+                )
+              : null,
+        ),
+      ],
     );
   }
 }

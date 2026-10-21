@@ -955,6 +955,62 @@ void main() {
     expect(height.text, '832');
   });
 
+  testWidgets('steps and CFG are folded away, set by slider or by typing, and can go back', (tester) async {
+    final choice = SamplingChoice(steps: 20, cfg: 7);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(width: 480, child: SamplingSection(choice: choice)),
+        ),
+      ),
+    ));
+    // Folded away to start with, the values on the heading.
+    expect(find.byKey(const ValueKey('remix-steps-slider')), findsNothing);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('remix-sampling-summary'))).data, '20 steps · CFG 7');
+    await tester.tap(find.byKey(const ValueKey('remix-sampling-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('remix-steps-slider')), findsOneWidget);
+    expect(find.byKey(const ValueKey('remix-cfg-slider')), findsOneWidget);
+    expect(choice.sentSteps, isNull, reason: 'unchanged, sent as the picture had it');
+    expect(choice.sentCfg, isNull);
+
+    // Typed.
+    await tester.enterText(find.byKey(const ValueKey('remix-steps')), '42');
+    await tester.enterText(find.byKey(const ValueKey('remix-cfg')), '3.25');
+    await tester.pump();
+    expect(choice.sentSteps, 42);
+    expect(choice.sentCfg, 3.25);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('remix-sampling-summary'))).data, '42 steps · CFG 3.25');
+
+    // Slid (to the middle of 0 to 30): the box follows, in half steps.
+    await tester.tap(find.byKey(const ValueKey('remix-cfg-slider')));
+    await tester.pump();
+    expect(choice.cfg, 15);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('remix-cfg'))).controller!.text, '15');
+
+    // Back to the picture's own.
+    await tester.tap(find.byKey(const ValueKey('remix-steps-reset')));
+    await tester.tap(find.byKey(const ValueKey('remix-cfg-reset')));
+    await tester.pump();
+    expect(choice.sentSteps, isNull);
+    expect(choice.sentCfg, isNull);
+    expect(find.byKey(const ValueKey('remix-steps-reset')), findsNothing);
+  });
+
+  test('steps and CFG a picture does not record are left to the server until set', () {
+    final choice = SamplingChoice();
+    expect(choice.sentSteps, isNull);
+    expect(choice.sentCfg, isNull);
+    choice.steps = 25;
+    choice.cfg = 5;
+    expect(choice.sentSteps, 25);
+    expect(choice.sentCfg, 5);
+    expect(cfgText(7), '7');
+    expect(cfgText(3.5), '3.5');
+    expect(cfgText(10), '10');
+    expect(cfgText(4.25), '4.25');
+  });
+
   testWidgets('a LoRA weight slider starts at the picture\'s weight and shows how far it moved', (tester) async {
     final choice = LoraChoice(const LoraRef('loras/fur_detail.safetensors', 0.8, null, ''));
     await tester.pumpWidget(MaterialApp(

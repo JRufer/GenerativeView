@@ -39,13 +39,16 @@ class Recipe {
   final String? scheduler;
   final int? clipSkip;
 
-  /// Read from [info], with the user's own [prompt], [negative] and size.
+  /// Read from [info], with the user's own [prompt], [negative] and size,
+  /// and their [steps] and [cfg] where set.
   factory Recipe.from(
     GenInfo info, {
     required String prompt,
     required String negative,
     required int width,
     required int height,
+    int? steps,
+    double? cfg,
     List<LoraRef>? loras,
   }) {
     String? p(List<String> names) {
@@ -66,8 +69,8 @@ class Recipe {
       loras: loras ?? info.loras,
       width: width,
       height: height,
-      steps: int.tryParse(p(['steps']) ?? '') ?? double.tryParse(p(['steps']) ?? '')?.round(),
-      cfg: double.tryParse(p(['cfg scale', 'cfg', 'cfg_scale']) ?? ''),
+      steps: steps ?? int.tryParse(p(['steps']) ?? '') ?? double.tryParse(p(['steps']) ?? '')?.round(),
+      cfg: cfg ?? double.tryParse(p(['cfg scale', 'cfg', 'cfg_scale']) ?? ''),
       sampler: sampler,
       scheduler: scheduler,
       clipSkip: int.tryParse(p(['clip skip', 'clip_skip']) ?? ''),
