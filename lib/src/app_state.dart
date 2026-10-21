@@ -2061,8 +2061,6 @@ class AppState extends ChangeNotifier {
   }
 }
 
-/// A remix sent to a server: waiting, or back with [saved] pictures.
-@immutable
 /// A remix sent and not yet back, as it is kept between runs of the app.
 class _PendingRemix {
   _PendingRemix({required this.kind, required this.base, required this.jobs, required this.path, required this.name, required this.at});
@@ -2100,6 +2098,8 @@ class _PendingRemix {
   }
 }
 
+/// A remix sent to a server: waiting, or back with [saved] pictures.
+@immutable
 class RemixJob {
   const RemixJob(this.id, this.name, {this.saved = const [], this.running = true});
   final int id;

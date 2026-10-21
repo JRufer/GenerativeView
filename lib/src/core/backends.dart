@@ -711,7 +711,8 @@ Stream<RemixImage> _comfyResults(String base, List<String> ids, [StreamControlle
     }
   } finally {
     client.close(force: true);
-    await done?.close();
+    // Not waited for: with no one listening it would never finish.
+    if (done != null) unawaited(done.close());
   }
 }
 
@@ -1032,7 +1033,8 @@ Stream<RemixImage> _invokeResults(String base, List<int> ids, [StreamController<
     }
   } finally {
     client.close(force: true);
-    await done?.close();
+    // Not waited for: with no one listening it would never finish.
+    if (done != null) unawaited(done.close());
   }
 }
 

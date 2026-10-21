@@ -1109,7 +1109,9 @@ void main() {
       '6': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'a red fox'}},
     });
     final comfy = await sendRemix('comfyui', base, remix(info(source: 'comfyui', raw: [['prompt', graph]])));
-    expect((comfy.kind, comfy.base, comfy.jobs), ('comfyui', base, ['abc']));
+    expect(comfy.kind, 'comfyui');
+    expect(comfy.base, base);
+    expect(comfy.jobs, ['abc']);
     final forge = await sendRemix('forge', base, remix(info(source: 'a1111')));
     expect(forge.jobs, isEmpty);
     await forge.results.toList();

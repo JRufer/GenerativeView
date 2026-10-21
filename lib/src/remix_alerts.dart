@@ -35,7 +35,7 @@ class RemixAlerts with WidgetsBindingObserver {
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState life) => _life = life;
+  void didChangeAppLifecycleState(AppLifecycleState state) => _life = state;
 
   void _changed() {
     final jobs = state.remixes.value;
