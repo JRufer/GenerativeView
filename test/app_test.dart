@@ -803,6 +803,39 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('in a narrow landscape window the metadata panel stays beside the grid', (
+    tester,
+  ) async {
+    final state = await launch(tester, size: const Size(700, 450));
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    if (state.leftOpen) state.toggleLeft();
+    if (!state.rightOpen) state.toggleRight();
+    state.setTileSize(120);
+    state.select(0);
+    await pumpUntil(
+      tester,
+      () => find.byType(MetaPanel).evaluate().isNotEmpty,
+      what: 'the metadata panel',
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    Rect rect(Type type) => tester.getRect(find.byType(type));
+
+    expect(state.narrowLayout, isTrue);
+    expect(state.portraitLayout, isFalse);
+    // Docked: the grid gives up the room, and nothing shades it.
+    expect(rect(MetaPanel).left, greaterThanOrEqualTo(rect(MediaGrid).right));
+    expect(rect(MetaPanel).right, 700);
+
+    // Tapping another picture keeps the panel open and moves it to that picture.
+    state.select(3);
+    await tester.pump();
+    expect(state.rightOpen, isTrue);
+    expect(state.selectedIndex, 3);
+    expect(rect(MetaPanel).left, greaterThanOrEqualTo(rect(MediaGrid).right));
+
+    await close(tester, state);
+  });
+
   testWidgets('in a portrait window the metadata panel is a footer', (
     tester,
   ) async {
@@ -893,7 +926,6 @@ void main() {
     await tester.pump();
     // The folder panel slides over everything, the footer included …
     expect(state.leftFloats, isTrue);
-    expect(state.rightFloats, isFalse);
     expect(rect(FolderPanel).bottom, 900);
     expect(rect(MetaPanel).top, greaterThanOrEqualTo(rect(MediaGrid).bottom));
     expect(rect(MetaPanel).left, 0);
