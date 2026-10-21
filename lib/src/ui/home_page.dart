@@ -143,7 +143,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         state.narrowLayout = constraints.maxWidth < _sideBySideWidth;
         // The whole window, so the soft keyboard coming up changes nothing.
         state.portraitLayout = constraints.maxWidth < constraints.maxHeight;
-        final overlayOpen = state.leftFloats || state.rightFloats;
+        final overlayOpen = state.leftFloats;
         final time = motion(context, _fullScreenMotion);
         // Built once, not once per frame of the full-screen movement.
         final chrome = Column(
@@ -283,11 +283,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget _body(double width) {
     final focus = state.mode == ViewMode.focus;
     final showLeft = state.leftOpen && !focus;
-    // Lying over the content, the panels take turns: folders first.
-    final floating = state.narrowLayout && !state.portraitLayout;
     final full = state.fullScreen;
-    final showRight =
-        state.rightOpen && !full && !(floating && showLeft);
+    final showRight = state.rightOpen && !full;
     // Going to or from full screen the panel moves with everything else.
     final time = motion(
       context,
@@ -336,11 +333,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final narrow = state.narrowLayout;
     final portrait = state.portraitLayout;
 
+    // The metadata panel never lies over the grid: beside it or under it,
+    // the grid gives up the room, so no picture is hidden and tapping another
+    // one just changes what the panel shows. Only the folder panel slides over.
+    final metaWidth = narrow
+        ? math.min(state.rightWidth, width * 0.5).toDouble()
+        : state.rightWidth;
     Widget body = content;
-    if (!narrow) {
+    if (!narrow || !portrait) {
       body = Row(
         children: [
-          if (left > 0)
+          if (!narrow && left > 0)
             // Slides out from the window's edge, pushing the content over.
             _Reveal(
               amount: left,
@@ -370,13 +373,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 children: [
                   _DragHandle(
                     key: const ValueKey<String>('resize-right'),
-                    size: state.rightWidth,
-                    min: minRightWidth,
+                    size: metaWidth,
+                    min: math.min(minRightWidth, metaWidth),
                     grows: -1,
                     onResize: state.setRightWidth,
                     onClose: state.toggleRight,
                   ),
-                  SizedBox(width: state.rightWidth, child: meta),
+                  SizedBox(width: metaWidth, child: meta),
                 ],
               ),
             ),
@@ -387,8 +390,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!narrow) return body;
 
     final panelWidth = (width * 0.86).clamp(240.0, 380.0).toDouble();
-    final overRight = portrait ? 0.0 : right;
-    final shade = math.max(left, overRight);
+    final shade = left;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -407,14 +409,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             child: FractionalTranslation(
               translation: Offset(left - 1, 0),
               child: SizedBox(width: panelWidth, child: folders),
-            ),
-          ),
-        if (overRight > 0)
-          Align(
-            alignment: Alignment.centerRight,
-            child: FractionalTranslation(
-              translation: Offset(1 - overRight, 0),
-              child: SizedBox(width: panelWidth, child: meta),
             ),
           ),
       ],

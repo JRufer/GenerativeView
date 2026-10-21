@@ -313,7 +313,7 @@ class ShortcutLayer extends StatelessWidget {
         // Full screen steps back to the focus view first.
       } else if (focus) {
         state.closeFocus();
-      } else if (state.leftFloats || state.rightFloats) {
+      } else if (state.leftFloats) {
         state.closeOverlays();
       } else {
         state.clearSelection();

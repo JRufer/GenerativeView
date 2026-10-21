@@ -336,10 +336,6 @@ class AppState extends ChangeNotifier {
   /// The folder panel is showing, slid over the content.
   bool get leftFloats => leftOpen && narrowLayout && mode != ViewMode.focus;
 
-  /// The metadata panel is open as a slide-over rather than docked beside or
-  /// under the content.
-  bool get rightFloats => rightOpen && narrowLayout && !portraitLayout;
-
   // ================================================================ startup
 
   /// Load saved settings and reopen the last folder.
@@ -618,14 +614,9 @@ class AppState extends ChangeNotifier {
   }
 
   /// Show only the images that match [text], which replaces whatever was
-  /// being searched for. Leaves the focus view, and puts away a metadata
-  /// panel that is lying over the grid, so the result is in sight.
+  /// being searched for. Leaves the focus view so the result is in sight.
   void applyFilter(String text) {
     if (mode == ViewMode.focus) mode = ViewMode.grid;
-    if (rightFloats) {
-      rightOpen = false;
-      _save('right_open', 'false');
-    }
     _revealAfterReload = query != text || contentSearch;
     revealTick++;
     // Filters are written in the metadata search's own language.
@@ -1071,20 +1062,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Close whichever panels are slid over the content. A docked metadata
-  /// panel stays where it is.
+  /// Close the folder panel if it is slid over the content. The metadata
+  /// panel is always docked, so it stays where it is.
   void closeOverlays() {
     if (!narrowLayout) return;
-    final right = rightFloats;
-    if (!leftOpen && !right) return;
-    if (leftOpen) {
-      leftOpen = false;
-      _save('left_open', 'false');
-    }
-    if (right) {
-      rightOpen = false;
-      _save('right_open', 'false');
-    }
+    if (!leftOpen) return;
+    leftOpen = false;
+    _save('left_open', 'false');
     notifyListeners();
   }
 
