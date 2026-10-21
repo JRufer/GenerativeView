@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../platform.dart';
+import 'compare_view.dart';
 import 'context_menu.dart';
 import 'filter_sheet.dart' show FilterSet;
 import 'meta_panel.dart';
@@ -100,7 +101,9 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   final things = targets.every((t) => t.isVideo) ? 'videos' : (images == n ? 'images' : 'files');
   final allKeep = targets.every((t) => t.flag == Flag.keep);
   final allReject = targets.every((t) => t.flag == Flag.reject);
+  final canCompare = images >= compareMin && images <= compareMax;
   final choice = await showContextMenu<String>(context, position, [
+    if (canCompare) MenuEntry('compare', 'Compare $images side by side (V)', Icons.compare),
     MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
     if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
     const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
@@ -116,6 +119,8 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   ]);
   if (choice == null || !context.mounted) return;
   switch (choice) {
+    case 'compare':
+      await openCompare(context, state, targets);
     case 'copy':
       await copyItems(context, targets);
     case 'share':

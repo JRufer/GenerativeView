@@ -10,6 +10,7 @@ import '../core/models.dart';
 import '../core/thumb_cache.dart';
 import '../platform.dart';
 import '../theme.dart';
+import 'compare_view.dart';
 import 'image_menu.dart';
 import 'notes_widgets.dart';
 import 'remix_status.dart' show HighlightPulse;
@@ -479,6 +480,13 @@ class SelectionBar extends StatelessWidget {
                 tooltip: 'Select all (Ctrl A)',
                 icon: Icons.select_all,
                 onTap: (_) => state.checkAll(),
+              ),
+            if (n >= compareMin && n <= compareMax)
+              button(
+                key: const ValueKey<String>('selection-compare'),
+                tooltip: 'Compare them side by side (V)',
+                icon: Icons.compare,
+                onTap: (context) => openCompare(context, state, state.checkedItems),
               ),
             button(
               key: const ValueKey<String>('selection-menu'),

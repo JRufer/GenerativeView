@@ -707,6 +707,217 @@ void main() {
     expect(loaders.single['inputs']['lora_name'], 'glow.safetensors');
     expect(loaders.single['inputs']['strength_model'], 1.5);
   });
+  // ------------------------------------------------ image to image
+
+  /// A picture to start from: the bytes are only passed along.
+  ImageInput start({bool masked = false}) => ImageInput(
+        image: tinyPng(3),
+        strength: 0.55,
+        mask: masked ? tinyPng(4) : null,
+        keepMask: masked ? tinyPng(6) : null,
+      );
+
+  Remix fromPicture(GenInfo info, {bool masked = false}) => Remix(
+        info: info,
+        prompt: 'a red fox',
+        negative: 'blurry',
+        seed: 7,
+        randomSeed: false,
+        count: 1,
+        width: 512,
+        height: 512,
+        init: start(masked: masked),
+      );
+
+  test('ComfyUI: a workflow starts from the picture instead of an empty latent', () {
+    final graph = <String, dynamic>{
+      '4': {'class_type': 'CheckpointLoaderSimple', 'inputs': {'ckpt_name': 'x.safetensors'}},
+      '5': {'class_type': 'EmptyLatentImage', 'inputs': {'width': 512, 'height': 512, 'batch_size': 1}},
+      '3': {
+        'class_type': 'KSampler',
+        'inputs': {'seed': 1, 'denoise': 1.0, 'model': ['4', 0], 'latent_image': ['5', 0]},
+      },
+      '8': {'class_type': 'VAEDecode', 'inputs': {'samples': ['3', 0], 'vae': ['4', 2]}},
+      '9': {'class_type': 'SaveImage', 'inputs': {'images': ['8', 0]}},
+    };
+    comfyImageToImage(graph, image: 'in.png', mask: 'mask.png', strength: 0.4);
+    expect(graph.containsKey('5'), isFalse, reason: 'the empty latent is gone');
+    Map<String, dynamic> of(String type) =>
+        graph.values.cast<Map<String, dynamic>>().singleWhere((n) => n['class_type'] == type);
+    String idOf(String type) => graph.entries.singleWhere((e) => (e.value as Map)['class_type'] == type).key;
+    expect(of('LoadImage')['inputs']['image'], 'in.png');
+    expect(of('VAEEncode')['inputs']['vae'], ['4', 2], reason: 'encoded with the VAE it decodes with');
+    expect(of('VAEEncode')['inputs']['pixels'], [idOf('LoadImage'), 0]);
+    expect(of('LoadImageMask')['inputs'], {'image': 'mask.png', 'channel': 'red'});
+    expect(of('SetLatentNoiseMask')['inputs']['samples'], [idOf('VAEEncode'), 0]);
+    expect(of('KSampler')['inputs']['latent_image'], [idOf('SetLatentNoiseMask'), 0]);
+    expect(of('KSampler')['inputs']['denoise'], 0.4);
+    // New nodes do not take ids already there.
+    expect(graph.keys.toSet(), hasLength(graph.length));
+    expect(graph.keys.where((k) => int.parse(k) > 9), hasLength(4));
+  });
+
+  test('ComfyUI: an advanced sampler starts part way through its steps', () {
+    final graph = <String, dynamic>{
+      '1': {'class_type': 'EmptySD3LatentImage', 'inputs': {'width': 1024, 'height': 1024}},
+      '2': {
+        'class_type': 'KSamplerAdvanced',
+        'inputs': {'steps': 30, 'start_at_step': 0, 'add_noise': 'enable', 'latent_image': ['1', 0]},
+      },
+      '3': {'class_type': 'VAEDecodeTiled', 'inputs': {'samples': ['2', 0], 'vae': ['7', 0]}},
+    };
+    comfyImageToImage(graph, image: 'in.png', strength: 0.6);
+    final sampler = graph['2'] as Map<String, dynamic>;
+    expect(sampler['inputs']['start_at_step'], 12);
+    expect(graph.values.any((n) => (n as Map)['class_type'] == 'SetLatentNoiseMask'), isFalse,
+        reason: 'no mask, no masking');
+  });
+
+  test('ComfyUI: a workflow with no empty latent is said plainly', () {
+    final graph = <String, dynamic>{
+      '1': {'class_type': 'LoadImage', 'inputs': {'image': 'x.png'}},
+    };
+    expect(
+      () => comfyImageToImage(graph, image: 'in.png', strength: 0.5),
+      throwsA(isA<BackendException>().having((e) => e.message, 'message', contains('empty picture'))),
+    );
+  });
+
+  test('ComfyUI: image to image uploads the picture and mask, then queues', () async {
+    final uploads = <String>[];
+    final queued = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/upload/image') {
+        expect(request.headers.contentType?.mimeType, 'multipart/form-data');
+        final body = latin1.decode(await request.fold<List<int>>([], (a, b) => a..addAll(b)));
+        final name = RegExp(r'filename="([^"]+)"').firstMatch(body)!.group(1)!;
+        expect(body, contains('name="type"'));
+        uploads.add(name);
+        json(request, {'name': name, 'subfolder': 'up', 'type': 'input'});
+      } else if (path == '/prompt') {
+        queued.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'prompt_id': 'p1'});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final graph = jsonEncode({
+      '4': {'class_type': 'CheckpointLoaderSimple', 'inputs': {'ckpt_name': 'x.safetensors'}},
+      '5': {'class_type': 'EmptyLatentImage', 'inputs': {'width': 512, 'height': 512, 'batch_size': 1}},
+      '3': {'class_type': 'KSampler', 'inputs': {'seed': 1, 'denoise': 1.0, 'latent_image': ['5', 0]}},
+      '6': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'a red fox'}},
+      '8': {'class_type': 'VAEDecode', 'inputs': {'samples': ['3', 0], 'vae': ['4', 2]}},
+    });
+    final ticket = await sendRemix(
+      'comfyui',
+      base,
+      fromPicture(info(source: 'comfyui', raw: [['prompt', graph]]), masked: true),
+    );
+    expect(ticket.message, 'Queued 1 picture in ComfyUI, the painted area redrawn at strength 0.55');
+    expect(uploads, hasLength(2));
+    expect(uploads.first, endsWith('_image.png'));
+    expect(uploads.last, endsWith('_mask.png'));
+    final sent = queued.single['prompt'] as Map<String, dynamic>;
+    final load = sent.values.cast<Map<String, dynamic>>().singleWhere((n) => n['class_type'] == 'LoadImage');
+    expect(load['inputs']['image'], 'up/${uploads.first}', reason: 'loaded from the folder it went to');
+    final mask = sent.values.cast<Map<String, dynamic>>().singleWhere((n) => n['class_type'] == 'LoadImageMask');
+    expect(mask['inputs']['image'], 'up/${uploads.last}');
+    expect((sent['3'] as Map)['inputs']['denoise'], 0.55);
+  });
+
+  test('InvokeAI: image to image builds a graph that starts from the picture', () async {
+    final batches = <Map<String, dynamic>>[];
+    var uploaded = 0;
+    Map<String, dynamic> model(String key, String name, String base, String type) =>
+        {'key': key, 'hash': 'blake3:$key', 'name': name, 'base': base, 'type': type, 'path': '/models/$name.safetensors'};
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/api/v1/images/upload') {
+        expect(request.uri.queryParameters['is_intermediate'], 'true');
+        await request.drain<void>();
+        json(request, {'image_name': 'up${++uploaded}.png'});
+      } else if (path == '/api/v2/models/') {
+        final type = request.uri.queryParameters['model_type'];
+        json(request, {
+          'models': type == 'main' ? [model('m2', 'juggernautXL_v9', 'sdxl', 'main')] : [model('l1', 'fur_detail', 'sdxl', 'lora')],
+        });
+      } else if (path == '/api/v1/queue/default/enqueue_batch') {
+        batches.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'item_ids': [1]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    // Even a picture that carries InvokeAI's own graph gets a built one.
+    final own = GenInfo.fromJson({
+      'source': 'invokeai',
+      'prompt': 'a red fox',
+      'negative': 'blurry',
+      'seed': '7',
+      'model': 'juggernautXL_v9',
+      'params': [
+        ['Steps', '30'],
+      ],
+      'raw': [
+        ['invokeai_graph', '{"nodes": {}}'],
+      ],
+      'width': 512,
+      'height': 512,
+    });
+    final ticket = await sendRemix('invokeai', base, fromPicture(own, masked: true));
+    expect(ticket.message, contains('the painted area redrawn at strength 0.55'));
+    expect(uploaded, 2);
+    final graph = (batches.single['batch'] as Map)['graph'] as Map<String, dynamic>;
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    final edges = (graph['edges'] as List).cast<Map<String, dynamic>>();
+    expect(graph['id'], 'generativeview_img2img');
+    expect(nodes['i2l']['image'], {'image_name': 'up1.png'});
+    expect(nodes['denoise_mask']['type'], 'create_denoise_mask');
+    expect(nodes['denoise_mask']['mask'], {'image_name': 'up2.png'}, reason: 'the kept-white mask, as InvokeAI reads it');
+    expect(nodes['denoise']['denoising_start'], closeTo(0.45, 1e-9));
+    expect(nodes['metadata']['generation_mode'], 'sdxl_inpaint');
+    expect(nodes['metadata']['strength'], 0.55);
+    bool joined(String from, String out, String to, String into) => edges.any((e) =>
+        e['source']['node_id'] == from && e['source']['field'] == out && e['destination']['node_id'] == to && e['destination']['field'] == into);
+    expect(joined('i2l', 'latents', 'denoise', 'latents'), isTrue);
+    expect(joined('model_loader', 'vae', 'i2l', 'vae'), isTrue);
+    expect(joined('denoise_mask', 'denoise_mask', 'denoise', 'denoise_mask'), isTrue);
+    for (final e in edges) {
+      expect(nodes.containsKey(e['source']['node_id']), isTrue, reason: '$e');
+      expect(nodes.containsKey(e['destination']['node_id']), isTrue, reason: '$e');
+    }
+  });
+
+  test('Forge: image to image goes to img2img with the picture and mask', () async {
+    late String path;
+    late Map<String, dynamic> payload;
+    final (server, base) = await serve((request) async {
+      path = request.uri.path;
+      payload = jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>;
+      json(request, {
+        'images': [base64Encode(tinyPng(1))],
+        'info': jsonEncode({'infotexts': ['a red fox\nSeed: 7']}),
+      });
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = await sendRemix('forge', base, fromPicture(info(source: 'a1111'), masked: true));
+    await ticket.results.toList();
+    expect(path, '/sdapi/v1/img2img');
+    expect(base64Decode(payload['init_images'][0] as String)[28], 3);
+    expect(base64Decode(payload['mask'] as String)[28], 4, reason: 'white where redrawn, as Forge reads it');
+    expect(payload['denoising_strength'], 0.55);
+    expect(payload['inpainting_mask_invert'], 0);
+    expect(payload['inpainting_fill'], 1, reason: 'the masked part starts from the picture, not noise');
+
+    // Without a mask, none is sent.
+    final plain = await sendRemix('forge', base, fromPicture(info(source: 'a1111')));
+    await plain.results.toList();
+    expect(payload.containsKey('mask'), isFalse);
+    expect(payload['init_images'], hasLength(1));
+  });
 }
 
 /// Standard CRC-32, written out here so the test does not lean on the code
