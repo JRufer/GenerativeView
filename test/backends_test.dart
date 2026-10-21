@@ -889,8 +889,8 @@ void main() {
   });
 
   /// A Krea 2 graph as InvokeAI 7 saves it with a picture, cut down to
-  /// what matters here.
-  Map<String, dynamic> krea2Graph() => {
+  /// what matters here; read from JSON, as a picture's graph always is.
+  Map<String, dynamic> krea2Graph() => jsonDecode(jsonEncode({
         'id': 'krea2_graph',
         'nodes': {
           'loader': {'id': 'loader', 'type': 'krea2_model_loader', 'model': {'key': 'k2'}, 'vae_model': {'key': 'qvae'}},
@@ -904,7 +904,7 @@ void main() {
           {'source': {'node_id': 'loader', 'field': 'vae'}, 'destination': {'node_id': 'l2i', 'field': 'vae'}},
           {'source': {'node_id': 'denoise', 'field': 'latents'}, 'destination': {'node_id': 'l2i', 'field': 'latents'}},
         ],
-      };
+      })) as Map<String, dynamic>;
 
   bool joins(List<dynamic> edges, String from, String out, String to, String into) => edges.any((e) =>
       e['source']['node_id'] == from && e['source']['field'] == out && e['destination']['node_id'] == to && e['destination']['field'] == into);
