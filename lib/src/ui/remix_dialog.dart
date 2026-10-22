@@ -213,8 +213,8 @@ class _RemixPanelState extends State<RemixPanel> {
     final support = backendSupport(info);
     final urls = widget.state.backendUrls;
     final video = widget.item.isVideo;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+    final body = SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -267,47 +267,64 @@ class _RemixPanelState extends State<RemixPanel> {
             onAddWord: widget.state.addUserWord,
           ),
           const PanelHeading('Seed, size and count'),
-          Wrap(
-            spacing: 12,
-            runSpacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              SizedBox(
-                width: 210,
-                child: TextField(
-                  key: const ValueKey<String>('remix-seed'),
-                  controller: _seed,
-                  enabled: !_random,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: _box('Seed').copyWith(
-                    suffixIcon: IconButton(
-                      tooltip: 'A new random seed',
-                      icon: const Icon(Icons.casino_outlined, size: 18),
-                      onPressed: () => _seed.text = '${math.Random().nextInt(1 << 32)}',
+          // Two columns at every width, so the tiles line up: the seed over
+          // the size on the left, and what goes with each on the right.
+          // Only the right column's width changes with the room there is.
+          LayoutBuilder(
+            builder: (context, box) {
+              final side = box.maxWidth < 420 ? 128.0 : (box.maxWidth < 560 ? 168.0 : 200.0);
+              Widget row(Widget main, Widget aside) => IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: main),
+                    const SizedBox(width: 10),
+                    SizedBox(width: side, child: aside),
+                  ],
+                ),
+              );
+              return Column(
+                children: [
+                  row(
+                    _Tile(
+                      child: TextField(
+                        key: const ValueKey<String>('remix-seed'),
+                        controller: _seed,
+                        enabled: !_random,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
+                        decoration: _box('Seed').copyWith(
+                          fillColor: Colors.transparent,
+                          suffixIcon: IconButton(
+                            tooltip: 'A new random seed',
+                            icon: const Icon(Icons.casino_outlined, size: 18),
+                            onPressed: _random ? null : () => _seed.text = '${math.Random().nextInt(1 << 32)}',
+                          ),
+                        ),
+                      ),
+                    ),
+                    _ToggleTile(
+                      key: const ValueKey<String>('remix-random'),
+                      label: 'Random each time',
+                      value: _random,
+                      onChanged: (v) => setState(() => _random = v),
                     ),
                   ),
-                ),
-              ),
-              // The box is drawn on and off rather than a tick added, so
-              // the chip keeps its size either way.
-              FilterChip(
-                key: const ValueKey<String>('remix-random'),
-                showCheckmark: false,
-                avatar: Icon(
-                  _random ? Icons.check_box : Icons.check_box_outline_blank,
-                  size: 18,
-                  color: _random ? Palette.accent : Palette.muted,
-                ),
-                label: const Text('Random each time'),
-                selected: _random,
-                onSelected: (v) => setState(() => _random = v),
-              ),
-              // Width and height are one control, kept on one line: when
-              // they don't fit beside the seed they move down together.
-              SizeField(width: _width, height: _height, aspect: _aspect),
-              _Stepper(value: _count, min: 1, max: 16, label: _count == 1 ? 'picture' : 'pictures', onChanged: (v) => setState(() => _count = v)),
-            ],
+                  const SizedBox(height: 10),
+                  row(
+                    SizeField(width: _width, height: _height, aspect: _aspect, expand: true),
+                    _Stepper(
+                      value: _count,
+                      min: 1,
+                      max: 16,
+                      label: _count == 1 ? 'picture' : 'pictures',
+                      onChanged: (v) => setState(() => _count = v),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
           SizeSlider(
             key: const ValueKey<String>('remix-size-slider'),
@@ -394,31 +411,74 @@ class _RemixPanelState extends State<RemixPanel> {
                 style: const TextStyle(fontSize: 11.5, color: Palette.faint),
               ),
             ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(_error!, style: const TextStyle(fontSize: 12.5, color: Palette.danger, height: 1.35)),
-            ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              TextButton.icon(
-                onPressed: () => copyText(context, _prompt.text, 'prompt'),
-                icon: const Icon(Icons.copy, size: 16),
-                label: const Text('Copy prompt'),
-              ),
-              const Spacer(),
-              FilledButton.icon(
-                key: const ValueKey<String>('remix-send'),
-                onPressed: _backend == null || _sending ? null : _send,
-                icon: _sending
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.send, size: 18),
-                label: Text(_backend == null ? 'No server can take this' : 'Send to ${backendNames[_backend]}'),
-              ),
-            ],
-          ),
         ],
+      ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(child: body),
+        _footer(context),
+      ],
+    );
+  }
+
+  /// Copy and Send, kept at the bottom of the panel whatever is scrolled
+  /// to, with any error from the last send just above them where it is
+  /// seen.
+  Widget _footer(BuildContext context) {
+    // A sheet runs down to the gesture bar; a dialog sits clear of it.
+    final sheet = ModalRoute.of(context) is ModalBottomSheetRoute;
+    final bottom = sheet ? MediaQuery.paddingOf(context).bottom : 0.0;
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Palette.panel,
+        border: Border(top: BorderSide(color: Palette.line)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 10, 18, 12 + bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_error != null)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 96),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(_error!, style: const TextStyle(fontSize: 12.5, color: Palette.danger, height: 1.35)),
+                ),
+              ),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => copyText(context, _prompt.text, 'prompt'),
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copy prompt'),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.icon(
+                      key: const ValueKey<String>('remix-send'),
+                      onPressed: _backend == null || _sending ? null : _send,
+                      icon: _sending
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.send, size: 18),
+                      label: Text(
+                        _backend == null ? 'No server can take this' : 'Send to ${backendNames[_backend]}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -565,10 +625,14 @@ InputDecoration _box(String label) => InputDecoration(
 /// reverse; the side brought along glows for a moment to say so. Unlocked
 /// (white), either side is set freely.
 class SizeField extends StatefulWidget {
-  const SizeField({super.key, required this.width, required this.height, required this.aspect});
+  const SizeField({super.key, required this.width, required this.height, required this.aspect, this.expand = false});
   final TextEditingController width;
   final TextEditingController height;
   final double aspect;
+
+  /// Fill the width given, the two sides sharing it, rather than keep to
+  /// the boxes' own size: how it sits as a tile in the remix panel.
+  final bool expand;
 
   @override
   State<SizeField> createState() => _SizeFieldState();
@@ -610,11 +674,11 @@ class _SizeFieldState extends State<SizeField> {
     final still = MediaQuery.of(context).disableAnimations;
     Widget field(TextEditingController controller, String label, String side) {
       final glow = _glowing == side;
-      return AnimatedContainer(
+      final box = AnimatedContainer(
         key: ValueKey<String>('remix-$side-glow'),
         duration: still ? Duration.zero : Duration(milliseconds: glow ? 120 : 420),
         curve: Curves.easeOut,
-        width: 76,
+        width: widget.expand ? null : 76,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: glow ? Palette.accent : Colors.transparent, width: 1.5),
@@ -643,6 +707,7 @@ class _SizeFieldState extends State<SizeField> {
           ),
         ),
       );
+      return widget.expand ? Expanded(child: box) : box;
     }
 
     Widget small({required Key key, required IconData icon, required String tooltip, required Color color, required VoidCallback onTap}) =>
@@ -659,13 +724,15 @@ class _SizeFieldState extends State<SizeField> {
     return Container(
       key: const ValueKey<String>('remix-size'),
       padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
+      constraints: widget.expand ? const BoxConstraints(minHeight: _tileHeight) : null,
+      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(widget.expand ? _tileRadius : 6)),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
         children: [
           field(widget.width, 'Width', 'width'),
           Column(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               small(
                 key: const ValueKey<String>('remix-size-lock'),
@@ -1703,6 +1770,85 @@ class _WeightPainter extends CustomPainter {
       old.value != value || old.origin != origin || old.enabled != enabled || old.active != active || old.min != min || old.max != max;
 }
 
+/// How tall the remix panel's seed, size and count tiles are at least, so
+/// they line up row by row.
+const double _tileHeight = 56;
+const double _tileRadius = 8;
+
+/// A filled box for one of the remix panel's settings, its content
+/// centred down it.
+class _Tile extends StatelessWidget {
+  const _Tile({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: _tileHeight),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(_tileRadius)),
+      child: child,
+    );
+  }
+}
+
+/// An on/off setting drawn as a tile like its neighbours: a box ticked on
+/// and off and its label, which wraps to two lines where it is narrow.
+/// The border is always there, only its colour changes, so the tile keeps
+/// its size either way.
+class _ToggleTile extends StatelessWidget {
+  const _ToggleTile({super.key, required this.label, required this.value, required this.onChanged});
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      toggled: value,
+      button: true,
+      child: Material(
+        color: value ? Palette.accent.withValues(alpha: 0.14) : Palette.raised,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(_tileRadius),
+          side: BorderSide(color: value ? Palette.accent : Colors.transparent),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => onChanged(!value),
+          hoverColor: Palette.hover,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: _tileHeight),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    value ? Icons.check_box : Icons.check_box_outline_blank,
+                    size: 20,
+                    color: value ? Palette.accent : Palette.muted,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13.5, height: 1.2, color: value ? Palette.text : const Color(0xFFCFCFD6)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A number set by − and +, the number large in the middle with what it
+/// counts under it, so it fits a narrow tile.
 class _Stepper extends StatelessWidget {
   const _Stepper({required this.value, required this.min, required this.max, required this.label, required this.onChanged});
   final int value;
@@ -1713,14 +1859,37 @@ class _Stepper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
+    return _Tile(
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(tooltip: 'Fewer', icon: const Icon(Icons.remove, size: 18), onPressed: value > min ? () => onChanged(value - 1) : null),
-          Text('$value $label', style: const TextStyle(fontSize: 13)),
-          IconButton(tooltip: 'More', icon: const Icon(Icons.add, size: 18), onPressed: value < max ? () => onChanged(value + 1) : null),
+          IconButton(
+            tooltip: 'Fewer',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.remove, size: 18),
+            onPressed: value > min ? () => onChanged(value - 1) : null,
+          ),
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$value',
+                    key: const ValueKey<String>('remix-count'),
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                  Text(label, style: const TextStyle(fontSize: 11, color: Palette.muted)),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'More',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.add, size: 18),
+            onPressed: value < max ? () => onChanged(value + 1) : null,
+          ),
         ],
       ),
     );
