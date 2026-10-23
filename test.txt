@@ -1,0 +1,134 @@
+Resolving dependencies...
+Downloading packages...
+  code_assets 1.2.1 (2.1.0 available)
+  hooks 2.0.2 (2.2.0 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.2 available)
+  permission_handler_apple 9.6.2 (9.6.4 available)
+  petitparser 7.0.2 (7.1.0 available)
+  record_use 0.6.0 (1.1.1 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.3 available)
+  vm_service 15.3.0 (15.4.0 available)
+  wakelock_plus 1.8.1 (1.8.2 available)
+  web 1.1.1 (1.1.2 available)
+  xml 7.0.1 (7.1.0 available)
+Got dependencies!
+14 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart
+00:00 +0: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: (setUpAll)
+00:00 +0: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +2: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +3: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +4: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:00 +5: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: ratings, flags and collections live beside the pictures
+00:04 +6: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +7: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +8: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +9: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +10: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +11: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +12: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +13: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +14: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +15: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +16: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +17: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +18: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +19: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +20: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +21: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +22: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +23: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +24: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +25: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +26: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +27: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +28: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +29: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +30: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +31: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +32: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +33: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +34: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:05 +35: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:06 +36: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:06 +37: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:06 +38: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:06 +39: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:06 +40: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:06 +41: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the filter panel narrows by facet, rating and flag
+00:07 +42: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:07 +43: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:07 +44: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:07 +45: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +46: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +47: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +48: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +49: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +50: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +51: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +52: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +53: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +54: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +55: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the prompt editor weights selected words and checks spelling
+00:08 +56: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: weights round-trip as prompt syntax
+00:08 +57: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:09 +57 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+00:10 +58 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:11 +59 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:15 +60 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:16 +61 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:17 +62 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:19 +63 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: remixes show while they run, open the Remixes collection when done, and are picked out
+00:19 +64 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the grid follows files being added and removed
+00:20 +65 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the grid follows files being added and removed
+00:20 +66 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: pictures are pasted in, taken out of a collection, and deleted
+00:21 +67 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: pictures are pasted in, taken out of a collection, and deleted
+00:21 +68 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: pictures are pasted in, taken out of a collection, and deleted
+00:22 +69 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:23 +70 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: images or videos, and filters cleared from the button
+00:23 +71 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:24 +72 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:24 +73 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: locked, width and height keep the picture's shape and say so
+00:24 +74 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:24 +75 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:24 +76 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:24 +77 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:25 +78 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: the remix panel lists the picture's LoRAs, folded away
+00:25 +79 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:27 +80 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +81 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +82 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: a picture shared to the app opens with how it was made
+00:28 +83 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: usage stats count what a folder was made with, and filter by it
+00:29 +84 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: usage stats count what a folder was made with, and filter by it
+00:29 +85 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: usage stats count what a folder was made with, and filter by it
+00:30 +86 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: usage stats count what a folder was made with, and filter by it
+00:31 +87 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: usage stats count what a folder was made with, and filter by it
+00:31 +88 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: smart collections are saved beside the pictures, shown, edited and deleted
+00:32 +89 ~1: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: smart collections are saved beside the pictures, shown, edited and deleted
+00:32 +90 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: zoom moves in steps of ten percent and marks 100%
+00:34 +91 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: zoom moves in steps of ten percent and marks 100%
+00:34 +92 ~1: /home/runner/work/GenerativeView/GenerativeView/test/compare_test.dart: rows say what each picture has, and which differ
+00:34 +93 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:34 +94 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:34 +95 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:34 +96 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:34 +97 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:35 +98 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:35 +99 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:35 +100 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:36 +101 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:36 +102 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:36 +103 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:37 +104 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:37 +105 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:37 +106 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:37 +107 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:37 +108 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: content search finds pictures by what they show
+00:38 +109 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: panels, the search box and its switch move into place
+00:39 +110 ~1: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: (tearDownAll)
+00:39 +110 ~1: All tests passed!
