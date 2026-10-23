@@ -612,6 +612,20 @@ void main() {
     // Temporary: say on CI where it stopped, since the job log is not at hand.
     final seen = <String>[];
     var step = 'start';
+    String esc(String t) => t.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
+    void report(Object e, String where) {
+      // ignore: avoid_print
+      print('::error title=hires fix test, $where at $step::${esc('$e\nnotices: ${seen.join(' | ')}')}');
+    }
+
+    void taken() {
+      final e = tester.takeException();
+      if (e != null) {
+        report(e, 'framework exception');
+        throw e;
+      }
+    }
+
     try {
       // A Forge on this machine that takes the image to image and answers with
       // a picture, as Forge does.
@@ -671,6 +685,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await settle(tester);
 
+      taken();
       step = 'second half';
       // ---- the second half: the upscale sent on, and what comes back ---------
       // The original stands in for its upscale (the upscale itself is tested
@@ -680,9 +695,11 @@ void main() {
         () => refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
       );
       expect(message, contains('640 × 640'));
+      taken();
       step = 'waiting for save';
       final out = File('${library.path}/heron_hires1.png');
       await pumpUntil(tester, () => out.existsSync(), what: 'the hires fix to be saved');
+      taken();
       step = 'checking request';
       expect(paths, ['/sdapi/v1/img2img']);
       final sent = bodies.single;
@@ -694,6 +711,7 @@ void main() {
       expect(sent['prompt'], 'a brass heron, studio light');
       expect((sent['init_images'] as List).single, isA<String>());
       expect(sent.containsKey('mask'), isFalse);
+      taken();
       step = 'collection';
       // It is a remix like any other: in the Remixes collection.
       await pumpUntil(tester, () => names(state).contains('heron_hires1.png'), what: 'the hires fix in the grid');
@@ -706,6 +724,7 @@ void main() {
           }));
       out.deleteSync();
 
+      taken();
       step = 'helpers';
       // The sizes and names the panel works with.
       expect(hiresSize(832, 1216, 1.5), (1248, 1824));
@@ -713,11 +732,12 @@ void main() {
       expect(scaleText(2), '2');
       expect(madeOn('a1111'), 'forge');
       expect(madeOn('swarmui'), isNull);
+      taken();
+      step = 'close';
       await close(tester, state);
+      taken();
       } catch (e, stack) {
-      String esc(String t) => t.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
-      // ignore: avoid_print
-      print('::error title=hires fix test at $step::${esc('$e\nnotices: ${seen.join(' | ')}\n${stack.toString().split('\n').take(12).join('\n')}')}');
+      report('$e\n${stack.toString().split('\n').take(12).join('\n')}', 'failure');
       rethrow;
     }
   });
