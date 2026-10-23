@@ -1865,6 +1865,18 @@ void main() {
     );
     await screenshot(tester, boundary, '20-content-search');
 
+    // ---- the prompt check: each phrase of a prompt against the picture -------
+    // Every picture here has been looked at, so it answers without looking.
+    final looked = await wait(
+      state.checkPrompt(state.items[0], 'masterpiece, a lighthouse, (stormy sea:1.3), <lora:waves:0.7>'),
+    );
+    expect(looked, isNotNull);
+    expect([for (final p in looked!.phrases) p.text], ['masterpiece', 'a lighthouse', 'stormy sea']);
+    expect([for (final p in looked.phrases) p.checked], [false, true, true]);
+    expect(looked.checked, 2);
+    expect(looked.seen, inInclusiveRange(0, 2));
+    expect(looked.missing.length, looked.checked - looked.seen);
+
     await tester.enterText(box, 'a red fox');
     final fox = await ranked('a red fox');
     await pumpUntil(
