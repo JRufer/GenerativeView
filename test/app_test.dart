@@ -1868,7 +1868,7 @@ void main() {
     // ---- the prompt check: each phrase of a prompt against the picture -------
     // Every picture here has been looked at, so it answers without looking.
     final looked = await wait(
-      state.checkPrompt(state.items.first, 'masterpiece, a lighthouse, (stormy sea:1.3), <lora:waves:0.7>'),
+      state.checkPrompt(state.items[0], 'masterpiece, a lighthouse, (stormy sea:1.3), <lora:waves:0.7>'),
     );
     expect(looked, isNotNull);
     expect([for (final p in looked!.phrases) p.text], ['masterpiece', 'a lighthouse', 'stormy sea']);
