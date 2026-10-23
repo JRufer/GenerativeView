@@ -781,6 +781,8 @@ void main() {
       print('::notice title=hires fix test::reached close');
       await close(tester, state);
       taken();
+      // ignore: avoid_print
+      print('::notice title=probe::hires test body done');
       } catch (e, stack) {
       report('$e\n${stack.toString().split('\n').take(12).join('\n')}', 'failure');
       rethrow;
@@ -788,6 +790,8 @@ void main() {
   });
 
   testWidgets('remixes show while they run, open the Remixes collection when done, and are picked out', (tester) async {
+    // ignore: avoid_print
+    print('::notice title=probe::remixes test started');
     final state = await launch(tester);
     await pumpUntil(tester, () => indexOf(state, 'sailor.png') >= 0, what: 'the pictures');
     final sailor = state.items[indexOf(state, 'sailor.png')];
@@ -843,6 +847,8 @@ void main() {
     sailorRemix.deleteSync();
     owlRemix.deleteSync();
     await close(tester, state);
+    // ignore: avoid_print
+    print('::notice title=probe::remixes test body done');
   });
   testWidgets('collections are deleted from their menu, after asking', (tester) async {
     final state = await launch(tester);
