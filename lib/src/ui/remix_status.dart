@@ -40,7 +40,9 @@ class _Activity {
         remixesDone = [for (final j in state.remixes.value) if (!j.running) j],
         upscales = state.upscales.value,
         waiting = state.upscalesWaiting.value,
-        upscaled = state.upscaled.value;
+        upscaled = state.upscaled.value,
+        sending = state.afterUpscale.value,
+        problems = state.problems.value;
 
   final List<RemixJob> remixesRunning;
   final List<RemixJob> remixesDone;
@@ -48,18 +50,26 @@ class _Activity {
   final int waiting;
   final List<String> upscaled;
 
-  bool get busy => remixesRunning.isNotEmpty || upscales.isNotEmpty || waiting > 0;
+  /// Hires fixes being prepared and sent, after their upscale.
+  final List<String> sending;
+
+  /// What went wrong, kept until put away.
+  final List<String> problems;
+
+  bool get busy => remixesRunning.isNotEmpty || upscales.isNotEmpty || waiting > 0 || sending.isNotEmpty;
   bool get anyDone => remixesDone.isNotEmpty || upscaled.isNotEmpty;
-  bool get none => !busy && !anyDone;
+  bool get none => !busy && !anyDone && problems.isEmpty;
 
   /// Done of both kinds at once: there is no one place to go.
   bool get doneBothKinds => remixesDone.isNotEmpty && upscaled.isNotEmpty;
 
   /// Things running or done, for the badge.
-  int get count => remixesRunning.length + upscales.length + waiting + remixesDone.length + upscaled.length;
+  int get count =>
+      remixesRunning.length + upscales.length + waiting + sending.length + remixesDone.length + upscaled.length + problems.length;
 
   /// One upscale and nothing else: its progress can be shown on the ring.
-  double? get progress => remixesRunning.isEmpty && waiting == 0 && upscales.length == 1 ? upscales.single.progress : null;
+  double? get progress =>
+      remixesRunning.isEmpty && waiting == 0 && sending.isEmpty && upscales.length == 1 ? upscales.single.progress : null;
 }
 
 class _ActivityButtonState extends State<ActivityButton> with SingleTickerProviderStateMixin {
@@ -73,7 +83,9 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
 
   AppState get state => widget.state;
 
-  late final Listenable _changes = Listenable.merge([state.remixes, state.upscales, state.upscalesWaiting, state.upscaled]);
+  late final Listenable _changes = Listenable.merge(
+    [state.remixes, state.upscales, state.upscalesWaiting, state.upscaled, state.afterUpscale, state.problems],
+  );
 
   @override
   void initState() {
@@ -102,7 +114,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
   void _toggle() => _card.isShowing ? _card.hide() : _card.show();
 
   void _tap(_Activity now) {
-    if (now.busy || now.doneBothKinds) {
+    if (now.busy || now.doneBothKinds || now.problems.isNotEmpty) {
       setState(_toggle);
     } else if (now.remixesDone.isNotEmpty) {
       state.showRemixes();
@@ -114,6 +126,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
   void _dismissDone() {
     state.dismissDoneRemixes();
     state.dismissDoneUpscales();
+    state.dismissProblems();
   }
 
   String _tooltip(_Activity now) {
@@ -122,8 +135,10 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
         if (now.remixesRunning.isNotEmpty) now.remixesRunning.length == 1 ? 'a remix' : '${now.remixesRunning.length} remixes',
         if (now.upscales.isNotEmpty || now.waiting > 0) now.upscales.length + now.waiting == 1 ? 'an upscale' : '${now.upscales.length + now.waiting} upscales',
       ];
+      if (now.sending.isNotEmpty) parts.add(now.sending.length == 1 ? 'a hires fix' : '${now.sending.length} hires fixes');
       return 'Running ${parts.join(' and ')}: tap for details';
     }
+    if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what';
     if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
     final what = now.remixesDone.isNotEmpty
         ? (now.remixesDone.length == 1 ? 'Remix done' : '${now.remixesDone.length} remixes done')
@@ -145,7 +160,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
             pop: _pop,
             tooltip: _tooltip(now),
             onTap: () => _tap(now),
-            onDismiss: !now.busy && now.anyDone ? _dismissDone : null,
+            onDismiss: !now.busy && (now.anyDone || now.problems.isNotEmpty) ? _dismissDone : null,
           );
     return TapRegion(
       groupId: _region,
@@ -210,8 +225,11 @@ class _RoundButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final busy = activity.busy;
     final ring = size - (compact ? 8 : 12);
+    final failed = !busy && activity.problems.isNotEmpty;
     final icon = busy
-        ? (activity.remixesRunning.isEmpty ? Icons.photo_size_select_large : Icons.auto_fix_high)
+        ? (activity.remixesRunning.isEmpty && activity.sending.isEmpty ? Icons.photo_size_select_large : Icons.auto_fix_high)
+        : failed
+        ? Icons.priority_high
         : Icons.check;
     final Widget face = Stack(
       alignment: Alignment.center,
@@ -230,7 +248,7 @@ class _RoundButton extends StatelessWidget {
           ),
         Icon(
           icon,
-          key: ValueKey<String>(busy ? 'activity-running-icon' : 'activity-done-icon'),
+          key: ValueKey<String>(busy ? 'activity-running-icon' : (failed ? 'activity-problem-icon' : 'activity-done-icon')),
           size: busy ? (compact ? 14 : 18) : (compact ? 19 : 26),
           color: Colors.white,
         ),
@@ -238,7 +256,7 @@ class _RoundButton extends StatelessWidget {
     );
     final count = activity.count;
     Widget circle = Material(
-      color: _remixBlue,
+      color: failed ? Palette.danger : _remixBlue,
       shape: const CircleBorder(),
       elevation: compact ? 0 : 6,
       shadowColor: _remixBlue.withValues(alpha: 0.6),
@@ -320,6 +338,13 @@ class _ActivityCard extends StatelessWidget {
           label: a.remixesRunning.length == 1 ? 'Remix Running' : '${a.remixesRunning.length} Remixes Running',
           tooltip: 'Waiting on the server for\n${a.remixesRunning.map((j) => j.name).join('\n')}',
         ),
+      for (final s in a.sending)
+        _Pill(
+          key: ValueKey<String>('activity-sending-$s'),
+          icon: const _Spinning(icon: Icons.autorenew),
+          label: 'Sending $s',
+          tooltip: 'Preparing the upscale and sending it to the server',
+        ),
       for (final job in a.upscales) _UpscaleRow(key: ValueKey<String>('activity-upscale-${job.id}'), state: state, job: job, many: a.waiting > 0),
       if (a.waiting > 0)
         Row(
@@ -359,6 +384,47 @@ class _ActivityCard extends StatelessWidget {
           onDismiss: state.dismissDoneUpscales,
         ),
     ];
+    if (a.problems.isNotEmpty) {
+      rows.add(
+        Container(
+          key: const ValueKey<String>('activity-problems'),
+          padding: const EdgeInsets.fromLTRB(10, 6, 2, 6),
+          decoration: BoxDecoration(
+            color: Palette.danger.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Palette.danger.withValues(alpha: 0.5)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(Icons.error_outline, size: 16, color: Palette.danger),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectableText(
+                  a.problems.join('\n\n'),
+                  style: const TextStyle(fontSize: 12.5, height: 1.35),
+                ),
+              ),
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: IconButton(
+                  key: const ValueKey<String>('activity-problems-dismiss'),
+                  tooltip: 'Dismiss',
+                  padding: EdgeInsets.zero,
+                  iconSize: 16,
+                  onPressed: state.dismissProblems,
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Material(
       key: const ValueKey<String>('activity-card'),
       color: Palette.raised,

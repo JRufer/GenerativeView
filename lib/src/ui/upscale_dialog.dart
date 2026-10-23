@@ -443,12 +443,21 @@ String? madeOn(String source) => switch (source) {
   _ => null,
 };
 
+/// Why a hires fix was not sent, though its upscale was made.
+class HiresNotSent implements Exception {
+  const HiresNotSent(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 /// Hires fix, the second half: send [upscaled] (the upscale of [original]
 /// made here) to the server [kind] as image to image, with [original]'s own
 /// prompt, settings and seed, at [scale] times [original]'s size and
 /// [strength]. What comes back is saved beside [original] as
 /// `name_hires1.png` and put in the remix collection, as a remix is.
-/// Answers with a line to show.
+/// Answers with a line to show; throws [HiresNotSent] (or the server's own
+/// error) when it cannot be sent.
 Future<String?> refineUpscale(
   AppState state,
   MediaItem original,
@@ -459,31 +468,33 @@ Future<String?> refineUpscale(
 }) async {
   final name = backendNames[kind] ?? kind;
   final base = state.backendUrls[kind] ?? '';
-  if (base.isEmpty) return '${original.name} was upscaled but not refined: $name is no longer set up';
+  if (base.isEmpty) throw HiresNotSent('upscaled, but not refined: $name is no longer set up');
   final GenInfo info;
   try {
     info = await state.metadata(original);
   } catch (_) {
-    return '${original.name} was upscaled but not refined: its generation data could not be read';
+    throw HiresNotSent('upscaled, but not refined: its generation data could not be read');
   }
   if (backendSupport(info)[kind] != null) {
-    return '${original.name} was upscaled but not refined: it has no generation data to refine with';
+    throw HiresNotSent('upscaled, but not refined: it has no generation data to refine with');
   }
   var (w, h) = (original.width, original.height);
   if (w <= 0 || h <= 0) (w, h) = recipeSize(info);
-  if (w <= 0 || h <= 0) return '${original.name} was upscaled but not refined: its size is not known';
+  if (w <= 0 || h <= 0) throw HiresNotSent('upscaled, but not refined: its size is not known');
   final (width, height) = hiresSize(w, h, scale);
   final ImageInput init;
   try {
     init = await prepareImageInput(path: upscaled, width: width, height: height, strength: strength, ops: const []);
   } catch (e) {
-    return '${original.name} was upscaled but not refined: could not read the upscale ($e)';
+    throw HiresNotSent('upscaled, but not refined: could not read the upscale ($e)');
   }
   final seed = int.tryParse(info.seed.trim());
-  final ticket = await sendRemix(
-    kind,
-    base,
-    Remix(
+  final RemixTicket ticket;
+  try {
+    ticket = await sendRemix(
+      kind,
+      base,
+      Remix(
       info: info,
       prompt: info.prompt,
       negative: info.negative,
@@ -494,7 +505,10 @@ Future<String?> refineUpscale(
       height: height,
       init: init,
     ),
-  );
+    );
+  } catch (e) {
+    throw HiresNotSent('upscaled, but $name did not take the refine: $e');
+  }
   state.collectRemix(original, ticket, label: 'hires');
   return 'Hires fix of ${original.name} sent to $name, at $width × $height';
 }

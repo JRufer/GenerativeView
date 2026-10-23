@@ -34,7 +34,7 @@ import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
 import 'package:generativeview/src/ui/remix_dialog.dart';
 import 'package:generativeview/src/ui/thumb_image.dart';
-import 'package:generativeview/src/ui/upscale_dialog.dart' show hiresSize, madeOn, refineUpscale, scaleText;
+import 'package:generativeview/src/ui/upscale_dialog.dart' show HiresNotSent, hiresSize, madeOn, refineUpscale, scaleText;
 
 import 'support.dart';
 
@@ -716,6 +716,13 @@ void main() {
         }));
     out.deleteSync();
 
+    // A server not set up: not sent, and it says why, to be kept on the
+    // round button rather than lost in a passing message.
+    await expectLater(
+      waitFor(refineUpscale(state, heron, heron.path, kind: 'comfyui', strength: 0.35, scale: 2), 'the refusal'),
+      throwsA(isA<HiresNotSent>().having((e) => e.message, 'message', contains('ComfyUI is no longer set up'))),
+    );
+
     // The sizes and names the panel works with.
     expect(hiresSize(832, 1216, 1.5), (1248, 1824));
     expect(scaleText(1.5), '1.5');
@@ -813,6 +820,28 @@ void main() {
     expect(find.byKey(const ValueKey('activity-card')), findsNothing);
     expect(button, findsNothing);
     await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
+
+    // Something that went wrong is kept on it, in red, until put away.
+    state.problems.value = ['heron.png: upscaled, but InvokeAI did not take the refine: out of memory'];
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-problem-icon')).evaluate().isNotEmpty, what: 'the problem shown');
+    await settle(tester);
+    await tester.tap(button);
+    await settle(tester);
+    expect(find.textContaining('did not take the refine: out of memory'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('activity-problems-dismiss')));
+    await settle(tester);
+    expect(state.problems.value, isEmpty);
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the problem');
+
+    // A hires fix being sent shows as running.
+    state.afterUpscale.value = ['heron.png, then refined on InvokeAI'];
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-spinner')).evaluate().isNotEmpty, what: 'sending shown as running');
+    await settle(tester);
+    await tester.tap(button);
+    await settle(tester);
+    expect(find.text('Sending heron.png, then refined on InvokeAI'), findsOneWidget);
+    state.afterUpscale.value = const [];
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after sending');
 
     // Pressed and held, it is put away without going there.
     final fourth = StreamController<RemixImage>();

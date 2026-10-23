@@ -262,6 +262,18 @@ class AppState extends ChangeNotifier {
   /// Upscales running or just finished.
   final ValueNotifier<List<UpscaleJob>> upscales = ValueNotifier(const []);
 
+  /// What is being done with upscales just saved, before it shows anywhere
+  /// else: "Sending heron.png to InvokeAI" while a hires fix is prepared
+  /// and sent.
+  final ValueNotifier<List<String>> afterUpscale = ValueNotifier(const []);
+
+  /// What went wrong after an upscale (a hires fix that could not be sent),
+  /// kept until put away so it is not missed.
+  final ValueNotifier<List<String>> problems = ValueNotifier(const []);
+
+  /// Put away [problems].
+  void dismissProblems() => problems.value = const [];
+
   /// Upscales saved and not gone to yet: where each went. One that a hires
   /// fix sends on to a server is not here; its remix is.
   final ValueNotifier<List<String>> upscaled = ValueNotifier(const []);
@@ -2034,7 +2046,7 @@ class AppState extends ChangeNotifier {
         'metadata': keepMetadata ? 'copy' : 'strip',
       });
       final job = ((reply as Map)['job'] as num).toInt();
-      if (then != null) _upscaleThen[job] = (item, then);
+      if (then != null) _upscaleThen[job] = (item, then, thenLabel);
       upscales.value = [
         ...upscales.value,
         UpscaleJob(job, item.name, factor: factor, then: thenLabel),
@@ -2045,7 +2057,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// What to do with each upscale under way once it is saved, by job.
-  final Map<int, (MediaItem, UpscaleThen)> _upscaleThen = {};
+  final Map<int, (MediaItem, UpscaleThen, String?)> _upscaleThen = {};
 
   void cancelUpscale(int job) {
     _fire(core.call('upscale_cancel', {'job': job}));
@@ -2071,7 +2083,7 @@ class AppState extends ChangeNotifier {
         _rescanSoon();
         final then = _upscaleThen.remove(job);
         if (then != null && path.isNotEmpty) {
-          unawaited(_runUpscaleThen(then.$1, path, then.$2));
+          unawaited(_runUpscaleThen(then.$1, path, then.$2, then.$3));
         } else if (path.isNotEmpty) {
           upscaled.value = [...upscaled.value, path];
         }
@@ -2087,12 +2099,23 @@ class AppState extends ChangeNotifier {
     if (list.isEmpty && _upscaleQueue.isNotEmpty) unawaited(_nextUpscale());
   }
 
-  Future<void> _runUpscaleThen(MediaItem original, String upscaled, UpscaleThen then) async {
+  Future<void> _runUpscaleThen(MediaItem original, String upscaled, UpscaleThen then, String? label) async {
+    final doing = label == null ? original.name : '${original.name}, $label';
+    afterUpscale.value = [...afterUpscale.value, doing];
     try {
       final message = await then(original, upscaled);
       if (!_disposed && message != null) _notices.add(message);
     } catch (e) {
-      if (!_disposed) _notices.add('${original.name}: $e');
+      if (!_disposed) {
+        final text = '${original.name}: $e';
+        problems.value = [...problems.value, text];
+        _notices.add(text);
+      }
+    } finally {
+      if (!_disposed) {
+        final left = [...afterUpscale.value]..remove(doing);
+        afterUpscale.value = left;
+      }
     }
   }
 
@@ -2119,6 +2142,8 @@ class AppState extends ChangeNotifier {
     upscaleDownload.dispose();
     upscales.dispose();
     upscaled.dispose();
+    afterUpscale.dispose();
+    problems.dispose();
     for (final sub in [..._remixSubs]) {
       sub.cancel();
     }
