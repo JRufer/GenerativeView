@@ -654,6 +654,8 @@ void main() {
       final noticeSub = state.notices.listen(seen.add);
       addTearDown(noticeSub.cancel);
       step = 'listing';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached listing');
       await pumpUntil(tester, () => indexOf(state, 'heron.png') >= 0, what: 'the listing');
       state.setBackendUrl('forge', 'http://127.0.0.1:${server.port}');
       addTearDown(() => state.setBackendUrl('forge', ''));
@@ -688,6 +690,8 @@ void main() {
 
       taken();
       step = 'second half';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached second half');
       // ---- the second half: the upscale sent on, and what comes back ---------
       // The original stands in for its upscale (the upscale itself is tested
       // above); what is sent is made at twice the original's size from it.
@@ -711,12 +715,16 @@ void main() {
       }
 
       step = 'preparing the picture';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached preparing the picture');
       final prepared = await waitFor(
         prepareImageInput(path: heron.path, width: 640, height: 640, strength: 0.35, ops: const []),
         'the picture to be prepared',
       );
       expect(prepared.image.length, greaterThan(100));
       step = 'sending';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached sending');
       final message = await waitFor(
         refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
         'the hires fix to be sent',
@@ -724,10 +732,14 @@ void main() {
       expect(message, contains('640 × 640'));
       taken();
       step = 'waiting for save';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached waiting for save');
       final out = File('${library.path}/heron_hires1.png');
       await pumpUntil(tester, () => out.existsSync(), what: 'the hires fix to be saved');
       taken();
       step = 'checking request';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached checking request');
       expect(paths, ['/sdapi/v1/img2img']);
       final sent = bodies.single;
       expect(sent['width'], 640);
@@ -740,6 +752,8 @@ void main() {
       expect(sent.containsKey('mask'), isFalse);
       taken();
       step = 'collection';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached collection');
       // It is a remix like any other: in the Remixes collection.
       await pumpUntil(tester, () => names(state).contains('heron_hires1.png'), what: 'the hires fix in the grid');
       final note = await tester.runAsync(() => state.notes(state.items[indexOf(state, 'heron_hires1.png')]));
@@ -753,6 +767,8 @@ void main() {
 
       taken();
       step = 'helpers';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached helpers');
       // The sizes and names the panel works with.
       expect(hiresSize(832, 1216, 1.5), (1248, 1824));
       expect(scaleText(1.5), '1.5');
@@ -761,6 +777,8 @@ void main() {
       expect(madeOn('swarmui'), isNull);
       taken();
       step = 'close';
+      // ignore: avoid_print
+      print('::notice title=hires fix test::reached close');
       await close(tester, state);
       taken();
       } catch (e, stack) {
