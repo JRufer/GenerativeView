@@ -27,6 +27,7 @@ import 'package:generativeview/src/core/prompt_weights.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/licenses.dart';
 import 'package:generativeview/src/ui/about_panel.dart';
+import 'package:generativeview/src/ui/mask_editor.dart' show prepareImageInput;
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet;
 import 'package:generativeview/src/ui/folder_panel.dart' show FolderPanel;
@@ -691,8 +692,34 @@ void main() {
       // The original stands in for its upscale (the upscale itself is tested
       // above); what is sent is made at twice the original's size from it.
       final heron = state.items[indexOf(state, 'heron.png')];
-      final message = await tester.runAsync(
-        () => refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
+      // Waited for by pumping, so that a step that never finishes fails
+      // here, saying which, rather than hanging the run.
+      Future<T> waitFor<T>(Future<T> future, String what) async {
+        T? value;
+        Object? error;
+        var done = false;
+        future.then((v) {
+          value = v;
+          done = true;
+        }, onError: (Object e) {
+          error = e;
+          done = true;
+        });
+        await pumpUntil(tester, () => done, what: what, timeout: const Duration(seconds: 60));
+        if (error != null) throw error!;
+        return value as T;
+      }
+
+      step = 'preparing the picture';
+      final prepared = await waitFor(
+        prepareImageInput(path: heron.path, width: 640, height: 640, strength: 0.35, ops: const []),
+        'the picture to be prepared',
+      );
+      expect(prepared.image.length, greaterThan(100));
+      step = 'sending';
+      final message = await waitFor(
+        refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
+        'the hires fix to be sent',
       );
       expect(message, contains('640 × 640'));
       taken();
