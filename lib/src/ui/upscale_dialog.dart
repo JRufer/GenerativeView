@@ -1,9 +1,14 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/backends.dart';
 import '../core/models.dart';
 import '../theme.dart';
+import 'mask_editor.dart' show prepareImageInput;
 import 'meta_panel.dart' show toast;
+import 'remix_dialog.dart' show openBackendSettings, snapSize;
 import 'sheet.dart';
 
 /// Open the upscale panel for [item]: which model, how much bigger, and
@@ -55,6 +60,50 @@ class _UpscalePanelState extends State<UpscalePanel> {
   bool _keepMetadata = true;
   bool _busy = false;
 
+  /// Hires fix: after the upscale here, send it to a server to redraw
+  /// lightly at the larger size, adding real detail.
+  bool _refine = false;
+
+  /// The server that refines, of those set up.
+  String? _server;
+
+  /// How much the server redraws: low, so the picture stays itself.
+  double _hiresStrength = hiresDefaultStrength;
+
+  /// How much bigger the refined picture is than the original.
+  double _hiresScale = 2;
+
+  /// The servers set up, in the usual order.
+  List<String> get _servers => [
+    for (final k in backendNames.keys)
+      if ((widget.state.backendUrls[k] ?? '').isNotEmpty) k,
+  ];
+
+  /// Whether the server was picked by hand, and is not to be changed.
+  bool _serverChosen = false;
+
+  /// The program that made the (first) picture, once its metadata is read.
+  String? _made;
+
+  @override
+  void initState() {
+    super.initState();
+    _server = _pickServer();
+    widget.state.metadata(widget.items.first).then((info) {
+      if (!mounted) return;
+      _made = madeOn(info.source);
+      if (!_serverChosen) setState(() => _server = _pickServer());
+    }, onError: (Object _) {});
+  }
+
+  /// The one that made the (first) picture, if it is set up, or else the
+  /// first that is.
+  String? _pickServer() {
+    final servers = _servers;
+    if (servers.isEmpty) return null;
+    return servers.contains(_made) ? _made : servers.first;
+  }
+
   UpscaleModel? get _chosen {
     for (final m in widget.models.models) {
       if (m.id == _model) return m;
@@ -73,16 +122,39 @@ class _UpscalePanelState extends State<UpscalePanel> {
       setState(() => _busy = false);
       return;
     }
-    await widget.state.startUpscales(widget.items, model: model.id, factor: _factor, keepMetadata: _keepMetadata);
+    final server = _refine ? _server : null;
+    if (server == null) {
+      await widget.state.startUpscales(widget.items, model: model.id, factor: _factor, keepMetadata: _keepMetadata);
+    } else {
+      final state = widget.state;
+      final strength = _hiresStrength;
+      final scale = _hiresScale;
+      await state.startUpscales(
+        widget.items,
+        model: model.id,
+        // The upscale here is the starting point; the server's picture is
+        // made at [scale] from it.
+        factor: 2,
+        keepMetadata: _keepMetadata,
+        then: (original, upscaled) => refineUpscale(state, original, upscaled, kind: server, strength: strength, scale: scale),
+        thenLabel: 'then refined on ${backendNames[server]}',
+      );
+    }
     if (mounted) Navigator.of(context).maybePop();
+  }
+
+  Future<void> _setUpServer() async {
+    await openBackendSettings(context, widget.state);
+    if (!mounted) return;
+    setState(() => _server = _servers.contains(_server) ? _server : _pickServer());
   }
 
   @override
   Widget build(BuildContext context) {
     final item = widget.items.first;
     final many = widget.items.length > 1;
-    final w = item.width * _factor;
-    final h = item.height * _factor;
+    final refine = _refine && _server != null;
+    final (w, h) = refine ? hiresSize(item.width, item.height, _hiresScale) : (item.width * _factor, item.height * _factor);
     final ext = item.name.contains('.') ? item.name.split('.').last.toLowerCase() : 'png';
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
@@ -122,13 +194,22 @@ class _UpscalePanelState extends State<UpscalePanel> {
           Wrap(
             spacing: 8,
             children: [
-              for (final f in const [2, 4])
-                ChoiceChipButton(
-                  key: ValueKey<String>('upscale-factor-$f'),
-                  label: '$f×',
-                  selected: _factor == f,
-                  onTap: _busy ? null : () => setState(() => _factor = f),
-                ),
+              if (!refine)
+                for (final f in const [2, 4])
+                  ChoiceChipButton(
+                    key: ValueKey<String>('upscale-factor-$f'),
+                    label: '$f×',
+                    selected: _factor == f,
+                    onTap: _busy ? null : () => setState(() => _factor = f),
+                  )
+              else
+                for (final f in hiresScales)
+                  ChoiceChipButton(
+                    key: ValueKey<String>('hires-scale-$f'),
+                    label: '${scaleText(f)}×',
+                    selected: _hiresScale == f,
+                    onTap: _busy ? null : () => setState(() => _hiresScale = f),
+                  ),
             ],
           ),
           if (item.width > 0 && !many)
@@ -136,9 +217,20 @@ class _UpscalePanelState extends State<UpscalePanel> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(
                 '${item.width} × ${item.height} to $w × $h',
+                key: const ValueKey<String>('upscale-size'),
                 style: const TextStyle(fontSize: 12, color: Palette.faint),
               ),
             ),
+          if (refine && math.max(w, h) > hiresLargeSide)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                'That is large for most models and graphics cards; 1.5× is gentler on the server.',
+                style: TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
+              ),
+            ),
+          const PanelHeading('Hires fix'),
+          _refineSection(context),
           const PanelHeading('Metadata'),
           Wrap(
             spacing: 8,
@@ -172,10 +264,17 @@ class _UpscalePanelState extends State<UpscalePanel> {
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              many
+              refine
+                  ? (many
+                        ? '${widget.items.length} pictures, one after another: each upscaled here as name_up2x, then refined on '
+                              '${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.remixCollection}'
+                        : 'Upscaled here as ${_stem(item.name)}_up2x.$ext, then refined on ${backendNames[_server]} and saved as '
+                              '${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                  : many
                   ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${_factor}x'
-                  : 'Saved as ${item.name.replaceFirst(RegExp(r'\.[^.]+$'), '')}_up${_factor}x.$ext',
-              style: const TextStyle(fontSize: 12, color: Palette.faint),
+                  : 'Saved as ${_stem(item.name)}_up${_factor}x.$ext',
+              key: const ValueKey<String>('upscale-saved-as'),
+              style: const TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
             ),
           ),
           ValueListenableBuilder<DownloadProgress?>(
@@ -208,7 +307,9 @@ class _UpscalePanelState extends State<UpscalePanel> {
               icon: const Icon(Icons.photo_size_select_large, size: 18),
               label: Text(
                 _chosen?.installed == false
-                    ? 'Download and upscale'
+                    ? (refine ? 'Download, upscale and refine' : 'Download and upscale')
+                    : refine
+                    ? (many ? 'Upscale and refine ${widget.items.length}' : 'Upscale and refine')
                     : many
                     ? 'Upscale ${widget.items.length}'
                     : 'Upscale',
@@ -219,6 +320,183 @@ class _UpscalePanelState extends State<UpscalePanel> {
       ),
     );
   }
+
+  static String _stem(String name) => name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+
+  /// The switch for hires fix, and when it is on, the server and how much
+  /// it redraws.
+  Widget _refineSection(BuildContext context) {
+    final servers = _servers;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SwitchListTile(
+          key: const ValueKey<String>('hires-switch'),
+          value: _refine,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Then refine on a server', style: TextStyle(fontSize: 13.5)),
+          subtitle: const Text(
+            'The upscale is sent as image to image with the picture\'s own prompt, settings and seed, '
+            'and redrawn lightly at the larger size, so the server adds real detail rather than sharpening.',
+            style: TextStyle(fontSize: 12, color: Palette.muted, height: 1.35),
+          ),
+          onChanged: _busy ? null : (v) => setState(() => _refine = v),
+        ),
+        if (_refine && servers.isEmpty)
+          Row(
+            children: [
+              const Expanded(
+                child: Text('No generation server is set up yet.', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+              ),
+              TextButton(
+                key: const ValueKey<String>('hires-set-up'),
+                onPressed: _busy ? null : _setUpServer,
+                child: const Text('Set up a server…'),
+              ),
+            ],
+          ),
+        if (_refine && servers.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final k in servers)
+                ChoiceChipButton(
+                  key: ValueKey<String>('hires-server-$k'),
+                  label: backendNames[k]!,
+                  selected: _server == k,
+                  onTap: _busy
+                      ? null
+                      : () => setState(() {
+                          _server = k;
+                          _serverChosen = true;
+                        }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('Denoising strength', style: TextStyle(fontSize: 13)),
+              const Spacer(),
+              Text(
+                _hiresStrength.toStringAsFixed(2),
+                key: const ValueKey<String>('hires-strength-value'),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Palette.accent,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(activeTrackColor: Palette.accent, thumbColor: Palette.accent),
+            child: Slider(
+              key: const ValueKey<String>('hires-strength'),
+              value: _hiresStrength,
+              min: hiresMinStrength,
+              max: hiresMaxStrength,
+              divisions: ((hiresMaxStrength - hiresMinStrength) / 0.05).round(),
+              label: _hiresStrength.toStringAsFixed(2),
+              onChanged: _busy ? null : (v) => setState(() => _hiresStrength = v),
+            ),
+          ),
+          const Text(
+            'Around 0.3 adds detail and keeps the picture as it was; higher starts to change faces and shapes.',
+            style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// How much bigger a hires fix may make the picture.
+const List<double> hiresScales = [1.5, 2];
+
+/// Denoising strength for a hires fix: where it starts, and how far it goes.
+const double hiresDefaultStrength = 0.35;
+const double hiresMinStrength = 0.1;
+const double hiresMaxStrength = 0.7;
+
+/// A long side past this is heavy going for most servers.
+const int hiresLargeSide = 2560;
+
+/// `1.5` or `2`, as a size is written.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+
+/// The size a hires fix of a [width] × [height] picture is made at: [scale]
+/// times as big, rounded to a size every server takes.
+(int, int) hiresSize(int width, int height, double scale) =>
+    (snapSize((width * scale).round()), snapSize((height * scale).round()));
+
+/// The server a picture from [source] was made on, as [backendNames] names
+/// it; null for anything else.
+String? madeOn(String source) => switch (source) {
+  'comfyui' => 'comfyui',
+  'invokeai' => 'invokeai',
+  'a1111' || 'forge' => 'forge',
+  _ => null,
+};
+
+/// Hires fix, the second half: send [upscaled] (the upscale of [original]
+/// made here) to the server [kind] as image to image, with [original]'s own
+/// prompt, settings and seed, at [scale] times [original]'s size and
+/// [strength]. What comes back is saved beside [original] as
+/// `name_hires1.png` and put in the remix collection, as a remix is.
+/// Answers with a line to show.
+Future<String?> refineUpscale(
+  AppState state,
+  MediaItem original,
+  String upscaled, {
+  required String kind,
+  required double strength,
+  required double scale,
+}) async {
+  final name = backendNames[kind] ?? kind;
+  final base = state.backendUrls[kind] ?? '';
+  if (base.isEmpty) return '${original.name} was upscaled but not refined: $name is no longer set up';
+  final GenInfo info;
+  try {
+    info = await state.metadata(original);
+  } catch (_) {
+    return '${original.name} was upscaled but not refined: its generation data could not be read';
+  }
+  if (backendSupport(info)[kind] != null) {
+    return '${original.name} was upscaled but not refined: it has no generation data to refine with';
+  }
+  var (w, h) = (original.width, original.height);
+  if (w <= 0 || h <= 0) (w, h) = recipeSize(info);
+  if (w <= 0 || h <= 0) return '${original.name} was upscaled but not refined: its size is not known';
+  final (width, height) = hiresSize(w, h, scale);
+  final ImageInput init;
+  try {
+    init = await prepareImageInput(path: upscaled, width: width, height: height, strength: strength, ops: const []);
+  } catch (e) {
+    return '${original.name} was upscaled but not refined: could not read the upscale ($e)';
+  }
+  final seed = int.tryParse(info.seed.trim());
+  final ticket = await sendRemix(
+    kind,
+    base,
+    Remix(
+      info: info,
+      prompt: info.prompt,
+      negative: info.negative,
+      seed: seed ?? 0,
+      randomSeed: seed == null,
+      count: 1,
+      width: width,
+      height: height,
+      init: init,
+    ),
+  );
+  state.collectRemix(original, ticket, label: 'hires');
+  return 'Hires fix of ${original.name} sent to $name, at $width × $height';
 }
 
 /// Upscales under way, in the corner of the window: progress, and a way to
@@ -258,7 +536,7 @@ class UpscaleJobs extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
-                                'Upscaling ${job.name} ${job.factor}×',
+                                job.then == null ? 'Upscaling ${job.name} ${job.factor}×' : 'Upscaling ${job.name} ${job.factor}×, ${job.then}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(fontSize: 12.5),

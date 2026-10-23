@@ -1609,9 +1609,13 @@ class AppState extends ChangeNotifier {
   /// What is still out is remembered (see [_pendingRemixes]), so if the app
   /// is closed or the system stops it before the pictures come back, they
   /// are fetched the next time it starts.
-  void collectRemix(MediaItem original, RemixTicket ticket) => _collectRemix(original.path, original.name, ticket);
+  ///
+  /// [label] names the new files instead of `remix`: a hires fix comes back
+  /// as `<name>_hires1.png`.
+  void collectRemix(MediaItem original, RemixTicket ticket, {String label = 'remix'}) =>
+      _collectRemix(original.path, original.name, ticket, label: label);
 
-  void _collectRemix(String originalPath, String originalName, RemixTicket ticket, {_PendingRemix? resumed}) {
+  void _collectRemix(String originalPath, String originalName, RemixTicket ticket, {_PendingRemix? resumed, String label = 'remix'}) {
     final results = ticket.results;
     final record = resumed ??
         (ticket.jobs.isEmpty
@@ -1623,6 +1627,7 @@ class AppState extends ChangeNotifier {
                 path: originalPath,
                 name: originalName,
                 at: DateTime.now().millisecondsSinceEpoch,
+                label: label,
               ));
     if (record != null && resumed == null) {
       _pendingRemixes.add(record);
@@ -1673,7 +1678,7 @@ class AppState extends ChangeNotifier {
       (image) {
         // One at a time, so two pictures never take the same name.
         saving = saving.then((_) async {
-          final path = await _saveRemix(dir, stem, image);
+          final path = await _saveRemix(dir, stem, image, label: label);
           if (path != null) saved.add(path);
         });
       },
@@ -1714,7 +1719,7 @@ class AppState extends ChangeNotifier {
         continue;
       }
       _pendingRemixes.add(record);
-      _collectRemix(record.path, record.name, ticket, resumed: record);
+      _collectRemix(record.path, record.name, ticket, resumed: record, label: record.label);
       resumed++;
     }
     // Dropped or given up on, those are forgotten.
@@ -1728,14 +1733,14 @@ class AppState extends ChangeNotifier {
 
   /// Write [image] beside the original and put it in the remix collection;
   /// answers with where it went, or null if it could not be saved.
-  Future<String?> _saveRemix(String dir, String stem, RemixImage image) async {
+  Future<String?> _saveRemix(String dir, String stem, RemixImage image, {String label = 'remix'}) async {
     late final String path;
     late final String name;
     try {
       final sep = dir.contains('/') ? '/' : Platform.pathSeparator;
       final base = (dir.endsWith('/') || dir.endsWith(r'\')) ? dir : '$dir$sep';
       var n = 1;
-      String next() => '${stem}_remix$n.${image.extension}';
+      String next() => '${stem}_$label$n.${image.extension}';
       while (await File('$base${next()}').exists()) {
         n++;
       }
@@ -1927,14 +1932,20 @@ class AppState extends ChangeNotifier {
 
   /// Upscale each of [targets] in turn, as [startUpscale]. Videos are
   /// left out.
+  ///
+  /// [then], when given, is run with each original and where its upscale
+  /// was saved, once that upscale is done (hires fix sends it on to a
+  /// server from there); [thenLabel] says what it is, beside the progress.
   Future<void> startUpscales(
     List<MediaItem> targets, {
     required String model,
     required int factor,
     required bool keepMetadata,
+    UpscaleThen? then,
+    String? thenLabel,
   }) async {
     for (final item in targets) {
-      if (!item.isVideo) _upscaleQueue.add(_QueuedUpscale(item, model, factor, keepMetadata));
+      if (!item.isVideo) _upscaleQueue.add(_QueuedUpscale(item, model, factor, keepMetadata, then, thenLabel));
     }
     upscalesWaiting.value = _upscaleQueue.length;
     if (upscales.value.isEmpty) await _nextUpscale();
@@ -1959,7 +1970,14 @@ class AppState extends ChangeNotifier {
         final next = _upscaleQueue.removeAt(0);
         upscalesWaiting.value = _upscaleQueue.length;
         // One that will not start leaves the way open for the next.
-        await startUpscale(next.item, model: next.model, factor: next.factor, keepMetadata: next.keepMetadata);
+        await startUpscale(
+          next.item,
+          model: next.model,
+          factor: next.factor,
+          keepMetadata: next.keepMetadata,
+          then: next.then,
+          thenLabel: next.thenLabel,
+        );
       }
     } finally {
       _startingUpscale = false;
@@ -1971,6 +1989,8 @@ class AppState extends ChangeNotifier {
     required String model,
     required int factor,
     required bool keepMetadata,
+    UpscaleThen? then,
+    String? thenLabel,
   }) async {
     try {
       final reply = await core.call('upscale', {
@@ -1980,14 +2000,18 @@ class AppState extends ChangeNotifier {
         'metadata': keepMetadata ? 'copy' : 'strip',
       });
       final job = ((reply as Map)['job'] as num).toInt();
+      if (then != null) _upscaleThen[job] = (item, then);
       upscales.value = [
         ...upscales.value,
-        UpscaleJob(job, item.name, factor: factor),
+        UpscaleJob(job, item.name, factor: factor, then: thenLabel),
       ];
     } catch (e) {
       _notices.add('Could not start the upscale: $e');
     }
   }
+
+  /// What to do with each upscale under way once it is saved, by job.
+  final Map<int, (MediaItem, UpscaleThen)> _upscaleThen = {};
 
   void cancelUpscale(int job) {
     _fire(core.call('upscale_cancel', {'job': job}));
@@ -2009,16 +2033,29 @@ class AppState extends ChangeNotifier {
       case 'done':
         list.removeAt(at);
         final path = e['path'] as String? ?? '';
-        _notices.add('Saved ${path.split('/').last}');
+        _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}');
         _rescanSoon();
+        final then = _upscaleThen.remove(job);
+        if (then != null && path.isNotEmpty) unawaited(_runUpscaleThen(then.$1, path, then.$2));
       case 'cancelled':
         list.removeAt(at);
+        _upscaleThen.remove(job);
       default:
         list.removeAt(at);
+        _upscaleThen.remove(job);
         _notices.add('Upscale failed: ${e['error'] ?? 'unknown error'}');
     }
     upscales.value = list;
     if (list.isEmpty && _upscaleQueue.isNotEmpty) unawaited(_nextUpscale());
+  }
+
+  Future<void> _runUpscaleThen(MediaItem original, String upscaled, UpscaleThen then) async {
+    try {
+      final message = await then(original, upscaled);
+      if (!_disposed && message != null) _notices.add(message);
+    } catch (e) {
+      if (!_disposed) _notices.add('${original.name}: $e');
+    }
   }
 
   /// The watcher normally sees new files; on storage where it cannot, look.
@@ -2063,7 +2100,15 @@ class AppState extends ChangeNotifier {
 
 /// A remix sent and not yet back, as it is kept between runs of the app.
 class _PendingRemix {
-  _PendingRemix({required this.kind, required this.base, required this.jobs, required this.path, required this.name, required this.at});
+  _PendingRemix({
+    required this.kind,
+    required this.base,
+    required this.jobs,
+    required this.path,
+    required this.name,
+    required this.at,
+    this.label = 'remix',
+  });
 
   /// The backend and where it is.
   final String kind;
@@ -2079,7 +2124,11 @@ class _PendingRemix {
   /// When it was sent, milliseconds since the epoch.
   final int at;
 
-  Map<String, Object> toJson() => {'kind': kind, 'base': base, 'jobs': jobs, 'path': path, 'name': name, 'at': at};
+  /// What the new files are called after: `remix`, or `hires`.
+  final String label;
+
+  Map<String, Object> toJson() =>
+      {'kind': kind, 'base': base, 'jobs': jobs, 'path': path, 'name': name, 'at': at, 'label': label};
 
   static _PendingRemix? fromJson(Map<String, dynamic> j) {
     final kind = j['kind'];
@@ -2094,6 +2143,10 @@ class _PendingRemix {
       path: path,
       name: j['name'] as String? ?? path.split(RegExp(r'[/\\]')).last,
       at: (j['at'] as num?)?.toInt() ?? 0,
+      label: switch (j['label']) {
+        final String l when RegExp(r'^[a-z]+$').hasMatch(l) => l,
+        _ => 'remix',
+      },
     );
   }
 }
@@ -2116,22 +2169,32 @@ class RemixJob {
 
 /// An upscale waiting for the one before it to finish.
 class _QueuedUpscale {
-  const _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata);
+  const _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata, this.then, this.thenLabel);
   final MediaItem item;
   final String model;
   final int factor;
   final bool keepMetadata;
+  final UpscaleThen? then;
+  final String? thenLabel;
 }
+
+/// A step to take with an upscale once it is saved: given the original and
+/// where its upscale went, it answers with a line to show (or null).
+typedef UpscaleThen = Future<String?> Function(MediaItem original, String upscaled);
 
 /// An upscale under way.
 @immutable
 class UpscaleJob {
-  const UpscaleJob(this.id, this.name, {required this.factor, this.done = 0, this.total = 0});
+  const UpscaleJob(this.id, this.name, {required this.factor, this.done = 0, this.total = 0, this.then});
   final int id;
 
   /// The original's file name.
   final String name;
   final int factor;
+
+  /// What happens once it is saved, to show beside it: "then refined on
+  /// InvokeAI". Null for a plain upscale.
+  final String? then;
 
   /// Tiles done, of how many.
   final int done;
@@ -2140,7 +2203,7 @@ class UpscaleJob {
   double? get progress => total > 0 ? done / total : null;
 
   UpscaleJob copyWith({int? done, int? total}) =>
-      UpscaleJob(id, name, factor: factor, done: done ?? this.done, total: total ?? this.total);
+      UpscaleJob(id, name, factor: factor, done: done ?? this.done, total: total ?? this.total, then: then);
 }
 
 class UpscaleModel {

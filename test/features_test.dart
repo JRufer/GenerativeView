@@ -34,6 +34,7 @@ import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
 import 'package:generativeview/src/ui/remix_dialog.dart';
 import 'package:generativeview/src/ui/thumb_image.dart';
+import 'package:generativeview/src/ui/upscale_dialog.dart' show hiresSize, madeOn, refineUpscale, scaleText;
 
 import 'support.dart';
 
@@ -605,6 +606,100 @@ void main() {
     expect(plain!.hasGeneration, isFalse);
     out.deleteSync();
     bare.deleteSync();
+    await close(tester, state);
+  });
+  testWidgets('hires fix: the upscale goes to a server as image to image, and what comes back is saved as name_hires1', (tester) async {
+    // A Forge on this machine that takes the image to image and answers with
+    // a picture, as Forge does.
+    final saved = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = saved);
+    final bodies = <Map<String, dynamic>>[];
+    final paths = <String>[];
+    final server = (await tester.runAsync(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        paths.add(request.uri.path);
+        final body = await utf8.decoder.bind(request).join();
+        if (body.isNotEmpty) bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        final picture = File('${library.path}/heron.png').readAsBytesSync();
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'images': [base64Encode(picture)], 'info': '{}'}));
+        await request.response.close();
+      });
+      return server;
+    }))!;
+    addTearDown(() => server.close(force: true));
+
+    final state = await launch(tester);
+    await pumpUntil(tester, () => indexOf(state, 'heron.png') >= 0, what: 'the listing');
+    state.setBackendUrl('forge', 'http://127.0.0.1:${server.port}');
+    addTearDown(() => state.setBackendUrl('forge', ''));
+
+    // ---- the panel: the switch, the server, the size it will be made at ----
+    state.select(indexOf(state, 'heron.png'));
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('hires-switch')).evaluate().isNotEmpty, what: 'the upscale panel');
+    await settle(tester);
+    expect(find.byKey(const ValueKey('hires-strength')), findsNothing);
+    await tester.ensureVisible(find.byKey(const ValueKey('hires-switch')));
+    await tester.tap(find.byKey(const ValueKey('hires-switch')));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('hires-server-forge')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hires-strength')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('hires-strength-value'))).data, '0.35');
+    // 4× is not offered for a hires fix; 1.5× and 2× are.
+    expect(find.byKey(const ValueKey('upscale-factor-4')), findsNothing);
+    expect(find.byKey(const ValueKey('hires-scale-1.5')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 640 × 640');
+    await tester.tap(find.byKey(const ValueKey('hires-scale-1.5')));
+    await settle(tester);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 480 × 480');
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-saved-as'))).data, contains('heron_hires1'));
+    expect(find.text('Upscale and refine'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+
+    // ---- the second half: the upscale sent on, and what comes back ---------
+    // The original stands in for its upscale (the upscale itself is tested
+    // above); what is sent is made at twice the original's size from it.
+    final heron = state.items[indexOf(state, 'heron.png')];
+    final message = await tester.runAsync(
+      () => refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
+    );
+    expect(message, contains('640 × 640'));
+    final out = File('${library.path}/heron_hires1.png');
+    await pumpUntil(tester, () => out.existsSync(), what: 'the hires fix to be saved');
+    expect(paths, ['/sdapi/v1/img2img']);
+    final sent = bodies.single;
+    expect(sent['width'], 640);
+    expect(sent['height'], 640);
+    expect(sent['denoising_strength'], 0.35);
+    expect(sent['seed'], 5);
+    expect(sent['n_iter'], 1);
+    expect(sent['prompt'], 'a brass heron, studio light');
+    expect((sent['init_images'] as List).single, isA<String>());
+    expect(sent.containsKey('mask'), isFalse);
+    // It is a remix like any other: in the Remixes collection.
+    await pumpUntil(tester, () => names(state).contains('heron_hires1.png'), what: 'the hires fix in the grid');
+    final note = await tester.runAsync(() => state.notes(state.items[indexOf(state, 'heron_hires1.png')]));
+    expect(note!.collections, contains(AppState.remixCollection));
+    // Leave the Remixes collection as it was for the tests that follow.
+    await tester.runAsync(() => state.core.call('notes_set', {
+          'paths': [out.path],
+          'remove': [AppState.remixCollection],
+        }));
+    out.deleteSync();
+
+    // The sizes and names the panel works with.
+    expect(hiresSize(832, 1216, 1.5), (1248, 1824));
+    expect(scaleText(1.5), '1.5');
+    expect(scaleText(2), '2');
+    expect(madeOn('a1111'), 'forge');
+    expect(madeOn('swarmui'), isNull);
     await close(tester, state);
   });
   testWidgets('remixes show while they run, open the Remixes collection when done, and are picked out', (tester) async {
