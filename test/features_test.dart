@@ -611,6 +611,17 @@ void main() {
   });
   testWidgets('hires fix: the upscale goes to a server as image to image, and what comes back is saved as name_hires1', (tester) async {
     // Temporary: say on CI where it stopped, since the job log is not at hand.
+    final reporter = reportTestException;
+    reportTestException = (details, description) {
+      final text = '${details.exceptionAsString()}\n${details.stack.toString().split('\n').take(10).join('\n')}'
+          .replaceAll('%', '%25')
+          .replaceAll('\r', '')
+          .replaceAll('\n', '%0A');
+      // ignore: avoid_print
+      print('::error title=hires fix test reported::$text');
+      reporter(details, description);
+    };
+    addTearDown(() => reportTestException = reporter);
     final seen = <String>[];
     var step = 'start';
     String esc(String t) => t.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
