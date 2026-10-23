@@ -480,6 +480,10 @@ impl Engine {
             "forget" => self.forget(str_arg(args, "path")?),
             "collection_delete" => self.delete_collection(str_arg(args, "name")?),
             "describe" => Ok(self.content.describe(str_arg(args, "path")?)?.to_string()),
+            "check_prompt" => {
+                let make = args.get("make").and_then(Value::as_bool).unwrap_or(false);
+                Ok(self.content.check_prompt(&normalize(str_arg(args, "path")?), str_arg(args, "prompt")?, make)?.to_string())
+            }
             "taste_status" => Ok(self.taste_status().to_string()),
             "taste_score" => Ok(self.taste_score(str_arg(args, "path")?).to_string()),
             "upscale_models" => {

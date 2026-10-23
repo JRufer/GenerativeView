@@ -112,7 +112,13 @@ struct Inner {
     /// What is usual for each picture (see [`usual`]), worked out the first
     /// time it is searched.
     usual: Mutex<HashMap<Key, Usual>>,
+    /// The vectors of prompt phrases checked (see [`ContentSearch::check_prompt`]):
+    /// a folder's prompts share most of theirs.
+    phrases: Mutex<HashMap<String, Arc<Vec<f32>>>>,
 }
+
+/// How many phrase vectors are kept before starting again (about 2 KB each).
+const PHRASES_KEPT: usize = 4_000;
 
 pub struct ContentSearch {
     inner: Arc<Inner>,
@@ -141,6 +147,7 @@ impl ContentSearch {
             recent: Mutex::new(Vec::new()),
             reference: Mutex::new(None),
             usual: Mutex::new(HashMap::new()),
+            phrases: Mutex::new(HashMap::new()),
         });
         let (tx, rx) = unbounded();
         let worker = inner.clone();
@@ -343,6 +350,149 @@ impl ContentSearch {
         prompt.push_str(", highly detailed, sharp focus, high resolution");
         Ok(json!({ "prompt": prompt, "style": style, "subjects": subjects }))
     }
+
+    /// How well the picture at `path` shows each part of `prompt`: the
+    /// prompt cut into phrases (see [`prompt_phrases`]), each scored against
+    /// the picture the way a content search is (see [`Usual`]), so a phrase
+    /// at level 1 or more is seen in it. Phrases that only ask for quality
+    /// ("masterpiece", "8k") are listed but not scored: the model cannot see
+    /// them.
+    ///
+    /// The picture's vector is made now if `make`; otherwise a picture
+    /// content search has not looked at yet gives `null`.
+    pub fn check_prompt(&self, path: &str, prompt: &str, make: bool) -> Result<Value, String> {
+        let inner = &self.inner;
+        let phrases = prompt_phrases(prompt);
+        let scored: Vec<String> = phrases.iter().filter(|p| !is_quality_phrase(p)).map(|p| p.to_lowercase()).collect();
+        if scored.is_empty() {
+            let list: Vec<Value> = phrases.iter().map(|p| json!({ "text": p, "checked": false })).collect();
+            return Ok(json!({ "phrases": list, "seen": 0, "checked": 0 }));
+        }
+        let Some(picture) = inner.picture_vector_if(path, make)? else { return Ok(Value::Null) };
+        let reference = inner.reference()?;
+        let usual = usual(&reference, &picture);
+        let vectors = inner.phrase_vectors(&scored)?;
+        let mut vectors = vectors.iter();
+        let mut seen = 0;
+        let list: Vec<Value> = phrases
+            .iter()
+            .map(|p| {
+                if is_quality_phrase(p) {
+                    return json!({ "text": p, "checked": false });
+                }
+                let level = vectors.next().map_or(0.0, |v| usual.fit(store::score(v, &picture)).level());
+                if level >= 1.0 {
+                    seen += 1;
+                }
+                json!({ "text": p, "checked": true, "level": (level * 100.0).round() / 100.0, "seen": level >= 1.0 })
+            })
+            .collect();
+        Ok(json!({ "phrases": list, "seen": seen, "checked": scored.len() }))
+    }
+}
+
+/// Most phrases checked in one prompt; past these the rest are left out.
+const MOST_PHRASES: usize = 40;
+
+/// `prompt` cut into the phrases it asks for, in order, each once: split at
+/// commas, full stops, semicolons, line breaks and `BREAK`; with weights
+/// (`(red fox:1.2)`, `[snow]`), escapes (`\(`), LoRA and embedding tags
+/// taken off; and what is left with a letter in it kept.
+pub fn prompt_phrases(prompt: &str) -> Vec<String> {
+    // LoRA, hypernetwork and wildcard tags say what was loaded, not what to
+    // draw.
+    let mut text = String::with_capacity(prompt.len());
+    let mut rest = prompt;
+    while let Some(at) = rest.find('<') {
+        text.push_str(&rest[..at]);
+        match rest[at..].find('>') {
+            Some(end) => {
+                text.push(',');
+                rest = &rest[at + end + 1..];
+            }
+            None => {
+                rest = &rest[at + 1..];
+            }
+        }
+    }
+    text.push_str(rest);
+    let text = text.replace("BREAK", ",");
+    // Weights, brackets and escapes first, so a weight's decimal point is
+    // not taken for a full stop.
+    let mut clean = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // An escaped bracket is part of the text.
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    clean.push(next);
+                }
+            }
+            '(' | ')' | '[' | ']' | '{' | '}' => clean.push(' '),
+            // A weight: `:1.2` up to the bracket.
+            ':' => {
+                let mut number = String::new();
+                while let Some(&d) = chars.peek() {
+                    if d.is_ascii_digit() || d == '.' || d == '-' || d == ' ' {
+                        number.push(d);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if !number.chars().any(|d| d.is_ascii_digit()) {
+                    clean.push(':');
+                    clean.push_str(&number);
+                }
+            }
+            '_' => clean.push(' '),
+            _ => clean.push(c),
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for piece in clean.split(|c: char| matches!(c, ',' | ';' | '.' | '\n' | '\r' | '|')) {
+        let words: Vec<&str> = piece.split_whitespace().collect();
+        let phrase = words.join(" ");
+        let phrase = phrase.trim_matches(|c: char| c.is_whitespace() || matches!(c, '-' | '"' | '\'' | '!' | '?' | '*' | '#' | '/' | ':' | '+')).to_string();
+        if !phrase.chars().any(char::is_alphabetic) || phrase.starts_with("embedding") {
+            continue;
+        }
+        if out.iter().any(|known| known.eq_ignore_ascii_case(&phrase)) {
+            continue;
+        }
+        out.push(phrase);
+        if out.len() == MOST_PHRASES {
+            break;
+        }
+    }
+    out
+}
+
+/// Words that ask for quality rather than for anything to be in the
+/// picture: a phrase made of only these is not checked.
+const QUALITY_WORDS: &[&str] = &[
+    "masterpiece", "best", "high", "higher", "highest", "top", "good", "great", "quality", "detailed", "detail", "details",
+    "highly", "ultra", "very", "extremely", "super", "hyper", "intricate", "sharp", "focus", "resolution", "res", "highres",
+    "absurdres", "hd", "hdr", "uhd", "4k", "8k", "16k", "32k", "raw", "photo", "realistic", "photorealistic", "hyperrealistic",
+    "professional", "award", "winning", "trending", "on", "artstation", "pixiv", "deviantart", "amazing", "beautiful",
+    "stunning", "perfect", "official", "art", "aesthetic", "aesthetics", "newest", "recent", "score", "up", "source",
+    "rating", "safe", "general", "illustration", "wallpaper", "unity", "cg", "rendered", "render", "octane", "unreal", "engine",
+    "the", "a", "an", "and", "of", "in", "with",
+];
+
+/// Whether `phrase` only asks for quality ("best quality", "8k uhd",
+/// "score_9 score_8_up"), which the model has no way to see.
+pub fn is_quality_phrase(phrase: &str) -> bool {
+    let words: Vec<String> = phrase
+        .split(|c: char| c.is_whitespace() || c == '_' || c == '-')
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect();
+    !words.is_empty()
+        && words.iter().all(|w| {
+            QUALITY_WORDS.contains(&w.as_str()) || w.chars().all(|c| c.is_ascii_digit())
+        })
 }
 
 /// What is usual for one picture: how the everyday descriptions score
@@ -463,12 +613,21 @@ impl Inner {
     /// A picture's vector: as stored, or made now (and stored) if the
     /// folder pass has not got to it yet.
     fn picture_vector(&self, path: &str) -> Result<store::Packed, String> {
+        self.picture_vector_if(path, true)?.ok_or_else(|| "this picture has not been looked at yet".to_string())
+    }
+
+    /// A picture's vector as stored; when it is not, made now if `make`,
+    /// or else None.
+    fn picture_vector_if(&self, path: &str, make: bool) -> Result<Option<store::Packed>, String> {
         let md = std::fs::metadata(path).map_err(|e| format!("cannot read {path}: {e}"))?;
         let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
         let size = md.len() as i64;
         let key = store::key(MODEL, path, mtime, size);
         if let Some(vector) = self.vectors.get(&key) {
-            return Ok(vector);
+            return Ok(Some(vector));
+        }
+        if !make {
+            return Ok(None);
         }
         if !self.installed() {
             return Err("the content search model is not installed".into());
@@ -484,7 +643,32 @@ impl Inner {
         let vector = encoder.embed(&prepared);
         let vector: Vec<f32> = vector.chunks_exact(encoder.dim).next().ok_or("the model gave nothing back")?.to_vec();
         let _ = self.vectors.put(&[(key, vector.clone())], &[]);
-        Ok(store::pack(&vector))
+        Ok(Some(store::pack(&vector)))
+    }
+
+    /// The vector of each of `phrases`, from the ones kept or from the model.
+    fn phrase_vectors(&self, phrases: &[String]) -> Result<Vec<Arc<Vec<f32>>>, String> {
+        let missing: Vec<&String> = {
+            let kept = self.phrases.lock();
+            phrases.iter().filter(|p| !kept.contains_key(*p)).collect()
+        };
+        if !missing.is_empty() {
+            if !self.installed() {
+                return Err("the content search model is not installed".into());
+            }
+            let side = self.text_side()?;
+            let made: Result<Vec<(String, Arc<Vec<f32>>)>, String> = missing
+                .par_iter()
+                .map(|p| side.encoder.embed(&side.tokenizer.encode(p)).map(|v| ((*p).clone(), Arc::new(v))))
+                .collect();
+            let mut kept = self.phrases.lock();
+            if kept.len() > PHRASES_KEPT {
+                kept.clear();
+            }
+            kept.extend(made?);
+        }
+        let kept = self.phrases.lock();
+        phrases.iter().map(|p| kept.get(p).cloned().ok_or_else(|| "a phrase went missing".to_string())).collect()
     }
 
     /// The vectors of [`STYLES`], end to end.
@@ -626,6 +810,32 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_prompt_cut_into_what_it_asks_for() {
+        assert_eq!(
+            prompt_phrases("masterpiece, (a red fox:1.2), [snow], <lora:fur_detail:0.8> misty_forest, a red fox"),
+            vec!["masterpiece", "a red fox", "snow", "misty forest"]
+        );
+        // Prose is cut at its sentences; a weight's point is not one.
+        assert_eq!(
+            prompt_phrases("A heron stands in a pond. (Soft light:1.15) falls on it; BREAK\nbrass feathers"),
+            vec!["A heron stands in a pond", "Soft light falls on it", "brass feathers"]
+        );
+        // Escaped brackets stay; empty and number-only pieces go.
+        assert_eq!(prompt_phrases("Link \\(Zelda\\), , 1.5, embedding:bad_hands"), vec!["Link (Zelda)"]);
+        assert!(prompt_phrases("").is_empty());
+    }
+
+    #[test]
+    fn quality_tags_are_not_checked() {
+        for phrase in ["masterpiece", "best quality", "8k uhd", "score_9 score_8_up", "highly detailed", "trending on artstation"] {
+            assert!(is_quality_phrase(phrase), "{phrase}");
+        }
+        for phrase in ["a red fox", "snow", "detailed fur", "golden hour"] {
+            assert!(!is_quality_phrase(phrase), "{phrase}");
+        }
+    }
 
     #[test]
     fn everyday_list() {

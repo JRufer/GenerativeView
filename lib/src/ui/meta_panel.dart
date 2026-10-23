@@ -9,6 +9,7 @@ import '../theme.dart';
 import 'civitai_sheet.dart';
 import 'context_menu.dart';
 import 'notes_widgets.dart';
+import 'prompt_check.dart';
 import 'remix_dialog.dart';
 import 'upscale_dialog.dart';
 
@@ -223,6 +224,7 @@ class _MetaPanelState extends State<MetaPanel> {
             onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item),
           ),
         ),
+      if (info.prompt.isNotEmpty && !item.isVideo) PromptCheckView(state: state, item: item, prompt: info.prompt),
       if (info.negative.isNotEmpty)
         _Section(
           label: 'Negative prompt',

@@ -450,6 +450,21 @@ fn content_search_embeds_and_ranks() {
     // Asked for a picture not looked at yet, it is looked at there and then.
     let fresh = root.join("unseen.png");
     std::fs::write(&fresh, png_with_text(90, 90, 123, &[])).unwrap();
+    // The prompt check: nothing for a picture not looked at, unless asked
+    // to look.
+    let prompt = "masterpiece, a lighthouse, (stormy sea:1.3), <lora:waves:0.7> best quality";
+    let check = |make: bool| h.call("check_prompt", json!({ "path": fresh.to_str().unwrap(), "prompt": prompt, "make": make }));
+    assert!(check(false).is_null());
+    let checked = check(true);
+    let phrases = checked["phrases"].as_array().unwrap();
+    let texts: Vec<&str> = phrases.iter().map(|p| p["text"].as_str().unwrap()).collect();
+    assert_eq!(texts, ["masterpiece", "a lighthouse", "stormy sea", "best quality"]);
+    let scored: Vec<bool> = phrases.iter().map(|p| p["checked"].as_bool().unwrap()).collect();
+    assert_eq!(scored, [false, true, true, false]);
+    assert!(phrases[1]["level"].as_f64().is_some() && phrases[1]["seen"].is_boolean(), "{checked}");
+    assert_eq!(checked["checked"], 2);
+    // Looked at now, so it answers without being asked to look.
+    assert_eq!(check(false)["checked"], 2);
     let described = h.call("describe", json!({ "path": fresh.to_str().unwrap() }));
     assert!(described["prompt"].as_str().unwrap().contains("highly detailed"), "{described}");
     assert!(described["style"].as_str().is_some());

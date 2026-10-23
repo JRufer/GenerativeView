@@ -1297,6 +1297,14 @@ class AppState extends ChangeNotifier {
     return json is Map<String, dynamic> ? TasteScore.fromJson(json) : null;
   }
 
+  /// How well [item] shows each phrase of [prompt], as content search's
+  /// model sees it. Null when content search has not looked at the picture
+  /// yet; with [look], it looks there and then.
+  Future<PromptCheck?> checkPrompt(MediaItem item, String prompt, {bool look = false}) async {
+    final json = await core.call('check_prompt', {'path': item.path, 'prompt': prompt, 'make': look});
+    return json is Map<String, dynamic> ? PromptCheck.fromJson(json) : null;
+  }
+
   Future<GenInfo> metadata(MediaItem item) async {
     final key = '${item.path}/${item.mtime}/${item.size}';
     final hit = _metaCache.remove(key);

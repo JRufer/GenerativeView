@@ -813,3 +813,51 @@ String freeFileName(String dir, String name) {
   }
 }
 
+/// How well a picture shows each part of its prompt, as content search's
+/// model sees it.
+class PromptCheck {
+  const PromptCheck({required this.phrases, required this.seen, required this.checked});
+
+  /// The prompt's phrases in order.
+  final List<PhraseCheck> phrases;
+
+  /// How many of the [checked] phrases were seen in the picture.
+  final int seen;
+  final int checked;
+
+  /// The phrases that were looked for and not seen.
+  List<PhraseCheck> get missing => [
+    for (final p in phrases)
+      if (p.checked && !p.seen) p,
+  ];
+
+  factory PromptCheck.fromJson(Map<String, dynamic> j) => PromptCheck(
+    phrases: [
+      for (final p in (j['phrases'] as List? ?? const []))
+        if (p is Map<String, dynamic>) PhraseCheck.fromJson(p),
+    ],
+    seen: (j['seen'] as num?)?.toInt() ?? 0,
+    checked: (j['checked'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// One phrase of a prompt, and whether the picture shows it.
+class PhraseCheck {
+  const PhraseCheck({required this.text, required this.checked, this.seen = false, this.level = 0});
+  final String text;
+
+  /// False for a phrase that only asks for quality ("masterpiece", "8k"),
+  /// which the model cannot see, so it is not looked for.
+  final bool checked;
+  final bool seen;
+
+  /// How clearly it is seen: 1 or more is seen, and more is clearer.
+  final double level;
+
+  factory PhraseCheck.fromJson(Map<String, dynamic> j) => PhraseCheck(
+    text: j['text'] as String? ?? '',
+    checked: j['checked'] == true,
+    seen: j['seen'] == true,
+    level: (j['level'] as num?)?.toDouble() ?? 0,
+  );
+}
