@@ -659,7 +659,8 @@ void main() {
     await settle(tester);
     expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 480 × 480');
     expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-saved-as'))).data, contains('heron_hires1'));
-    expect(find.text('Upscale and refine'), findsOneWidget);
+    // 'Upscale and refine', or 'Download, upscale and refine' while the model is not here.
+    expect(find.textContaining(RegExp('[Uu]pscale and refine\$')), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await settle(tester);
 
