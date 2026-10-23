@@ -1,0 +1,53 @@
+# Throwaway (never merged): analyzer and test output pushed to a branch
+# named ci-report-<branch>, readable without the Actions log viewer.
+name: ci-debug
+on:
+  push:
+    branches: ['ci-debug/**']
+permissions:
+  contents: write
+env:
+  FLUTTER_VERSION: 3.47.7
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv ffmpeg
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build core
+        working-directory: core
+        run: cargo build --release --lib
+      - name: Analyze
+        run: |
+          mkdir -p out
+          flutter pub get > out/pub.txt 2>&1 || true
+          flutter analyze > out/analyze.txt 2>&1 || true
+      - name: Publish analysis
+        run: |
+          name="ci-report-${GITHUB_REF_NAME#ci-debug/}"
+          cp -r out /tmp/out && cd /tmp/out
+          git init -q -b "$name"
+          git -c user.name=ci -c user.email=ci@localhost add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "analysis ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$name"
+      - name: Test
+        run: timeout 40m flutter test --reporter expanded > out/test.txt 2>&1 || true
+      - name: Publish tests
+        if: always()
+        run: |
+          name="ci-report-${GITHUB_REF_NAME#ci-debug/}"
+          rm -rf /tmp/out && cp -r out /tmp/out && cd /tmp/out
+          git init -q -b "$name"
+          git -c user.name=ci -c user.email=ci@localhost add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "tests ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$name"
