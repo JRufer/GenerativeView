@@ -84,7 +84,7 @@ class TopBar extends StatelessWidget {
                       ),
                       const SizedBox(width: 6),
                       Expanded(child: _FocusTitle(state: state)),
-                      RemixStatus(state: state, compact: true),
+                      ActivityButton(state: state, compact: true),
                       const SizedBox(width: 4),
                       info,
                     ],

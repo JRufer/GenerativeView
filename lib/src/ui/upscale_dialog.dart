@@ -499,6 +499,90 @@ Future<String?> refineUpscale(
   return 'Hires fix of ${original.name} sent to $name, at $width × $height';
 }
 
+/// How much bigger a hires fix may make the picture.
+const List<double> hiresScales = [1.5, 2];
+
+/// Denoising strength for a hires fix: where it starts, and how far it goes.
+const double hiresDefaultStrength = 0.35;
+const double hiresMinStrength = 0.1;
+const double hiresMaxStrength = 0.7;
+
+/// A long side past this is heavy going for most servers.
+const int hiresLargeSide = 2560;
+
+/// `1.5` or `2`, as a size is written.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+
+/// The size a hires fix of a [width] × [height] picture is made at: [scale]
+/// times as big, rounded to a size every server takes.
+(int, int) hiresSize(int width, int height, double scale) =>
+    (snapSize((width * scale).round()), snapSize((height * scale).round()));
+
+/// The server a picture from [source] was made on, as [backendNames] names
+/// it; null for anything else.
+String? madeOn(String source) => switch (source) {
+  'comfyui' => 'comfyui',
+  'invokeai' => 'invokeai',
+  'a1111' || 'forge' => 'forge',
+  _ => null,
+};
+
+/// Hires fix, the second half: send [upscaled] (the upscale of [original]
+/// made here) to the server [kind] as image to image, with [original]'s own
+/// prompt, settings and seed, at [scale] times [original]'s size and
+/// [strength]. What comes back is saved beside [original] as
+/// `name_hires1.png` and put in the remix collection, as a remix is.
+/// Answers with a line to show.
+Future<String?> refineUpscale(
+  AppState state,
+  MediaItem original,
+  String upscaled, {
+  required String kind,
+  required double strength,
+  required double scale,
+}) async {
+  final name = backendNames[kind] ?? kind;
+  final base = state.backendUrls[kind] ?? '';
+  if (base.isEmpty) return '${original.name} was upscaled but not refined: $name is no longer set up';
+  final GenInfo info;
+  try {
+    info = await state.metadata(original);
+  } catch (_) {
+    return '${original.name} was upscaled but not refined: its generation data could not be read';
+  }
+  if (backendSupport(info)[kind] != null) {
+    return '${original.name} was upscaled but not refined: it has no generation data to refine with';
+  }
+  var (w, h) = (original.width, original.height);
+  if (w <= 0 || h <= 0) (w, h) = recipeSize(info);
+  if (w <= 0 || h <= 0) return '${original.name} was upscaled but not refined: its size is not known';
+  final (width, height) = hiresSize(w, h, scale);
+  final ImageInput init;
+  try {
+    init = await prepareImageInput(path: upscaled, width: width, height: height, strength: strength, ops: const []);
+  } catch (e) {
+    return '${original.name} was upscaled but not refined: could not read the upscale ($e)';
+  }
+  final seed = int.tryParse(info.seed.trim());
+  final ticket = await sendRemix(
+    kind,
+    base,
+    Remix(
+      info: info,
+      prompt: info.prompt,
+      negative: info.negative,
+      seed: seed ?? 0,
+      randomSeed: seed == null,
+      count: 1,
+      width: width,
+      height: height,
+      init: init,
+    ),
+  );
+  state.collectRemix(original, ticket, label: 'hires');
+  return 'Hires fix of ${original.name} sent to $name, at $width × $height';
+}
+
 /// Upscales under way, in the corner of the window: progress, and a way to
 /// stop each.
 class UpscaleJobs extends StatelessWidget {

@@ -16,7 +16,6 @@ import 'media_grid.dart';
 import 'meta_panel.dart';
 import 'remix_status.dart';
 import 'top_bar.dart';
-import 'upscale_dialog.dart';
 
 /// Below this width the side panels slide over the content instead of
 /// sitting beside it.
@@ -165,24 +164,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           fit: StackFit.expand,
           children: [
             _body(constraints.maxWidth),
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: _FadeAway(
-                gone: full,
-                time: time,
-                child: UpscaleJobs(state: state),
-              ),
-            ),
-            // Over the grid, top and centre where it is seen. In
-            // the focus view it sits in the top bar instead, so
-            // nothing covers the picture.
+            // Remixes and upscales under way: a round button in the
+            // corner, clear of the tiles' boxes. In the focus view it
+            // sits in the top bar instead, so nothing covers the picture.
             if (!focus)
               Positioned(
-                top: 12,
-                left: 0,
-                right: 0,
-                child: Center(child: RemixStatus(state: state)),
+                right: 16,
+                bottom: 16,
+                child: _FadeAway(
+                  gone: full,
+                  time: time,
+                  child: ActivityButton(state: state),
+                ),
               ),
           ],
         );

@@ -5,47 +5,173 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../theme.dart';
 
-/// The blue of the remix chips: a step brighter than the accent, so the chip
+/// The blue of the activity button: a step brighter than the accent, so it
 /// reads as something happening rather than one more control.
 const Color _remixBlue = Color(0xFF3B7BF6);
 
-/// How the remixes sent to a server are getting on: a blue chip that moves
-/// while any is running, and one saying remixes are done that, tapped, opens
-/// the Remixes collection with the new pictures picked out.
-class RemixStatus extends StatelessWidget {
-  const RemixStatus({super.key, required this.state, this.compact = false});
+/// Remixes and upscales under way, as one small round blue button: a
+/// spinner while anything runs, a tick once something is done.
+///
+/// Over the grid it floats in the bottom right corner, out of the way of the
+/// tiles' boxes; in the focus view it sits in the top bar ([compact]), so
+/// nothing covers the picture.
+///
+/// Tapped while something runs, it opens a card listing what is running
+/// (remixes waiting on the server, upscales with their progress and a way to
+/// stop each) and what is done. Tapped when all is done, it goes straight to
+/// the new pictures: remixes in the Remixes collection, upscales in their
+/// folder, each picked out. Pressed and held (or right-clicked) when done, it
+/// is put away without going there.
+class ActivityButton extends StatefulWidget {
+  const ActivityButton({super.key, required this.state, this.compact = false});
   final AppState state;
 
-  /// Fitted into the top bar rather than floating over the content.
+  /// Fitted into the top bar: smaller, and the card opens downwards.
   final bool compact;
 
   @override
+  State<ActivityButton> createState() => _ActivityButtonState();
+}
+
+/// What is going on, read once per build.
+class _Activity {
+  _Activity(AppState state)
+      : remixesRunning = [for (final j in state.remixes.value) if (j.running) j],
+        remixesDone = [for (final j in state.remixes.value) if (!j.running) j],
+        upscales = state.upscales.value,
+        waiting = state.upscalesWaiting.value,
+        upscaled = state.upscaled.value;
+
+  final List<RemixJob> remixesRunning;
+  final List<RemixJob> remixesDone;
+  final List<UpscaleJob> upscales;
+  final int waiting;
+  final List<String> upscaled;
+
+  bool get busy => remixesRunning.isNotEmpty || upscales.isNotEmpty || waiting > 0;
+  bool get anyDone => remixesDone.isNotEmpty || upscaled.isNotEmpty;
+  bool get none => !busy && !anyDone;
+
+  /// Done of both kinds at once: there is no one place to go.
+  bool get doneBothKinds => remixesDone.isNotEmpty && upscaled.isNotEmpty;
+
+  /// Things running or done, for the badge.
+  int get count => remixesRunning.length + upscales.length + waiting + remixesDone.length + upscaled.length;
+
+  /// One upscale and nothing else: its progress can be shown on the ring.
+  double? get progress => remixesRunning.isEmpty && waiting == 0 && upscales.length == 1 ? upscales.single.progress : null;
+}
+
+class _ActivityButtonState extends State<ActivityButton> with SingleTickerProviderStateMixin {
+  final OverlayPortalController _card = OverlayPortalController();
+  final LayerLink _link = LayerLink();
+  final Object _region = Object();
+
+  /// A short pop each time something finishes, to catch the eye.
+  late final AnimationController _pop = AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+  int _doneBefore = 0;
+
+  AppState get state => widget.state;
+
+  late final Listenable _changes = Listenable.merge([state.remixes, state.upscales, state.upscalesWaiting, state.upscaled]);
+
+  @override
+  void initState() {
+    super.initState();
+    _changes.addListener(_changed);
+    _doneBefore = _Activity(state).remixesDone.length + state.upscaled.value.length;
+  }
+
+  @override
+  void dispose() {
+    _changes.removeListener(_changed);
+    _pop.dispose();
+    super.dispose();
+  }
+
+  void _changed() {
+    final now = _Activity(state);
+    final done = now.remixesDone.length + now.upscaled.length;
+    if (done > _doneBefore) _pop.forward(from: 0);
+    _doneBefore = done;
+    // Nothing left to show: the card goes with the button.
+    if (now.none && _card.isShowing) _card.hide();
+    if (mounted) setState(() {});
+  }
+
+  void _toggle() => _card.isShowing ? _card.hide() : _card.show();
+
+  void _tap(_Activity now) {
+    if (now.busy || now.doneBothKinds) {
+      setState(_toggle);
+    } else if (now.remixesDone.isNotEmpty) {
+      state.showRemixes();
+    } else if (now.upscaled.isNotEmpty) {
+      state.showUpscales();
+    }
+  }
+
+  void _dismissDone() {
+    state.dismissDoneRemixes();
+    state.dismissDoneUpscales();
+  }
+
+  String _tooltip(_Activity now) {
+    if (now.busy) {
+      final parts = [
+        if (now.remixesRunning.isNotEmpty) now.remixesRunning.length == 1 ? 'a remix' : '${now.remixesRunning.length} remixes',
+        if (now.upscales.isNotEmpty || now.waiting > 0) now.upscales.length + now.waiting == 1 ? 'an upscale' : '${now.upscales.length + now.waiting} upscales',
+      ];
+      return 'Running ${parts.join(' and ')}: tap for details';
+    }
+    if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
+    final what = now.remixesDone.isNotEmpty
+        ? (now.remixesDone.length == 1 ? 'Remix done' : '${now.remixesDone.length} remixes done')
+        : (now.upscaled.length == 1 ? 'Upscale done' : '${now.upscaled.length} upscales done');
+    return '$what: tap to see, press and hold to dismiss';
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<RemixJob>>(
-      valueListenable: state.remixes,
-      builder: (context, jobs, _) {
-        final running = [for (final j in jobs) if (j.running) j];
-        final done = [for (final j in jobs) if (!j.running) j];
-        final chips = <Widget>[
-          if (running.isNotEmpty)
-            _RunningChip(
-              key: const ValueKey<String>('remix-running'),
-              jobs: running,
-              compact: compact,
+    final now = _Activity(state);
+    final size = widget.compact ? 32.0 : 48.0;
+    final Widget button = now.none
+        ? const SizedBox.shrink(key: ValueKey<String>('activity-none'))
+        : _RoundButton(
+            key: const ValueKey<String>('activity-button'),
+            size: size,
+            compact: widget.compact,
+            activity: now,
+            pop: _pop,
+            tooltip: _tooltip(now),
+            onTap: () => _tap(now),
+            onDismiss: !now.busy && now.anyDone ? _dismissDone : null,
+          );
+    return TapRegion(
+      groupId: _region,
+      onTapOutside: (_) {
+        if (_card.isShowing) setState(_card.hide);
+      },
+      child: CompositedTransformTarget(
+        link: _link,
+        child: OverlayPortal(
+          controller: _card,
+          overlayChildBuilder: (context) => CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            // Over the grid it opens upwards from the corner; in the top
+            // bar, downwards. Either way lined up on the right.
+            targetAnchor: widget.compact ? Alignment.bottomRight : Alignment.topRight,
+            followerAnchor: widget.compact ? Alignment.topRight : Alignment.bottomRight,
+            offset: Offset(0, widget.compact ? 8 : -10),
+            child: Align(
+              alignment: widget.compact ? Alignment.topRight : Alignment.bottomRight,
+              child: TapRegion(
+                groupId: _region,
+                child: _ActivityCard(state: state, activity: now, onGo: () => setState(_card.hide)),
+              ),
             ),
-          if (done.isNotEmpty)
-            _DoneChip(
-              key: const ValueKey<String>('remix-done'),
-              jobs: done,
-              compact: compact,
-              onOpen: state.showRemixes,
-              onDismiss: state.dismissDoneRemixes,
-            ),
-        ];
-        return AnimatedSize(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.center,
+          ),
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),
             switchInCurve: Curves.easeOutBack,
@@ -53,241 +179,340 @@ class RemixStatus extends StatelessWidget {
               opacity: animation,
               child: ScaleTransition(scale: animation, child: child),
             ),
-            child: chips.isEmpty
-                ? const SizedBox.shrink(key: ValueKey<String>('remix-none'))
-                : Row(
-                    // Keyed by what shows, so running turning into done
-                    // swaps with the animation rather than snapping.
-                    key: ValueKey<String>('remix-${running.isNotEmpty}-${done.isNotEmpty}'),
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (var i = 0; i < chips.length; i++) ...[
-                        if (i > 0) const SizedBox(width: 8),
-                        chips[i],
-                      ],
-                    ],
-                  ),
+            child: button,
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
 
-class _ChipShape extends StatelessWidget {
-  const _ChipShape({
-    required this.child,
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
+    super.key,
+    required this.size,
     required this.compact,
-    this.background,
-    this.onTap,
-    this.tooltip,
+    required this.activity,
+    required this.pop,
+    required this.tooltip,
+    required this.onTap,
+    required this.onDismiss,
   });
-  final Widget child;
+  final double size;
   final bool compact;
-  final Widget? background;
-  final VoidCallback? onTap;
-  final String? tooltip;
+  final _Activity activity;
+  final Animation<double> pop;
+  final String tooltip;
+  final VoidCallback onTap;
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(compact ? 16 : 20);
-    Widget chip = Material(
+    final busy = activity.busy;
+    final ring = size - (compact ? 8 : 12);
+    final icon = busy
+        ? (activity.remixesRunning.isEmpty ? Icons.photo_size_select_large : Icons.auto_fix_high)
+        : Icons.check;
+    final Widget face = Stack(
+      alignment: Alignment.center,
+      children: [
+        if (busy)
+          SizedBox(
+            key: const ValueKey<String>('activity-spinner'),
+            width: ring,
+            height: ring,
+            child: CircularProgressIndicator(
+              value: activity.progress,
+              strokeWidth: compact ? 2.2 : 2.8,
+              color: Colors.white,
+              backgroundColor: Colors.white.withValues(alpha: activity.progress == null ? 0 : 0.25),
+            ),
+          ),
+        Icon(
+          icon,
+          key: ValueKey<String>(busy ? 'activity-running-icon' : 'activity-done-icon'),
+          size: busy ? (compact ? 14 : 18) : (compact ? 19 : 26),
+          color: Colors.white,
+        ),
+      ],
+    );
+    final count = activity.count;
+    Widget circle = Material(
       color: _remixBlue,
+      shape: const CircleBorder(),
       elevation: compact ? 0 : 6,
       shadowColor: _remixBlue.withValues(alpha: 0.6),
-      shape: RoundedRectangleBorder(borderRadius: radius),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: Stack(
-          children: [
-            if (background != null) Positioned.fill(child: background!),
-            ConstrainedBox(
-              // Big enough to hit with a finger.
-              constraints: BoxConstraints(minHeight: compact ? 32 : 40),
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14),
-                child: Center(widthFactor: 1, child: child),
-              ),
-            ),
-          ],
-        ),
+        onLongPress: onDismiss,
+        onSecondaryTap: onDismiss,
+        child: SizedBox(width: size, height: size, child: face),
       ),
     );
-    if (tooltip != null) chip = Tooltip(message: tooltip, child: chip);
-    return Semantics(button: onTap != null, liveRegion: true, child: chip);
-  }
-}
-
-class _RunningChip extends StatefulWidget {
-  const _RunningChip({super.key, required this.jobs, required this.compact});
-  final List<RemixJob> jobs;
-  final bool compact;
-
-  @override
-  State<_RunningChip> createState() => _RunningChipState();
-}
-
-class _RunningChipState extends State<_RunningChip> with SingleTickerProviderStateMixin {
-  late final AnimationController _sweep = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1600),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _sweep.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final n = widget.jobs.length;
-    final names = widget.jobs.map((j) => j.name).join('\n');
-    return _ChipShape(
-      compact: widget.compact,
-      tooltip: 'Waiting on the server for\n$names',
-      // A band of light running across the chip, so it plainly is busy.
-      background: AnimatedBuilder(
-        animation: _sweep,
-        builder: (context, _) {
-          final t = _sweep.value * 2.4 - 0.7;
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Colors.white.withValues(alpha: 0),
-                  Colors.white.withValues(alpha: 0.28),
-                  Colors.white.withValues(alpha: 0),
-                ],
-                stops: [
-                  (t - 0.3).clamp(0.0, 1.0),
-                  t.clamp(0.0, 1.0),
-                  (t + 0.3).clamp(0.0, 1.0),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-      child: Row(
-        key: const ValueKey<String>('remix-running-chip'),
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedBuilder(
-            animation: _sweep,
-            builder: (context, child) => Transform.rotate(
-              angle: _sweep.value * 2 * math.pi,
-              child: child,
-            ),
-            child: Icon(Icons.autorenew, size: widget.compact ? 16 : 18, color: Colors.white),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            n == 1 ? 'Remix Running' : '$n Remixes Running',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: widget.compact ? 12.5 : 13.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DoneChip extends StatefulWidget {
-  const _DoneChip({
-    super.key,
-    required this.jobs,
-    required this.compact,
-    required this.onOpen,
-    required this.onDismiss,
-  });
-  /// The remixes back and not yet looked at, oldest first.
-  final List<RemixJob> jobs;
-  final bool compact;
-  final VoidCallback onOpen;
-  final VoidCallback onDismiss;
-
-  @override
-  State<_DoneChip> createState() => _DoneChipState();
-}
-
-class _DoneChipState extends State<_DoneChip> with SingleTickerProviderStateMixin {
-  /// A short pop each time a remix finishes, to catch the eye.
-  late final AnimationController _pop = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 520),
-  )..forward();
-
-  @override
-  void didUpdateWidget(_DoneChip old) {
-    super.didUpdateWidget(old);
-    // Another one back: pop again.
-    if (widget.jobs.length > old.jobs.length) _pop.forward(from: 0);
-  }
-
-  @override
-  void dispose() {
-    _pop.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final n = widget.jobs.length;
-    final pictures = widget.jobs.fold<int>(0, (sum, j) => sum + j.saved.length);
-    final label = n == 1 ? 'Remix Done' : '$n Remixes Done';
-    return AnimatedBuilder(
-      animation: _pop,
-      builder: (context, child) {
-        final t = _pop.value;
-        // Up to 1.1 and settle back.
-        final scale = 1 + 0.1 * math.sin(t * math.pi);
-        return Transform.scale(scale: scale, child: child);
-      },
-      child: _ChipShape(
-        compact: widget.compact,
-        onTap: widget.onOpen,
-        tooltip: 'Show ${pictures == 1 ? 'it' : 'them'} in ${AppState.remixCollection}',
-        child: Row(
-          key: const ValueKey<String>('remix-done-chip'),
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.check_circle, size: widget.compact ? 16 : 18, color: Colors.white),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
+    circle = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        circle,
+        // How many, when more than one thing is going on.
+        if (count > 1)
+          Positioned(
+            right: compact ? -4 : -2,
+            top: compact ? -4 : -2,
+            child: Container(
+              key: const ValueKey<String>('activity-count'),
+              constraints: BoxConstraints(minWidth: compact ? 15 : 18),
+              height: compact ? 15 : 18,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
                 color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: widget.compact ? 12.5 : 13.5,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: _remixBlue, width: 1.5),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(fontSize: compact ? 9.5 : 10.5, fontWeight: FontWeight.w700, color: _remixBlue, height: 1),
               ),
             ),
-            const SizedBox(width: 4),
-            const Icon(Icons.arrow_forward, size: 16, color: Colors.white),
-            const SizedBox(width: 2),
-            // Put away without going there.
-            SizedBox(
-              width: 28,
-              height: 28,
-              child: IconButton(
-                key: const ValueKey<String>('remix-done-dismiss'),
-                tooltip: 'Dismiss',
-                padding: EdgeInsets.zero,
-                iconSize: 16,
-                color: Colors.white.withValues(alpha: 0.85),
-                onPressed: widget.onDismiss,
-                icon: const Icon(Icons.close),
-              ),
-            ),
-          ],
+          ),
+      ],
+    );
+    return Tooltip(
+      message: tooltip,
+      // Shown on hover; a long press belongs to the button (put away).
+      triggerMode: TooltipTriggerMode.manual,
+      child: Semantics(
+        button: true,
+        liveRegion: true,
+        label: tooltip,
+        child: AnimatedBuilder(
+          animation: pop,
+          builder: (context, child) {
+            // Up to 1.15 and settle back, each time something finishes.
+            final scale = pop.isAnimating ? 1 + 0.15 * math.sin(pop.value * math.pi) : 1.0;
+            return Transform.scale(scale: scale, child: child);
+          },
+          child: circle,
         ),
       ),
     );
   }
+}
+
+/// The card the button opens: what is running, and what is done.
+class _ActivityCard extends StatelessWidget {
+  const _ActivityCard({required this.state, required this.activity, required this.onGo});
+  final AppState state;
+  final _Activity activity;
+
+  /// Called on going to new pictures, so the card closes.
+  final VoidCallback onGo;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = activity;
+    final rows = <Widget>[
+      if (a.remixesRunning.isNotEmpty)
+        _Pill(
+          key: const ValueKey<String>('activity-remix-running'),
+          icon: const _Spinning(icon: Icons.autorenew),
+          label: a.remixesRunning.length == 1 ? 'Remix Running' : '${a.remixesRunning.length} Remixes Running',
+          tooltip: 'Waiting on the server for\n${a.remixesRunning.map((j) => j.name).join('\n')}',
+        ),
+      for (final job in a.upscales) _UpscaleRow(key: ValueKey<String>('activity-upscale-${job.id}'), state: state, job: job, many: a.waiting > 0),
+      if (a.waiting > 0)
+        Row(
+          key: const ValueKey<String>('activity-upscale-waiting'),
+          children: [
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('${a.waiting} more upscale${a.waiting == 1 ? '' : 's'} waiting', style: const TextStyle(fontSize: 12, color: Palette.muted)),
+            ),
+            TextButton(onPressed: state.cancelAllUpscales, child: const Text('Stop all')),
+          ],
+        ),
+      if (a.remixesDone.isNotEmpty)
+        _Pill(
+          key: const ValueKey<String>('activity-remix-done'),
+          icon: const Icon(Icons.check_circle, size: 18, color: Colors.white),
+          label: a.remixesDone.length == 1 ? 'Remix Done' : '${a.remixesDone.length} Remixes Done',
+          tooltip: 'Show them in ${AppState.remixCollection}',
+          go: true,
+          onTap: () {
+            onGo();
+            state.showRemixes();
+          },
+          onDismiss: state.dismissDoneRemixes,
+        ),
+      if (a.upscaled.isNotEmpty)
+        _Pill(
+          key: const ValueKey<String>('activity-upscale-done'),
+          icon: const Icon(Icons.check_circle, size: 18, color: Colors.white),
+          label: a.upscaled.length == 1 ? 'Upscale Done' : '${a.upscaled.length} Upscales Done',
+          tooltip: 'Show ${a.upscaled.length == 1 ? 'it' : 'them'} in the folder',
+          go: true,
+          onTap: () {
+            onGo();
+            state.showUpscales();
+          },
+          onDismiss: state.dismissDoneUpscales,
+        ),
+    ];
+    return Material(
+      key: const ValueKey<String>('activity-card'),
+      color: Palette.raised,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: const BorderSide(color: Palette.line)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0) const SizedBox(height: 6),
+                rows[i],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A blue row in the card, as the old chips were: what is happening, and
+/// for what is done, a way to go there and one to put it away.
+class _Pill extends StatelessWidget {
+  const _Pill({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    this.go = false,
+    this.onTap,
+    this.onDismiss,
+  });
+  final Widget icon;
+  final String label;
+  final String tooltip;
+  final bool go;
+  final VoidCallback? onTap;
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: _remixBlue,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: ConstrainedBox(
+            // Big enough to hit with a finger.
+            constraints: const BoxConstraints(minHeight: 38),
+            child: Padding(
+              padding: EdgeInsets.only(left: 12, right: onDismiss == null ? 12 : 2),
+              child: Row(
+                children: [
+                  icon,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13.5)),
+                  ),
+                  if (go) const Icon(Icons.arrow_forward, size: 16, color: Colors.white),
+                  if (onDismiss != null)
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: IconButton(
+                        tooltip: 'Dismiss',
+                        padding: EdgeInsets.zero,
+                        iconSize: 16,
+                        color: Colors.white.withValues(alpha: 0.85),
+                        onPressed: onDismiss,
+                        icon: const Icon(Icons.close),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One upscale under way: its picture, how far it has got, and a way to
+/// stop it.
+class _UpscaleRow extends StatelessWidget {
+  const _UpscaleRow({super.key, required this.state, required this.job, required this.many});
+  final AppState state;
+  final UpscaleJob job;
+
+  /// More are waiting behind it.
+  final bool many;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = 'Upscaling ${job.name} ${job.factor}×${job.then == null ? '' : ', ${job.then}'}';
+    return Row(
+      children: [
+        const SizedBox(width: 10),
+        const Icon(Icons.photo_size_select_large, size: 16, color: Palette.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+              const SizedBox(height: 4),
+              LinearProgressIndicator(value: job.progress, minHeight: 3, backgroundColor: Palette.line, color: Palette.accent),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: many ? 'Stop this one' : 'Stop',
+          iconSize: 18,
+          onPressed: () => state.cancelUpscale(job.id),
+          icon: const Icon(Icons.close),
+        ),
+      ],
+    );
+  }
+}
+
+/// An icon turning round and round, for something under way.
+class _Spinning extends StatefulWidget {
+  const _Spinning({required this.icon});
+  final IconData icon;
+
+  @override
+  State<_Spinning> createState() => _SpinningState();
+}
+
+class _SpinningState extends State<_Spinning> with SingleTickerProviderStateMixin {
+  late final AnimationController _turn = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
+
+  @override
+  void dispose() {
+    _turn.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _turn,
+        builder: (context, child) => Transform.rotate(angle: _turn.value * 2 * math.pi, child: child),
+        child: Icon(widget.icon, size: 18, color: Colors.white),
+      );
 }
 
 /// Wraps a grid tile and, when [tick] changes to a non-zero number, plays a

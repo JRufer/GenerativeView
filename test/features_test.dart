@@ -583,6 +583,9 @@ void main() {
     await pumpUntil(tester, () => out.existsSync() && state.upscales.value.isEmpty, what: 'the upscale', timeout: const Duration(minutes: 3));
     // The original's metadata, byte for byte: it reads the same.
     await pumpUntil(tester, () => names(state).contains('heron_up2x.png'), what: 'the upscale in the grid');
+    // Done, and waiting on the round button to be gone to.
+    expect(state.upscaled.value.single.replaceAll(r'\', '/'), endsWith('/heron_up2x.png'));
+    state.dismissDoneUpscales();
     final bigger = state.items[indexOf(state, 'heron_up2x.png')];
     expect((bigger.width, bigger.height), (640, 640));
     final info = await tester.runAsync(() => state.metadata(bigger));
@@ -734,7 +737,23 @@ void main() {
     final second = StreamController<RemixImage>();
     state.collectRemix(sailor, RemixTicket('', 1, first.stream));
     state.collectRemix(owl, RemixTicket('', 1, second.stream));
-    await pumpUntil(tester, () => find.text('2 Remixes Running').evaluate().isNotEmpty, what: 'the running chip');
+    // A small round button in the bottom right corner, clear of the
+    // tiles' boxes, spinning, with how many on it.
+    final button = find.byKey(const ValueKey('activity-button'));
+    await pumpUntil(tester, () => button.evaluate().isNotEmpty, what: 'the activity button');
+    await settle(tester);
+    expect(find.byKey(const ValueKey('activity-spinner')), findsOneWidget);
+    expect(find.text('2 Remixes Running'), findsNothing);
+    final corner = tester.getBottomRight(button);
+    expect(corner.dx, greaterThan(1440 - 40));
+    expect(corner.dy, greaterThan(900 - 40));
+    expect(tester.getSize(button).width, lessThanOrEqualTo(56));
+    expect(find.descendant(of: find.byKey(const ValueKey('activity-count')), matching: find.text('2')), findsOneWidget);
+    // Tapped, it says what is running.
+    await tester.tap(button);
+    await settle(tester);
+    expect(find.byKey(const ValueKey('activity-card')), findsOneWidget);
+    expect(find.text('2 Remixes Running'), findsOneWidget);
     await screenshot(tester, boundary, '40-remix-running');
 
     // One comes back: it is saved beside its original and put in the
@@ -763,6 +782,9 @@ void main() {
     expect(owlRemix.existsSync(), isTrue);
     final after = await tester.runAsync(state.collections);
     expect(after!.any((c) => c.$1 == AppState.remixCollection && c.$2 == 2), isTrue);
+    // All back: the button is a tick.
+    expect(find.byKey(const ValueKey('activity-done-icon')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activity-spinner')), findsNothing);
 
     // Tapped: the Remixes collection, both new pictures picked out.
     await tester.tap(find.text('2 Remixes Done'));
@@ -776,8 +798,41 @@ void main() {
     expect(state.remixes.value, isEmpty);
     await screenshot(tester, boundary, '41-remixes-collection');
     await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
+    expect(button, findsNothing);
+    expect(find.byKey(const ValueKey('activity-card')), findsNothing);
+
+    // With only that done, a tap on the tick goes straight to it.
+    final third = StreamController<RemixImage>();
+    state.collectRemix(owl, RemixTicket('', 1, third.stream));
+    third.add(RemixImage(pngWithText(320, 320, 97, const {})));
+    unawaited(third.close());
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-done-icon')).evaluate().isNotEmpty, what: 'the tick');
+    await settle(tester);
+    await tester.tap(button);
+    await pumpUntil(tester, () => state.highlightIds.length == 1, what: 'the new remix picked out');
+    expect(find.byKey(const ValueKey('activity-card')), findsNothing);
+    expect(button, findsNothing);
+    await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
+
+    // Pressed and held, it is put away without going there.
+    final fourth = StreamController<RemixImage>();
+    state.collectRemix(owl, RemixTicket('', 1, fourth.stream));
+    fourth.add(RemixImage(pngWithText(320, 320, 96, const {})));
+    unawaited(fourth.close());
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-done-icon')).evaluate().isNotEmpty, what: 'the tick again');
+    await settle(tester);
+    await tester.longPress(button);
+    await settle(tester);
+    expect(state.remixes.value, isEmpty);
+    expect(state.highlightIds, isEmpty);
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go');
+
     sailorRemix.deleteSync();
     owlRemix.deleteSync();
+    for (final n in ['owl_01_remix2.png', 'owl_01_remix3.png']) {
+      final f = File('${library.path}/$n');
+      if (f.existsSync()) f.deleteSync();
+    }
     await close(tester, state);
   });
   testWidgets('collections are deleted from their menu, after asking', (tester) async {

@@ -262,6 +262,10 @@ class AppState extends ChangeNotifier {
   /// Upscales running or just finished.
   final ValueNotifier<List<UpscaleJob>> upscales = ValueNotifier(const []);
 
+  /// Upscales saved and not gone to yet: where each went. One that a hires
+  /// fix sends on to a server is not here; its remix is.
+  final ValueNotifier<List<String>> upscaled = ValueNotifier(const []);
+
   /// Set while an upscale model is being downloaded.
   final ValueNotifier<DownloadProgress?> upscaleDownload = ValueNotifier(null);
   ModelDownload? _upscaleDownload;
@@ -1783,6 +1787,24 @@ class AppState extends ChangeNotifier {
     final done = [for (final j in remixes.value) if (!j.running) j];
     remixes.value = [for (final j in remixes.value) if (j.running) j];
     final paths = [for (final j in done) ...j.saved];
+    await _showNew(paths, exactTerm('collection', remixCollection));
+  }
+
+  /// Show the upscales saved since they were last gone to, in their folder
+  /// with no search on, picked out by the same animation as remixes.
+  Future<void> showUpscales() async {
+    final paths = upscaled.value;
+    upscaled.value = const [];
+    await _showNew(paths, '', withFolder: false);
+  }
+
+  /// Put away the upscales that are done, without going to them.
+  void dismissDoneUpscales() => upscaled.value = const [];
+
+  /// Go to the new pictures at [paths]: the folder holding them all (and
+  /// the one open now, [withFolder]), with [filter] as the search, each
+  /// picked out once it is listed.
+  Future<void> _showNew(List<String> paths, String filter, {bool withFolder = true}) async {
     if (paths.isEmpty) return;
     _highlightPending = paths.toSet();
     _highlightPendingSince = DateTime.now();
@@ -1791,11 +1813,15 @@ class AppState extends ChangeNotifier {
     closeOverlays();
 
     final dirs = {for (final p in paths) _parentOf(p)};
-    var root = folder ?? dirs.first;
+    // An upscale lands beside its original, most often in the folder open
+    // now or one under it: stay there when that already lists it.
+    final open = folder;
+    final listed = open != null &&
+        dirs.every((d) => normalizePath(d) == normalizePath(open) || (recursive && _commonDir(open, d) == normalizePath(open)));
+    var root = (withFolder || listed ? open : null) ?? dirs.first;
     for (final d in dirs) {
       root = _commonDir(root, d);
     }
-    final filter = exactTerm('collection', remixCollection);
     _queryTimer?.cancel();
     query = filter;
     searchText.value = TextEditingValue(
@@ -2036,7 +2062,11 @@ class AppState extends ChangeNotifier {
         _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}');
         _rescanSoon();
         final then = _upscaleThen.remove(job);
-        if (then != null && path.isNotEmpty) unawaited(_runUpscaleThen(then.$1, path, then.$2));
+        if (then != null && path.isNotEmpty) {
+          unawaited(_runUpscaleThen(then.$1, path, then.$2));
+        } else if (path.isNotEmpty) {
+          upscaled.value = [...upscaled.value, path];
+        }
       case 'cancelled':
         list.removeAt(at);
         _upscaleThen.remove(job);
@@ -2080,6 +2110,7 @@ class AppState extends ChangeNotifier {
     _upscaleDownload?.cancel();
     upscaleDownload.dispose();
     upscales.dispose();
+    upscaled.dispose();
     for (final sub in [..._remixSubs]) {
       sub.cancel();
     }
