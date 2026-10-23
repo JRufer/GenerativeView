@@ -27,7 +27,6 @@ import 'package:generativeview/src/core/prompt_weights.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/licenses.dart';
 import 'package:generativeview/src/ui/about_panel.dart';
-import 'package:generativeview/src/ui/mask_editor.dart' show prepareImageInput;
 import 'package:generativeview/src/ui/media_grid.dart';
 import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet;
 import 'package:generativeview/src/ui/folder_panel.dart' show FolderPanel;
@@ -610,199 +609,121 @@ void main() {
     await close(tester, state);
   });
   testWidgets('hires fix: the upscale goes to a server as image to image, and what comes back is saved as name_hires1', (tester) async {
-    // Temporary: say on CI where it stopped, since the job log is not at hand.
-    final reporter = reportTestException;
-    reportTestException = (details, description) {
-      final text = '${details.exceptionAsString()}\n${details.stack.toString().split('\n').take(10).join('\n')}'
-          .replaceAll('%', '%25')
-          .replaceAll('\r', '')
-          .replaceAll('\n', '%0A');
-      // ignore: avoid_print
-      print('::error title=hires fix test reported::$text');
-      reporter(details, description);
-    };
-    addTearDown(() => reportTestException = reporter);
-    final seen = <String>[];
-    var step = 'start';
-    String esc(String t) => t.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
-    void report(Object e, String where) {
-      // ignore: avoid_print
-      print('::error title=hires fix test, $where at $step::${esc('$e\nnotices: ${seen.join(' | ')}')}');
+    // A Forge on this machine that takes the image to image and answers with
+    // a picture, as Forge does.
+    final saved = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = saved);
+    final bodies = <Map<String, dynamic>>[];
+    final paths = <String>[];
+    final server = (await tester.runAsync(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        paths.add(request.uri.path);
+        final body = await utf8.decoder.bind(request).join();
+        if (body.isNotEmpty) bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        final picture = File('${library.path}/heron.png').readAsBytesSync();
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'images': [base64Encode(picture)], 'info': '{}'}));
+        await request.response.close();
+      });
+      return server;
+    }))!;
+    addTearDown(() => server.close(force: true));
+
+    final state = await launch(tester);
+    await pumpUntil(tester, () => indexOf(state, 'heron.png') >= 0, what: 'the listing');
+    state.setBackendUrl('forge', 'http://127.0.0.1:${server.port}');
+
+    // ---- the panel: the switch, the server, the size it will be made at ----
+    state.select(indexOf(state, 'heron.png'));
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('hires-switch')).evaluate().isNotEmpty, what: 'the upscale panel');
+    await settle(tester);
+    expect(find.byKey(const ValueKey('hires-strength')), findsNothing);
+    await tester.ensureVisible(find.byKey(const ValueKey('hires-switch')));
+    await tester.tap(find.byKey(const ValueKey('hires-switch')));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('hires-server-forge')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hires-strength')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('hires-strength-value'))).data, '0.35');
+    // 4× is not offered for a hires fix; 1.5× and 2× are.
+    expect(find.byKey(const ValueKey('upscale-factor-4')), findsNothing);
+    expect(find.byKey(const ValueKey('hires-scale-1.5')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 640 × 640');
+    await tester.tap(find.byKey(const ValueKey('hires-scale-1.5')));
+    await settle(tester);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 480 × 480');
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-saved-as'))).data, contains('heron_hires1'));
+    // 'Upscale and refine', or 'Download, upscale and refine' while the model is not here.
+    expect(find.textContaining(RegExp('[Uu]pscale and refine\$')), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
+
+    // ---- the second half: the upscale sent on, and what comes back ---------
+    // The original stands in for its upscale (the upscale itself is tested
+    // above); what is sent is made at twice the original's size from it.
+    final heron = state.items[indexOf(state, 'heron.png')];
+    // Waited for by pumping, so a step that never finishes fails here,
+    // saying which, rather than hanging the run.
+    Future<T> waitFor<T>(Future<T> future, String what) async {
+      T? value;
+      Object? error;
+      var done = false;
+      future.then((v) {
+        value = v;
+        done = true;
+      }, onError: (Object e) {
+        error = e;
+        done = true;
+      });
+      await pumpUntil(tester, () => done, what: what, timeout: const Duration(seconds: 60));
+      if (error != null) throw error!;
+      return value as T;
     }
 
-    void taken() {
-      final e = tester.takeException();
-      if (e != null) {
-        report(e, 'framework exception');
-        throw e;
-      }
-    }
+    final message = await waitFor(
+      refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
+      'the hires fix to be sent',
+    );
+    expect(message, contains('640 × 640'));
+    final out = File('${library.path}/heron_hires1.png');
+    await pumpUntil(tester, () => out.existsSync(), what: 'the hires fix to be saved');
+    expect(paths, ['/sdapi/v1/img2img']);
+    final sent = bodies.single;
+    expect(sent['width'], 640);
+    expect(sent['height'], 640);
+    expect(sent['denoising_strength'], 0.35);
+    expect(sent['seed'], 5);
+    expect(sent['n_iter'], 1);
+    expect(sent['prompt'], 'a brass heron, studio light');
+    expect((sent['init_images'] as List).single, isA<String>());
+    expect(sent.containsKey('mask'), isFalse);
+    // It is a remix like any other: in the Remixes collection.
+    await pumpUntil(tester, () => names(state).contains('heron_hires1.png'), what: 'the hires fix in the grid');
+    final note = await tester.runAsync(() => state.notes(state.items[indexOf(state, 'heron_hires1.png')]));
+    expect(note!.collections, contains(AppState.remixCollection));
+    // Leave the Remixes collection as it was for the tests that follow.
+    await tester.runAsync(() => state.core.call('notes_set', {
+          'paths': [out.path],
+          'remove': [AppState.remixCollection],
+        }));
+    out.deleteSync();
 
-    try {
-      // A Forge on this machine that takes the image to image and answers with
-      // a picture, as Forge does.
-      final saved = HttpOverrides.current;
-      HttpOverrides.global = null;
-      addTearDown(() => HttpOverrides.global = saved);
-      final bodies = <Map<String, dynamic>>[];
-      final paths = <String>[];
-      final server = (await tester.runAsync(() async {
-        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        server.listen((request) async {
-          paths.add(request.uri.path);
-          final body = await utf8.decoder.bind(request).join();
-          if (body.isNotEmpty) bodies.add(jsonDecode(body) as Map<String, dynamic>);
-          final picture = File('${library.path}/heron.png').readAsBytesSync();
-          request.response.headers.contentType = ContentType.json;
-          request.response.write(jsonEncode({'images': [base64Encode(picture)], 'info': '{}'}));
-          await request.response.close();
-        });
-        return server;
-      }))!;
-      addTearDown(() => server.close(force: true));
-
-      final state = await launch(tester);
-      final noticeSub = state.notices.listen(seen.add);
-      addTearDown(noticeSub.cancel);
-      step = 'listing';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached listing');
-      await pumpUntil(tester, () => indexOf(state, 'heron.png') >= 0, what: 'the listing');
-      state.setBackendUrl('forge', 'http://127.0.0.1:${server.port}');
-      addTearDown(() => state.setBackendUrl('forge', ''));
-
-      // ---- the panel: the switch, the server, the size it will be made at ----
-      state.select(indexOf(state, 'heron.png'));
-      await tester.pump();
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-      await pumpUntil(tester, () => find.byKey(const ValueKey('hires-switch')).evaluate().isNotEmpty, what: 'the upscale panel');
-      await settle(tester);
-      expect(find.byKey(const ValueKey('hires-strength')), findsNothing);
-      await tester.ensureVisible(find.byKey(const ValueKey('hires-switch')));
-      await tester.tap(find.byKey(const ValueKey('hires-switch')));
-      await settle(tester);
-      expect(find.byKey(const ValueKey('hires-server-forge')), findsOneWidget);
-      expect(find.byKey(const ValueKey('hires-strength')), findsOneWidget);
-      expect(tester.widget<Text>(find.byKey(const ValueKey('hires-strength-value'))).data, '0.35');
-      // 4× is not offered for a hires fix; 1.5× and 2× are.
-      expect(find.byKey(const ValueKey('upscale-factor-4')), findsNothing);
-      expect(find.byKey(const ValueKey('hires-scale-1.5')), findsOneWidget);
-      expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 640 × 640');
-      await tester.tap(find.byKey(const ValueKey('hires-scale-1.5')));
-      await settle(tester);
-      expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 480 × 480');
-      expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-saved-as'))).data, contains('heron_hires1'));
-      // 'Upscale and refine', or 'Download, upscale and refine' while the model is not here.
-      expect(find.textContaining(RegExp('[Uu]pscale and refine\$')), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await settle(tester);
-
-      taken();
-      step = 'second half';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached second half');
-      // ---- the second half: the upscale sent on, and what comes back ---------
-      // The original stands in for its upscale (the upscale itself is tested
-      // above); what is sent is made at twice the original's size from it.
-      final heron = state.items[indexOf(state, 'heron.png')];
-      // Waited for by pumping, so that a step that never finishes fails
-      // here, saying which, rather than hanging the run.
-      Future<T> waitFor<T>(Future<T> future, String what) async {
-        T? value;
-        Object? error;
-        var done = false;
-        future.then((v) {
-          value = v;
-          done = true;
-        }, onError: (Object e) {
-          error = e;
-          done = true;
-        });
-        await pumpUntil(tester, () => done, what: what, timeout: const Duration(seconds: 60));
-        if (error != null) throw error!;
-        return value as T;
-      }
-
-      step = 'preparing the picture';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached preparing the picture');
-      final prepared = await waitFor(
-        prepareImageInput(path: heron.path, width: 640, height: 640, strength: 0.35, ops: const []),
-        'the picture to be prepared',
-      );
-      expect(prepared.image.length, greaterThan(100));
-      step = 'sending';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached sending');
-      final message = await waitFor(
-        refineUpscale(state, heron, heron.path, kind: 'forge', strength: 0.35, scale: 2),
-        'the hires fix to be sent',
-      );
-      expect(message, contains('640 × 640'));
-      taken();
-      step = 'waiting for save';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached waiting for save');
-      final out = File('${library.path}/heron_hires1.png');
-      await pumpUntil(tester, () => out.existsSync(), what: 'the hires fix to be saved');
-      taken();
-      step = 'checking request';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached checking request');
-      expect(paths, ['/sdapi/v1/img2img']);
-      final sent = bodies.single;
-      expect(sent['width'], 640);
-      expect(sent['height'], 640);
-      expect(sent['denoising_strength'], 0.35);
-      expect(sent['seed'], 5);
-      expect(sent['n_iter'], 1);
-      expect(sent['prompt'], 'a brass heron, studio light');
-      expect((sent['init_images'] as List).single, isA<String>());
-      expect(sent.containsKey('mask'), isFalse);
-      taken();
-      step = 'collection';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached collection');
-      // It is a remix like any other: in the Remixes collection.
-      await pumpUntil(tester, () => names(state).contains('heron_hires1.png'), what: 'the hires fix in the grid');
-      final note = await tester.runAsync(() => state.notes(state.items[indexOf(state, 'heron_hires1.png')]));
-      expect(note!.collections, contains(AppState.remixCollection));
-      // Leave the Remixes collection as it was for the tests that follow.
-      await tester.runAsync(() => state.core.call('notes_set', {
-            'paths': [out.path],
-            'remove': [AppState.remixCollection],
-          }));
-      out.deleteSync();
-
-      taken();
-      step = 'helpers';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached helpers');
-      // The sizes and names the panel works with.
-      expect(hiresSize(832, 1216, 1.5), (1248, 1824));
-      expect(scaleText(1.5), '1.5');
-      expect(scaleText(2), '2');
-      expect(madeOn('a1111'), 'forge');
-      expect(madeOn('swarmui'), isNull);
-      taken();
-      step = 'close';
-      // ignore: avoid_print
-      print('::notice title=hires fix test::reached close');
-      await close(tester, state);
-      taken();
-      // ignore: avoid_print
-      print('::notice title=probe::hires test body done');
-      } catch (e, stack) {
-      report('$e\n${stack.toString().split('\n').take(12).join('\n')}', 'failure');
-      rethrow;
-    }
+    // The sizes and names the panel works with.
+    expect(hiresSize(832, 1216, 1.5), (1248, 1824));
+    expect(scaleText(1.5), '1.5');
+    expect(scaleText(2), '2');
+    expect(madeOn('a1111'), 'forge');
+    expect(madeOn('swarmui'), isNull);
+    // Forgotten before the app closes: settings are kept in the shared index.
+    state.setBackendUrl('forge', '');
+    await close(tester, state);
   });
-
   testWidgets('remixes show while they run, open the Remixes collection when done, and are picked out', (tester) async {
-    // ignore: avoid_print
-    print('::notice title=probe::remixes test started');
     final state = await launch(tester);
     await pumpUntil(tester, () => indexOf(state, 'sailor.png') >= 0, what: 'the pictures');
     final sailor = state.items[indexOf(state, 'sailor.png')];
@@ -858,8 +779,6 @@ void main() {
     sailorRemix.deleteSync();
     owlRemix.deleteSync();
     await close(tester, state);
-    // ignore: avoid_print
-    print('::notice title=probe::remixes test body done');
   });
   testWidgets('collections are deleted from their menu, after asking', (tester) async {
     final state = await launch(tester);
