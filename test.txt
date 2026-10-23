@@ -1,0 +1,746 @@
+Resolving dependencies...
+Downloading packages...
+  code_assets 1.2.1 (2.1.0 available)
+  hooks 2.0.2 (2.2.0 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.2 available)
+  permission_handler_apple 9.6.2 (9.6.4 available)
+  petitparser 7.0.2 (7.1.0 available)
+  record_use 0.6.0 (1.1.1 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.3 available)
+  vm_service 15.3.0 (15.4.0 available)
+  wakelock_plus 1.8.1 (1.8.2 available)
+  web 1.1.1 (1.1.2 available)
+  xml 7.0.1 (7.1.0 available)
+Got dependencies!
+14 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart
+lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+00:00 +0 -1: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart [E]
+  Failed to load "/home/runner/work/GenerativeView/GenerativeView/test/features_test.dart":
+  Compilation failed for testPath=/home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  .
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 1024:11   DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 816:35                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 810:35                      _CustomZone.run
+  dart:async/zone.dart 702:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 743:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 193:5      _RawReceivePort._handleMessage
+  
+lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+00:00 +0 -1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: picture types are told apart by their bytes
+00:00 +1 -1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: settings are written into a PNG that lacks them, once
+00:00 +2 -1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +3 -1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a failed run is reported
+00:00 +4 -1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +5 -1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:03 +5 -2: loading /home/runner/work/GenerativeView/GenerativeView/test/about_test.dart [E]
+  Failed to load "/home/runner/work/GenerativeView/GenerativeView/test/about_test.dart":
+  Compilation failed for testPath=/home/runner/work/GenerativeView/GenerativeView/test/about_test.dart: lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  .
+00:03 +5 -2: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart [E]
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 1024:11   DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 816:35                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 810:35                      _CustomZone.run
+  dart:async/zone.dart 702:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 743:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 193:5      _RawReceivePort._handleMessage
+  
+00:04 +6 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:04 +7 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:04 +8 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +9 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: any picture with settings can go to every server
+00:05 +10 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: samplers are understood in each program's words
+00:05 +11 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a picture from elsewhere gets a workflow built from its settings
+00:05 +12 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a model it does not have is said plainly
+00:05 +13 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a picture from elsewhere gets an SDXL graph built from its settings
+00:05 +14 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a kind of model it cannot build for is said plainly
+00:05 +15 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: LoRA tags in a prompt follow the switches and sliders
+00:05 +16 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: trigger words are found in a prompt and put at its start
+00:05 +17 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a LoRA choice knows how far it has moved, CLIP weight and all
+00:05 +18 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a LoRA turned off leaves the workflow, one moved is reweighted
+00:05 +19 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a LoRA turned off leaves the graph and its metadata
+00:05 +20 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the LoRAs as set go in the prompt it is sent
+00:05 +21 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a graph built from settings leaves out a LoRA turned off
+00:05 +22 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a workflow starts from the picture instead of an empty latent
+00:05 +23 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: an advanced sampler starts part way through its steps
+00:05 +24 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a workflow with no empty latent is said plainly
+00:05 +25 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: image to image uploads the picture and mask, then queues
+00:05 +26 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a picture from elsewhere gets a built graph that starts from it
+00:05 +27 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: packed query results decode lazily and exactly
+00:05 +28 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: packed query results decode lazily and exactly
+00:05 +29 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: packed query results decode lazily and exactly
+00:05 +30 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: image to image of an InvokeAI picture uses its own graph
+00:05 +31 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generation info from the core's JSON
+00:05 +32 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: each run gets its own seed, though the graph keeps it in a node
+00:05 +33 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: each run gets its own seed, though the graph keeps it in a node
+00:05 +34 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: cross-platform path joining normalizes Windows and Unix separators
+00:05 +35 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: steps and CFG set in the sampler, a second pass left alone
+00:05 +36 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: steps and CFG set in the sampler, a second pass left alone
+00:05 +37 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: steps and CFG set in the sampler, a second pass left alone
+00:05 +38 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generativeview/media MethodChannel contract handles all outcomes
+00:05 +39 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generativeview/media MethodChannel contract handles all outcomes
+00:05 +40 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generativeview/media MethodChannel contract handles all outcomes
+00:05 +41 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generativeview/media MethodChannel contract handles all outcomes
+00:05 +42 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generativeview/media MethodChannel contract handles all outcomes
+00:05 +43 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: generativeview/media MethodChannel contract handles all outcomes
+00:05 +44 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a queue item it no longer has is given up on
+00:05 +45 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: smart collection rules read from a search and written back the same
+00:05 +46 -2: /home/runner/work/GenerativeView/GenerativeView/test/models_test.dart: smart collection rules read from a search and written back the same
+00:05 +47 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: image to image goes to img2img with the picture and mask
+00:05 +48 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: image to image goes to img2img with the picture and mask
+00:05 +49 -2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: image to image goes to img2img with the picture and mask
+00:05 +50 -2: loading /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart
+lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+00:11 +50 -3: loading /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart [E]
+  Failed to load "/home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart":
+  Compilation failed for testPath=/home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  .
+00:11 +50 -3: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart [E]
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 1024:11   DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 816:35                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 810:35                      _CustomZone.run
+  dart:async/zone.dart 702:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 743:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 193:5      _RawReceivePort._handleMessage
+  
+lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+00:18 +50 -4: loading /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart [E]
+  Failed to load "/home/runner/work/GenerativeView/GenerativeView/test/app_test.dart":
+  Compilation failed for testPath=/home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  .
+00:18 +50 -4: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart [E]
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 1024:11   DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 816:35                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 810:35                      _CustomZone.run
+  dart:async/zone.dart 702:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 743:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 193:5      _RawReceivePort._handleMessage
+  
+lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+const List<double> hiresScales = [1.5, 2];
+                   ^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+const double hiresDefaultStrength = 0.35;
+             ^^^^^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+const double hiresMinStrength = 0.1;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+const double hiresMaxStrength = 0.7;
+             ^^^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+const int hiresLargeSide = 2560;
+          ^^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+       ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+(int, int) hiresSize(int width, int height, double scale) =>
+           ^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+String? madeOn(String source) => switch (source) {
+        ^^^^^^
+lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+Future<String?> refineUpscale(
+                ^^^^^^^^^^^^^
+00:19 +50 -5: loading /home/runner/work/GenerativeView/GenerativeView/test/size_test.dart [E]
+  Failed to load "/home/runner/work/GenerativeView/GenerativeView/test/size_test.dart":
+  Compilation failed for testPath=/home/runner/work/GenerativeView/GenerativeView/test/size_test.dart: lib/src/ui/upscale_dialog.dart:503:20: Error: 'hiresScales' is already declared in this scope.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:419:20: Context: Previous declaration of 'hiresScales'.
+  const List<double> hiresScales = [1.5, 2];
+                     ^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:506:14: Error: 'hiresDefaultStrength' is already declared in this scope.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:422:14: Context: Previous declaration of 'hiresDefaultStrength'.
+  const double hiresDefaultStrength = 0.35;
+               ^^^^^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:507:14: Error: 'hiresMinStrength' is already declared in this scope.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:423:14: Context: Previous declaration of 'hiresMinStrength'.
+  const double hiresMinStrength = 0.1;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:508:14: Error: 'hiresMaxStrength' is already declared in this scope.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:424:14: Context: Previous declaration of 'hiresMaxStrength'.
+  const double hiresMaxStrength = 0.7;
+               ^^^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:511:11: Error: 'hiresLargeSide' is already declared in this scope.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:427:11: Context: Previous declaration of 'hiresLargeSide'.
+  const int hiresLargeSide = 2560;
+            ^^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:514:8: Error: 'scaleText' is already declared in this scope.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:430:8: Context: Previous declaration of 'scaleText'.
+  String scaleText(double f) => f == f.roundToDouble() ? '${f.round()}' : '$f';
+         ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:518:12: Error: 'hiresSize' is already declared in this scope.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:434:12: Context: Previous declaration of 'hiresSize'.
+  (int, int) hiresSize(int width, int height, double scale) =>
+             ^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:523:9: Error: 'madeOn' is already declared in this scope.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:439:9: Context: Previous declaration of 'madeOn'.
+  String? madeOn(String source) => switch (source) {
+          ^^^^^^
+  lib/src/ui/upscale_dialog.dart:536:17: Error: 'refineUpscale' is already declared in this scope.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  lib/src/ui/upscale_dialog.dart:452:17: Context: Previous declaration of 'refineUpscale'.
+  Future<String?> refineUpscale(
+                  ^^^^^^^^^^^^^
+  .
+00:19 +50 -5: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart [E]
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 1024:11   DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 816:35                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 810:35                      _CustomZone.run
+  dart:async/zone.dart 702:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 743:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 193:5      _RawReceivePort._handleMessage
+  
+00:19 +50 -5: /home/runner/work/GenerativeView/GenerativeView/test/compare_test.dart: rows say what each picture has, and which differ
+00:19 +51 -5: /home/runner/work/GenerativeView/GenerativeView/test/compare_test.dart: rows nobody has anything for are left out
+00:19 +52 -5: /home/runner/work/GenerativeView/GenerativeView/test/compare_test.dart: a prompt is compared word by word
+00:19 +53 -5: /home/runner/work/GenerativeView/GenerativeView/test/compare_test.dart: the same prompt is all the same, case aside
+00:19 +54 -5: /home/runner/work/GenerativeView/GenerativeView/test/compare_test.dart: words dropped from the start and the end are shown where they were
+00:21 +55 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a mask paints when something is left painted
+00:21 +56 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a new shape takes the middle of the picture
+00:21 +57 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:21 +58 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:21 +59 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:21 +60 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:21 +61 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:21 +62 -5: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:21 +63 -5: Some tests failed.
+
+Failing tests:
+  /home/runner/work/GenerativeView/GenerativeView/test/about_test.dart: loading /home/runner/work/GenerativeView/GenerativeView/test/about_test.dart
+  /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: loading /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart
+  /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: loading /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart
+  /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: loading /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart
+  /home/runner/work/GenerativeView/GenerativeView/test/size_test.dart: loading /home/runner/work/GenerativeView/GenerativeView/test/size_test.dart
