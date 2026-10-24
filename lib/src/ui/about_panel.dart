@@ -6,6 +6,7 @@ import '../platform.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show copyText;
 import 'sheet.dart';
+import 'touch_check.dart';
 
 const String appName = 'GenerativeView';
 const String _tagline = 'A fast browser for folders of AI-generated images, with searchable generation metadata.';
@@ -301,6 +302,15 @@ class _AboutContentState extends State<AboutContent> {
               label: const Text('Open-source licences'),
             ),
           ],
+        ),
+
+        // ---- troubleshooting -------------------------------------------------
+        const PanelHeading('Troubleshooting'),
+        OutlinedButton.icon(
+          key: const ValueKey<String>('about-touch-check'),
+          onPressed: () => showTouchCheck(context),
+          icon: const Icon(Icons.touch_app_outlined, size: 17),
+          label: const Text('Touch check'),
         ),
 
         // ---- credits ---------------------------------------------------------
