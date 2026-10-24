@@ -374,7 +374,7 @@ Map<String, dynamic> comfyGraph(
   final krea2 = split != null;
   if (krea2) {
     final (encoder, vaeFile) = _krea2Parts(recipe, installed);
-    final (file, gguf, _) = split!;
+    final (file, gguf, _) = split;
     final unet = gguf
         ? add('UnetLoaderGGUF', {'unet_name': file})
         : add('UNETLoader', {'unet_name': file, 'weight_dtype': 'default'});
@@ -415,7 +415,7 @@ Map<String, dynamic> comfyGraph(
 
   // Krea 2 Turbo is distilled: 8 steps, CFG off (1), with the negative
   // zeroed out as ComfyUI's template does. Raw wants full sampling.
-  final turbo = krea2 && _wantsTurbo(recipe, _words(split!.$1));
+  final turbo = krea2 && _wantsTurbo(recipe, _words(split.$1));
   final steps = recipe.steps ?? (krea2 ? (turbo ? 8 : 52) : 25);
   final cfg = recipe.cfg ?? (krea2 ? (turbo ? 1.0 : 5.5) : 7.0);
   final positive = add('CLIPTextEncode', {'text': recipe.prompt, 'clip': clip});
