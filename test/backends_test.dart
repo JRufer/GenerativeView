@@ -532,6 +532,8 @@ void main() {
     m('qv', 'qwen_image_vae', 'qwen-image', 'vae'),
   ];
   final krea2Encoders = [
+    // MiniMax H3's encoder: the same type, no size recorded. Not Krea 2's.
+    m('mm', 'MiniMax H3 Text Encoder (int8)', 'any', 'qwen3_vl_encoder'),
     m('e8', 'qwen3_vl_8b', 'any', 'qwen3_vl_encoder', variant: 'qwen3_vl_8b'),
     m('e4', 'qwen3_vl_4b_fp8', 'any', 'qwen3_vl_encoder', variant: 'qwen3_vl_4b'),
   ];
@@ -572,6 +574,10 @@ void main() {
     // that fit (not the SDXL VAE, not the 8B encoder).
     expect(loader['vae_model']['key'], 'qv');
     expect(loader['qwen3_vl_encoder_model']['key'], 'e4');
+    // Named or not, the 4B one: not MiniMax H3's, listed first.
+    final unnamed = Recipe(prompt: 'p', negative: '', model: 'kreamania_variant6', loras: const [], width: 512, height: 512);
+    final picked = invokeGraph(unnamed, 1, [krea2Main], const [], vaes: krea2Vaes, encoders: krea2Encoders);
+    expect(((picked['nodes'] as Map)['model_loader'] as Map)['qwen3_vl_encoder_model']['key'], 'e4');
     expect(nodes['positive']['type'], 'krea2_text_encoder');
     expect(nodes['positive']['prompt'], 'a red fox in the snow');
     // CFG 1 (Turbo): no negative conditioning at all.
@@ -645,7 +651,12 @@ void main() {
     );
     expect(
       () => invokeGraph(recipe, 7, [krea2Main], const []),
-      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('a Qwen-Image VAE and a Qwen3-VL encoder'))),
+      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('a Qwen-Image VAE and a Qwen3-VL 4B encoder'))),
+    );
+    // Encoders, but none recorded as 4B: none of them will do.
+    expect(
+      () => invokeGraph(recipe, 7, [krea2Main], const [], vaes: krea2Vaes, encoders: krea2Encoders.where((e) => e.key != 'e4').toList()),
+      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('Qwen3-VL 4B encoder'))),
     );
   });
 
