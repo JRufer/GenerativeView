@@ -23,6 +23,7 @@ class Recipe {
     this.clipSkip,
     this.vae = '',
     this.textEncoder = '',
+    this.family,
   });
 
   final String prompt;
@@ -45,6 +46,12 @@ class Recipe {
   /// model that needs them chosen apart from it (a single-file Krea 2).
   final String vae;
   final String textEncoder;
+
+  /// The family of model the picture was made with, as InvokeAI names its
+  /// bases, when its names make it plain: `krea-2`. Null when they do not.
+  /// For finding the same kind of model on a server that has it under
+  /// another name or in another format.
+  final String? family;
 
   /// Read from [info], with the user's own [prompt], [negative] and size,
   /// and their [steps] and [cfg] where set.
@@ -83,6 +90,7 @@ class Recipe {
       clipSkip: int.tryParse(p(['clip skip', 'clip_skip']) ?? ''),
       vae: [for (final m in info.models) if (m.kind == 'vae') m.name].firstOrNull ?? '',
       textEncoder: [for (final m in info.models) if (m.kind == 'clip') m.name].firstOrNull ?? '',
+      family: pictureFamily(info),
     );
   }
 }
@@ -369,15 +377,20 @@ Map<String, dynamic> invokeGraph(
   GraphInit? init,
   List<InvokeModel> vaes = const [],
   List<InvokeModel> encoders = const [],
+  List<String>? standIn,
 }) {
-  final main = findModel(recipe.model, mains, (m) => m.names);
+  final (main, instead) = resolveMain(recipe, mains);
   if (main == null) {
     throw StateError(
       recipe.model.isEmpty
           ? 'This picture does not say which model made it, so InvokeAI cannot be given a graph for it.'
+          : recipe.family == 'krea-2'
+          ? 'InvokeAI has no Krea 2 model installed (this picture was made with "${recipe.model}"). '
+                'Install one there, such as the Krea-2 bundle in its Model Manager.'
           : 'InvokeAI has no model called "${recipe.model}". Install it there, or send to another server.',
     );
   }
+  if (instead) standIn?.add(main.name);
   if (main.base == 'krea-2') {
     return _krea2Graph(recipe, seed, main, loras, vaes, encoders, skipped: skipped, init: init);
   }
@@ -673,4 +686,52 @@ Map<String, dynamic> _krea2Graph(
   edge('metadata', 'metadata', 'l2i', 'metadata');
 
   return {'id': init == null ? 'generativeview_krea2_txt2img' : 'generativeview_krea2_img2img', 'nodes': nodes, 'edges': edges};
+}
+
+/// The family of model [info] was made with, as InvokeAI names its bases,
+/// when the picture's own names make it plain: the model, the other models
+/// it loaded, and the workflow's nodes. Only `krea-2` for now: its files
+/// are named for it (`krea2_turbo_fp8_scaled`, `Krea-2-Raw`), and the same
+/// weights are installed under quite different names from one program to
+/// the next.
+String? pictureFamily(GenInfo info) {
+  final krea = RegExp(r'krea[\s_-]?2', caseSensitive: false);
+  final names = [
+    info.model,
+    for (final m in info.models) m.name,
+    for (final n in info.nodes) ...[n.type, n.title, for (final i in n.inputs) i.value],
+  ];
+  return names.any(krea.hasMatch) ? 'krea-2' : null;
+}
+
+/// The main model of [mains] to build [recipe] with: the one it names, or,
+/// when the server has it under no such name and the picture's [Recipe.family]
+/// is known, the installed model of that family most like it: the same
+/// variant (Turbo or the base model) first, then the most words of its name
+/// in common. The second value is true when it is such a stand-in.
+(InvokeModel?, bool) resolveMain(Recipe recipe, List<InvokeModel> mains) {
+  final exact = findModel(recipe.model, mains, (m) => m.names);
+  if (exact != null) return (exact, false);
+  final family = recipe.family;
+  if (family == null) return (null, false);
+  final kin = [for (final m in mains) if (m.base == family && (m.type.isEmpty || m.type == 'main')) m];
+  if (kin.isEmpty) return (null, false);
+  Set<String> words(String name) => modelKey(name).split(RegExp(r'[^a-z0-9]+')).where((w) => w.length > 1).toSet();
+  final wanted = words(recipe.model);
+  // Turbo is distilled: few steps and CFG off. Named, or told by its settings.
+  final wantsTurbo = wanted.contains('turbo') ||
+      (!wanted.contains('raw') && !wanted.contains('base') && (recipe.steps ?? 8) <= 12 && (recipe.cfg ?? 1) <= 1.5);
+  double score(InvokeModel m) {
+    final turbo = m.variant.isEmpty ? words(m.name).contains('turbo') : m.variant == 'krea2_turbo';
+    var s = turbo == wantsTurbo ? 10.0 : 0.0;
+    for (final n in m.names) {
+      s += words(n).intersection(wanted).length;
+    }
+    // One that needs no VAE or encoder chosen for it is the surer choice.
+    if (m.format == 'diffusers') s += 0.5;
+    return s;
+  }
+
+  final best = kin.reduce((a, b) => score(b) > score(a) ? b : a);
+  return (best, true);
 }

@@ -665,9 +665,11 @@ void comfyImageToImage(
 
 /// What to add to the "queued" line when a graph was built rather than the
 /// picture's own sent back.
-String _built(bool built, List<String> skipped) {
+String _built(bool built, List<String> skipped, {String? instead, String of = ''}) {
   if (!built) return '';
-  final note = ' (a text-to-image graph made from its settings';
+  var note = ' (a text-to-image graph made from its settings';
+  // The server had the model under no such name: say which it used.
+  if (instead != null) note += ', with $instead in place of ${modelKey(of)}';
   if (skipped.isEmpty) return '$note)';
   final names = skipped.map((n) => modelKey(n)).join(', ');
   return '$note; without ${skipped.length == 1 ? 'the LoRA' : 'the LoRAs'} $names, which the server does not have)';
@@ -788,6 +790,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   final random = math.Random();
   final ids = <int>[];
   final skipped = <String>[];
+  final standIn = <String>[];
   var fetchable = true;
   var mains = const <InvokeModel>[];
   var loras = const <InvokeModel>[];
@@ -804,7 +807,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       loras = listed(await _get(client, '$base/api/v2/models/?model_type=lora'));
     }
     // A single-file Krea 2 model needs its VAE and text encoder chosen.
-    final main = findModel(remix.info.model, mains, (m) => m.names);
+    final (main, _) = resolveMain(Recipe.from(remix.info, prompt: '', negative: '', width: 0, height: 0), mains);
     if (main != null && krea2NeedsParts(main)) {
       Future<List<InvokeModel>> some(String type) async {
         try {
@@ -860,6 +863,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
           init: start,
           vaes: vaes,
           encoders: encoders,
+          standIn: run == 0 ? standIn : null,
         );
       } on StateError catch (e) {
         throw BackendException(e.message);
@@ -878,7 +882,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   }
   final done = StreamController<String>();
   return RemixTicket(
-    'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped)}',
+    'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}',
     remix.count,
     kind: 'invokeai',
     base: base,
