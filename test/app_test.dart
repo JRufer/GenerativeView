@@ -9,6 +9,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 // ignore: unnecessary_import
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
