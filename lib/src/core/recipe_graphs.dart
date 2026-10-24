@@ -532,7 +532,7 @@ bool krea2NeedsParts(InvokeModel main) => main.base == 'krea-2' && main.format !
 
 /// The bases of the VAEs InvokeAI lets a Krea 2 model decode with: the
 /// Qwen-Image VAE (the same file can be registered as Anima's).
-const Set<String> _krea2VaeBases = {'qwen-image', 'anima', 'krea-2'};
+const Set<String> _krea2VaeBases = {'qwen-image', 'anima'};
 
 /// A Krea 2 graph for InvokeAI, built the way InvokeAI's own Generate tab
 /// builds one: the model loader, a Krea 2 text encoder for the prompt (and
@@ -555,15 +555,17 @@ Map<String, dynamic> _krea2Graph(
   if (krea2NeedsParts(main)) {
     final fitting = [for (final m in vaes) if (m.type == 'vae' && _krea2VaeBases.contains(m.base)) m];
     vae = findModel(recipe.vae, fitting, (m) => m.names) ?? fitting.firstOrNull;
-    // The 4B encoder is Krea 2's; the 8B one is another model's.
+    // Only the one recorded as 4B, as InvokeAI's Krea 2 loader insists:
+    // the 8B (Ideogram 4's) and MiniMax H3's, which records no size, are
+    // installed as the same type but cannot condition Krea 2.
     final encoding = [
       for (final m in encoders)
-        if (m.type == 'qwen3_vl_encoder' && m.variant != 'qwen3_vl_8b') m,
+        if (m.type == 'qwen3_vl_encoder' && m.variant == 'qwen3_vl_4b') m,
     ];
     encoder = findModel(recipe.textEncoder, encoding, (m) => m.names) ?? encoding.firstOrNull;
     final missing = [
       if (vae == null) 'a Qwen-Image VAE',
-      if (encoder == null) 'a Qwen3-VL encoder',
+      if (encoder == null) 'a Qwen3-VL 4B encoder',
     ];
     if (missing.isNotEmpty) {
       throw StateError(
