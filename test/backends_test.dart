@@ -1544,6 +1544,232 @@ void main() {
     expect(payload.containsKey('mask'), isFalse);
     expect(payload['init_images'], hasLength(1));
   });
+
+  // ------------------------------------------------ Krea 2 in ComfyUI
+
+  const krea2Comfy = ComfyModels(
+    ['SDXL/juggernautXL_v9.safetensors'],
+    ['krea2/fur_detail.safetensors'],
+    unets: ['krea2_raw_bf16.safetensors', 'krea2_turbo_fp8_scaled.safetensors'],
+    encoders: ['clip_l.safetensors', 'qwen3vl_4b_fp8_scaled.safetensors'],
+    encoderTypes: ['stable_diffusion', 'krea2'],
+    vaes: ['sdxl_vae.safetensors', 'qwen_image_vae.safetensors'],
+  );
+
+  Map<String, dynamic> inputsOf(Map<String, dynamic> graph, String type) =>
+      graph.values.cast<Map<String, dynamic>>().singleWhere((n) => n['class_type'] == type)['inputs'] as Map<String, dynamic>;
+
+  void linked(Map<String, dynamic> graph) {
+    for (final node in graph.values.cast<Map<String, dynamic>>()) {
+      for (final v in (node['inputs'] as Map).values) {
+        if (v is List && v.length == 2 && v.first is String) expect(graph.containsKey(v.first), isTrue, reason: '$v');
+      }
+    }
+  }
+
+  test('ComfyUI: a Krea 2 picture from elsewhere is loaded the way ComfyUI\'s own Krea 2 template loads it', () {
+    // An InvokeAI picture: InvokeAI's own name for the model and encoder.
+    final info = GenInfo.fromJson({
+      'source': 'invokeai',
+      'prompt': 'a lighthouse in fog',
+      'seed': '7',
+      'model': 'Krea-2-Turbo',
+      'models': [
+        {'kind': 'qwen3_vl_encoder', 'name': 'Qwen3-VL 4B', 'hash': ''},
+      ],
+      'loras': [
+        {'name': 'fur_detail', 'weight': 0.7},
+      ],
+      'params': [
+        ['Steps', '8'],
+        ['CFG scale', '1'],
+      ],
+      'width': 1024,
+      'height': 1024,
+    });
+    final recipe = Recipe.from(info, prompt: info.prompt, negative: '', width: 1024, height: 1024);
+    expect(recipe.family, 'krea-2');
+    expect(recipe.textEncoder, 'Qwen3-VL 4B', reason: 'read from InvokeAI\'s metadata too');
+    final standIn = <String>[];
+    final graph = comfyGraph(recipe, 7, krea2Comfy, standIn: standIn);
+    linked(graph);
+    // The Turbo file, as the picture was a Turbo picture, and said so.
+    expect(standIn, ['krea2_turbo_fp8_scaled']);
+    expect(inputsOf(graph, 'UNETLoader'), containsPair('unet_name', 'krea2_turbo_fp8_scaled.safetensors'));
+    expect(inputsOf(graph, 'CLIPLoader'), allOf(
+      containsPair('clip_name', 'qwen3vl_4b_fp8_scaled.safetensors'),
+      containsPair('type', 'krea2'),
+    ));
+    expect(inputsOf(graph, 'VAELoader'), containsPair('vae_name', 'qwen_image_vae.safetensors'));
+    expect(graph.values.where((n) => n['class_type'] == 'CheckpointLoaderSimple'), isEmpty);
+    // LoRAs on the model alone, as the template does.
+    expect(inputsOf(graph, 'LoraLoaderModelOnly'), containsPair('strength_model', 0.7));
+    expect(graph.values.where((n) => n['class_type'] == 'LoraLoader'), isEmpty);
+    // CFG off: the negative zeroed out rather than encoded.
+    final sampler = inputsOf(graph, 'KSampler');
+    expect([sampler['steps'], sampler['cfg'], sampler['sampler_name'], sampler['scheduler']], [8, 1.0, 'euler', 'simple']);
+    final negative = graph[(sampler['negative'] as List).first] as Map;
+    expect(negative['class_type'], 'ConditioningZeroOut');
+    expect(graph.values.where((n) => n['class_type'] == 'CLIPTextEncode'), hasLength(1));
+    // The decode uses the Krea 2 VAE, so image to image encodes with it too.
+    comfyImageToImage(graph, image: 'start.png', strength: 0.35);
+    expect(inputsOf(graph, 'VAEEncode')['vae'], inputsOf(graph, 'VAEDecode')['vae']);
+    expect(inputsOf(graph, 'KSampler')['denoise'], 0.35);
+  });
+
+  test('ComfyUI: a Krea 2 Raw picture gets the Raw file, and its negative prompt with CFG on', () {
+    final recipe = Recipe(
+      prompt: 'p',
+      negative: 'n',
+      model: 'Krea-2-Raw',
+      loras: const [],
+      width: 512,
+      height: 512,
+      cfg: 5,
+      steps: 40,
+      family: 'krea-2',
+    );
+    final graph = comfyGraph(recipe, 1, krea2Comfy);
+    expect(inputsOf(graph, 'UNETLoader')['unet_name'], 'krea2_raw_bf16.safetensors');
+    final texts = graph.values.where((n) => n['class_type'] == 'CLIPTextEncode').map((n) => n['inputs']['text']);
+    expect(texts, ['p', 'n']);
+    expect(graph.values.where((n) => n['class_type'] == 'ConditioningZeroOut'), isEmpty);
+  });
+
+  test('ComfyUI: a Krea 2 GGUF file is loaded with the GGUF loader', () {
+    const gguf = ComfyModels(
+      [],
+      [],
+      ggufUnets: ['krea2-turbo-Q8_0.gguf'],
+      encoders: ['qwen3vl_4b_fp8_scaled.safetensors'],
+      vaes: ['qwen_image_vae.safetensors'],
+    );
+    final recipe = Recipe(prompt: 'p', negative: '', model: 'krea2-turbo-Q8_0.gguf', loras: const [], width: 512, height: 512, family: 'krea-2');
+    final graph = comfyGraph(recipe, 1, gguf);
+    expect(inputsOf(graph, 'UnetLoaderGGUF'), {'unet_name': 'krea2-turbo-Q8_0.gguf'});
+    expect(graph.values.where((n) => n['class_type'] == 'UNETLoader'), isEmpty);
+  });
+
+  test('ComfyUI: what a Krea 2 picture is missing is said plainly', () {
+    final recipe = Recipe(prompt: 'p', negative: '', model: 'Krea-2-Turbo', loras: const [], width: 512, height: 512, family: 'krea-2');
+    Matcher says(String text) => throwsA(isA<StateError>().having((e) => e.message, 'message', contains(text)));
+    expect(() => comfyGraph(recipe, 1, const ComfyModels(['juggernautXL_v9.safetensors'], [])), says('no Krea 2 model installed'));
+    expect(
+      () => comfyGraph(recipe, 1, const ComfyModels([], [], unets: ['krea2_turbo.safetensors'], vaes: ['qwen_image_vae.safetensors'])),
+      says('Qwen3-VL 4B text encoder'),
+    );
+    expect(
+      () => comfyGraph(recipe, 1, const ComfyModels([], [], unets: ['krea2_turbo.safetensors'], encoders: ['qwen3vl_4b.safetensors'])),
+      says('Qwen-Image VAE'),
+    );
+    expect(
+      () => comfyGraph(
+        recipe,
+        1,
+        const ComfyModels(
+          [],
+          [],
+          unets: ['krea2_turbo.safetensors'],
+          encoders: ['qwen3vl_4b.safetensors'],
+          encoderTypes: ['stable_diffusion', 'qwen_image'],
+          vaes: ['qwen_image_vae.safetensors'],
+        ),
+      ),
+      says('Update it (0.26 or later)'),
+    );
+    // A diffusion model of a family this cannot build for.
+    final other = Recipe(prompt: 'p', negative: '', model: 'flux1-dev', loras: const [], width: 512, height: 512);
+    expect(() => comfyGraph(other, 1, const ComfyModels([], [], unets: ['flux1-dev.safetensors'])), says('Only Krea 2'));
+  });
+
+  test('ComfyUI: a Krea 2 remix asks for the loaders\' files and says which model stood in', () async {
+    final asked = <String>[];
+    final queued = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      asked.add(path);
+      Map<String, dynamic> listing(String node, String field, List<String> files, [Map<String, List<String>> more = const {}]) => {
+            node: {
+              'input': {
+                'required': {
+                  field: [files],
+                  for (final MapEntry(:key, :value) in more.entries) key: [value],
+                },
+              },
+            },
+          };
+      switch (path) {
+        case '/object_info/CheckpointLoaderSimple':
+          json(request, listing('CheckpointLoaderSimple', 'ckpt_name', ['juggernautXL_v9.safetensors']));
+        case '/object_info/UNETLoader':
+          json(request, listing('UNETLoader', 'unet_name', ['krea2_turbo_fp8_scaled.safetensors']));
+        case '/object_info/CLIPLoader':
+          json(request, listing('CLIPLoader', 'clip_name', ['qwen3vl_4b_fp8_scaled.safetensors'], {'type': ['krea2']}));
+        case '/object_info/VAELoader':
+          json(request, listing('VAELoader', 'vae_name', ['qwen_image_vae.safetensors']));
+        case '/prompt':
+          queued.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+          json(request, {'prompt_id': 'p1'});
+        default:
+          // No ComfyUI-GGUF here.
+          request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final picture = GenInfo.fromJson({
+      'source': 'invokeai',
+      'prompt': 'a lighthouse in fog',
+      'seed': '7',
+      'model': 'Krea-2-Turbo',
+      'params': [
+        ['Steps', '8'],
+        ['CFG scale', '1'],
+      ],
+      'width': 512,
+      'height': 512,
+    });
+    final ticket = await sendRemix('comfyui', base, remix(picture));
+    expect(ticket.message, contains('with krea2_turbo_fp8_scaled in place of krea-2-turbo'));
+    expect(asked, containsAll(['/object_info/UNETLoader', '/object_info/CLIPLoader', '/object_info/VAELoader', '/object_info/UnetLoaderGGUF']));
+    final graph = queued.single['prompt'] as Map<String, dynamic>;
+    expect(inputsOf(graph, 'UNETLoader')['unet_name'], 'krea2_turbo_fp8_scaled.safetensors');
+  });
+
+  test('ComfyUI: an SDXL picture whose checkpoint is there asks for nothing more', () async {
+    final asked = <String>[];
+    final (server, base) = await serve((request) async {
+      asked.add(request.uri.path);
+      if (request.uri.path == '/object_info/CheckpointLoaderSimple') {
+        json(request, {
+          'CheckpointLoaderSimple': {
+            'input': {
+              'required': {
+                'ckpt_name': [
+                  ['juggernautXL_v9.safetensors'],
+                ],
+              },
+            },
+          },
+        });
+      } else if (request.uri.path == '/prompt') {
+        await request.drain<void>();
+        json(request, {'prompt_id': 'p1'});
+      } else {
+        json(request, {});
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final sdxl = GenInfo.fromJson({
+      'source': 'a1111',
+      'prompt': 'a red fox',
+      'seed': '7',
+      'model': 'juggernautXL_v9',
+      'width': 512,
+      'height': 512,
+    });
+    await sendRemix('comfyui', base, remix(sdxl));
+    expect(asked.where((p) => p.startsWith('/object_info/')), ['/object_info/CheckpointLoaderSimple']);
+  });
 }
 
 /// Standard CRC-32, written out here so the test does not lean on the code
