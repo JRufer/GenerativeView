@@ -377,7 +377,7 @@ class _RemixPanelState extends State<RemixPanel> {
               child: Text(
                 'This picture was not made in InvokeAI, so it will get a standard graph built from its '
                 'settings that starts from the picture: the same model and LoRAs (by name), prompt, seed, '
-                'steps, CFG and sampler. That works for SD 1.x, SD 2.x and SDXL models.',
+                'steps, CFG and sampler. That works for SD 1.x, SD 2.x, SDXL and Krea 2 models.',
                 style: TextStyle(fontSize: 11.5, color: Palette.muted),
               ),
             )

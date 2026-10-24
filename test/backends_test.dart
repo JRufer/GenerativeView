@@ -495,6 +495,197 @@ void main() {
     );
   });
 
+  // ------------------------------------------------ Krea 2 from elsewhere
+
+  /// A Krea 2 picture made in ComfyUI: a single-file model, with the VAE and
+  /// text encoder it was loaded with, a LoRA, and Turbo's settings.
+  GenInfo comfyKrea2({double cfg = 1}) => GenInfo.fromJson({
+        'source': 'comfyui',
+        'prompt': 'a red fox in the snow',
+        'negative': 'blurry',
+        'seed': '7',
+        'model': 'kreamania_variant6.safetensors',
+        'models': [
+          {'kind': 'unet', 'name': 'kreamania_variant6.safetensors', 'hash': ''},
+          {'kind': 'vae', 'name': 'qwen_image_vae.safetensors', 'hash': ''},
+          {'kind': 'clip', 'name': 'qwen3_vl_4b_fp8.safetensors', 'hash': ''},
+        ],
+        'loras': [
+          {'name': 'krea2/fur_detail.safetensors', 'weight': 0.8},
+        ],
+        'params': [
+          ['Steps', '8'],
+          ['CFG', '$cfg'],
+          ['Sampler', 'euler'],
+        ],
+        'width': 832,
+        'height': 1216,
+      });
+
+  InvokeModel m(String key, String name, String base, String type, {String format = 'checkpoint', String variant = ''}) =>
+      InvokeModel(key: key, hash: 'blake3:$key', name: name, base: base, type: type, path: '/models/$name.safetensors', format: format, variant: variant);
+
+  final krea2Main = m('k2', 'kreamania_variant6', 'krea-2', 'main', variant: 'krea2_turbo');
+  final krea2Vaes = [
+    m('sdv', 'sdxl_vae', 'sdxl', 'vae'),
+    m('av', 'other_wan_vae', 'anima', 'vae'),
+    m('qv', 'qwen_image_vae', 'qwen-image', 'vae'),
+  ];
+  final krea2Encoders = [
+    m('e8', 'qwen3_vl_8b', 'any', 'qwen3_vl_encoder', variant: 'qwen3_vl_8b'),
+    m('e4', 'qwen3_vl_4b_fp8', 'any', 'qwen3_vl_encoder', variant: 'qwen3_vl_4b'),
+  ];
+
+  bool joinedIn(List<Map<String, dynamic>> edges, String from, String out, String to, String into) => edges.any((e) =>
+      e['source']['node_id'] == from && e['source']['field'] == out && e['destination']['node_id'] == to && e['destination']['field'] == into);
+
+  void wholeGraph(Map<String, dynamic> graph) {
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    for (final e in (graph['edges'] as List).cast<Map<String, dynamic>>()) {
+      expect(nodes.containsKey(e['source']['node_id']), isTrue, reason: '$e');
+      expect(nodes.containsKey(e['destination']['node_id']), isTrue, reason: '$e');
+    }
+  }
+
+  test('InvokeAI: a Krea 2 picture from elsewhere gets a Krea 2 graph, as InvokeAI builds one', () {
+    final info = comfyKrea2();
+    final recipe = Recipe.from(info, prompt: info.prompt, negative: info.negative, width: 832, height: 1216);
+    expect(recipe.vae, 'qwen_image_vae.safetensors');
+    expect(recipe.textEncoder, 'qwen3_vl_4b_fp8.safetensors');
+    final skipped = <String>[];
+    final graph = invokeGraph(
+      recipe,
+      7,
+      [krea2Main],
+      [m('l1', 'fur_detail', 'krea-2', 'lora'), m('l2', 'fur_detail', 'sdxl', 'lora')],
+      vaes: krea2Vaes,
+      encoders: krea2Encoders,
+      skipped: skipped,
+    );
+    wholeGraph(graph);
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    final edges = (graph['edges'] as List).cast<Map<String, dynamic>>();
+    final loader = nodes['model_loader'] as Map<String, dynamic>;
+    expect(loader['type'], 'krea2_model_loader');
+    expect(loader['model']['key'], 'k2');
+    // A single-file model: the VAE and encoder the picture names, of those
+    // that fit (not the SDXL VAE, not the 8B encoder).
+    expect(loader['vae_model']['key'], 'qv');
+    expect(loader['qwen3_vl_encoder_model']['key'], 'e4');
+    expect(nodes['positive']['type'], 'krea2_text_encoder');
+    expect(nodes['positive']['prompt'], 'a red fox in the snow');
+    // CFG 1 (Turbo): no negative conditioning at all.
+    expect(nodes.containsKey('negative'), isFalse);
+    final denoise = nodes['denoise'] as Map<String, dynamic>;
+    expect(denoise['type'], 'krea2_denoise');
+    expect([denoise['steps'], denoise['cfg_scale'], denoise['seed'], denoise['width'], denoise['height']], [8, 1.0, 7, 832, 1216]);
+    expect(denoise['denoising_start'], 0.0);
+    expect(nodes['l2i']['type'], 'qwen_image_l2i');
+    expect(nodes['l2i']['is_intermediate'], isFalse);
+    // The LoRA (the Krea 2 one of that name) through the collection loader,
+    // which the transformer and the text encoder both go through.
+    expect(nodes['lora_0']['type'], 'lora_selector');
+    expect(nodes['lora_0']['lora']['key'], 'l1');
+    expect(nodes['lora_0']['weight'], 0.8);
+    expect(skipped, isEmpty);
+    expect(joinedIn(edges, 'lora_0', 'lora', 'lora_collect', 'item'), isTrue);
+    expect(joinedIn(edges, 'lora_collect', 'collection', 'lora_loader', 'loras'), isTrue);
+    expect(joinedIn(edges, 'model_loader', 'transformer', 'lora_loader', 'transformer'), isTrue);
+    expect(joinedIn(edges, 'lora_loader', 'transformer', 'denoise', 'transformer'), isTrue);
+    expect(joinedIn(edges, 'lora_loader', 'qwen3_vl_encoder', 'positive', 'qwen3_vl_encoder'), isTrue);
+    expect(joinedIn(edges, 'positive', 'conditioning', 'positive_collect', 'item'), isTrue);
+    expect(joinedIn(edges, 'positive_collect', 'collection', 'denoise', 'positive_conditioning'), isTrue);
+    expect(joinedIn(edges, 'denoise', 'latents', 'l2i', 'latents'), isTrue);
+    expect(joinedIn(edges, 'model_loader', 'vae', 'l2i', 'vae'), isTrue);
+    expect(nodes['metadata']['generation_mode'], 'krea2_txt2img');
+    expect(nodes['metadata'].containsKey('negative_prompt'), isFalse);
+  });
+
+  test('InvokeAI: a Krea 2 hires fix starts from the picture, encoded with the same VAE', () {
+    final info = comfyKrea2(cfg: 4);
+    final recipe = Recipe.from(info, prompt: info.prompt, negative: info.negative, width: 1664, height: 2432);
+    final graph = invokeGraph(
+      recipe,
+      7,
+      [krea2Main],
+      const [],
+      vaes: krea2Vaes,
+      encoders: krea2Encoders,
+      init: const GraphInit(image: 'up.png', strength: 0.35),
+    );
+    wholeGraph(graph);
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    final edges = (graph['edges'] as List).cast<Map<String, dynamic>>();
+    expect(nodes['i2l']['type'], 'qwen_image_i2l');
+    expect(nodes['i2l']['image']['image_name'], 'up.png');
+    expect(joinedIn(edges, 'model_loader', 'vae', 'i2l', 'vae'), isTrue);
+    expect(joinedIn(edges, 'i2l', 'latents', 'denoise', 'latents'), isTrue);
+    expect(nodes['denoise']['denoising_start'], closeTo(0.65, 1e-9));
+    expect(nodes['denoise']['width'], 1664);
+    expect(nodes['metadata']['generation_mode'], 'krea2_img2img');
+    // CFG above 1: the negative prompt is used.
+    expect(nodes['negative']['prompt'], 'blurry');
+    expect(joinedIn(edges, 'negative', 'conditioning', 'denoise', 'negative_conditioning'), isTrue);
+    // No LoRA on the server: left out, and the transformer comes straight
+    // from the loader.
+    expect(joinedIn(edges, 'model_loader', 'transformer', 'denoise', 'transformer'), isTrue);
+  });
+
+  test('InvokeAI: a Krea 2 model installed as Diffusers needs nothing more; one file without a VAE says so', () {
+    final info = comfyKrea2();
+    final recipe = Recipe.from(info, prompt: info.prompt, negative: info.negative, width: 832, height: 1216);
+    final diffusers = m('k2', 'kreamania_variant6', 'krea-2', 'main', format: 'diffusers', variant: 'krea2_base');
+    final graph = invokeGraph(recipe, 7, [diffusers], const []);
+    final loader = (graph['nodes'] as Map)['model_loader'] as Map;
+    expect(loader.containsKey('vae_model'), isFalse);
+    expect(loader.containsKey('qwen3_vl_encoder_model'), isFalse);
+    expect(
+      () => invokeGraph(recipe, 7, [krea2Main], const [], encoders: krea2Encoders),
+      throwsA(isA<StateError>().having((e) => e.message, 'message', allOf(contains('Qwen-Image VAE'), isNot(contains('encoder'))))),
+    );
+    expect(
+      () => invokeGraph(recipe, 7, [krea2Main], const []),
+      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('a Qwen-Image VAE and a Qwen3-VL encoder'))),
+    );
+  });
+
+  test('InvokeAI: a Krea 2 remix asks the server for its VAEs and encoders, and sends the Krea 2 graph', () async {
+    final batches = <Map<String, dynamic>>[];
+    final asked = <String>[];
+    Map<String, dynamic> j(InvokeModel x) =>
+        {'key': x.key, 'hash': x.hash, 'name': x.name, 'base': x.base, 'type': x.type, 'path': x.path, 'format': x.format, 'variant': x.variant};
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/api/v2/models/') {
+        final type = request.uri.queryParameters['model_type'] ?? '';
+        asked.add(type);
+        json(request, {
+          'models': switch (type) {
+            'main' => [j(krea2Main)],
+            'vae' => [for (final v in krea2Vaes) j(v)],
+            'qwen3_vl_encoder' => [for (final e in krea2Encoders) j(e)],
+            _ => const [],
+          },
+        });
+      } else if (path == '/api/v1/queue/default/enqueue_batch') {
+        batches.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'item_ids': [batches.length]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final ticket = await sendRemix('invokeai', base, remix(comfyKrea2()));
+    expect(ticket.message, contains('made from its settings'));
+    expect(asked, containsAll(['main', 'lora', 'vae', 'qwen3_vl_encoder']));
+    final graph = (batches.single['batch'] as Map)['graph'] as Map<String, dynamic>;
+    final nodes = graph['nodes'] as Map<String, dynamic>;
+    expect(nodes['model_loader']['type'], 'krea2_model_loader');
+    expect(nodes['model_loader']['vae_model']['key'], 'qv');
+    expect(nodes['denoise']['type'], 'krea2_denoise');
+    expect(nodes['positive']['prompt'], 'a red fox');
+  });
+
   // ------------------------------------------------ LoRAs set in the panel
 
   LoraChoice choice(String name, double? weight, {bool enabled = true, double? to, double? clip}) =>

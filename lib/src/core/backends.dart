@@ -791,6 +791,8 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   var fetchable = true;
   var mains = const <InvokeModel>[];
   var loras = const <InvokeModel>[];
+  var vaes = const <InvokeModel>[];
+  var encoders = const <InvokeModel>[];
   if (raw == null) {
     if (!remix.info.hasGeneration) throw BackendException(backendSupport(remix.info)['invokeai']!);
     List<InvokeModel> listed(Map<String, dynamic> reply) => [
@@ -800,6 +802,20 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     mains = listed(await _get(client, '$base/api/v2/models/?model_type=main'));
     if (remix.sentLoras.isNotEmpty) {
       loras = listed(await _get(client, '$base/api/v2/models/?model_type=lora'));
+    }
+    // A single-file Krea 2 model needs its VAE and text encoder chosen.
+    final main = findModel(remix.info.model, mains, (m) => m.names);
+    if (main != null && krea2NeedsParts(main)) {
+      Future<List<InvokeModel>> some(String type) async {
+        try {
+          return listed(await _get(client, '$base/api/v2/models/?model_type=$type'));
+        } on BackendException {
+          return const [];
+        }
+      }
+
+      vaes = await some('vae');
+      encoders = await some('qwen3_vl_encoder');
     }
   }
   GraphInit? start;
@@ -835,7 +851,16 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       if (start != null) invokeImageToImage(graph, image: start.image, keepMask: start.mask, strength: start.strength);
     } else {
       try {
-        graph = invokeGraph(recipe, seed, mains, loras, skipped: run == 0 ? skipped : null, init: start);
+        graph = invokeGraph(
+          recipe,
+          seed,
+          mains,
+          loras,
+          skipped: run == 0 ? skipped : null,
+          init: start,
+          vaes: vaes,
+          encoders: encoders,
+        );
       } on StateError catch (e) {
         throw BackendException(e.message);
       }
