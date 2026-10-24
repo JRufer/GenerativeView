@@ -1570,6 +1570,11 @@ void main() {
         await tester.tapAt(const Offset(5, 400));
         await settle(tester);
       }
+    } on TestFailure catch (e) {
+      // Shown on the CI run's page too, where the log may not be at hand.
+      // ignore: avoid_print
+      print('::error title=Android tablet layout::${'$e'.replaceAll('\n', ' ')}');
+      rethrow;
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
