@@ -89,11 +89,16 @@ class Recipe {
       scheduler: scheduler,
       clipSkip: int.tryParse(p(['clip skip', 'clip_skip']) ?? ''),
       vae: [for (final m in info.models) if (m.kind == 'vae') m.name].firstOrNull ?? '',
-      textEncoder: [for (final m in info.models) if (m.kind == 'clip') m.name].firstOrNull ?? '',
+      // ComfyUI records the file its CLIP loader loaded; InvokeAI the
+      // model it chose for the encoder.
+      textEncoder: [for (final m in info.models) if (_encoderKinds.contains(m.kind)) m.name].firstOrNull ?? '',
       family: pictureFamily(info),
     );
   }
 }
+
+/// The kinds of model a picture's metadata names its text encoder under.
+const Set<String> _encoderKinds = {'clip', 'qwen3_vl_encoder', 'text_encoder'};
 
 // ---------------------------------------------------------------- samplers
 
@@ -213,11 +218,47 @@ T? findModel<T>(String wanted, Iterable<T> installed, Iterable<String> Function(
 // ---------------------------------------------------------------- ComfyUI
 
 /// What a built ComfyUI graph needs from the server: the file names of the
-/// checkpoint and of each LoRA it has, exactly as it lists them.
+/// models it has, exactly as it lists them, by the loader that loads them.
 class ComfyModels {
-  const ComfyModels(this.checkpoints, this.loras);
+  const ComfyModels(
+    this.checkpoints,
+    this.loras, {
+    this.unets = const [],
+    this.ggufUnets = const [],
+    this.encoders = const [],
+    this.encoderTypes = const [],
+    this.vaes = const [],
+  });
+
+  /// What `CheckpointLoaderSimple` loads: a model with its VAE and text
+  /// encoder in one file.
   final List<String> checkpoints;
   final List<String> loras;
+
+  /// What `UNETLoader` loads (the diffusion_models folder): a model alone,
+  /// whose VAE and text encoder are loaded apart, as Krea 2's are.
+  final List<String> unets;
+
+  /// What `UnetLoaderGGUF` loads, when ComfyUI-GGUF is installed.
+  final List<String> ggufUnets;
+
+  /// What `CLIPLoader` loads (the text_encoders folder), and the kinds of
+  /// encoder it knows (`krea2` from ComfyUI 0.26).
+  final List<String> encoders;
+  final List<String> encoderTypes;
+
+  /// What `VAELoader` loads.
+  final List<String> vaes;
+
+  /// The loaders a graph for a model loaded apart from its VAE and text
+  /// encoder needs, and the input listing their files: asked for only when
+  /// the picture's model is not a checkpoint.
+  static const Map<String, String> splitLoaders = {
+    'UNETLoader': 'unet_name',
+    'UnetLoaderGGUF': 'unet_name',
+    'CLIPLoader': 'clip_name',
+    'VAELoader': 'vae_name',
+  };
 
   /// The choices of input [field] of node [node] in an `/object_info` reply,
   /// in either of the shapes ComfyUI has used.
@@ -234,21 +275,91 @@ class ComfyModels {
   }
 }
 
-/// A ComfyUI API-format graph making [recipe] with [seed], with the
-/// checkpoint and LoRAs found in [installed]. [skipped] collects the LoRAs
-/// left out because the server does not have them.
+/// The diffusion model of [installed] to build [recipe] with, when it is not
+/// a checkpoint: the file it names, or, when the server has it under no such
+/// name and the picture's [Recipe.family] is known, the file of that family
+/// most like it, as [resolveMain] picks one for InvokeAI. With whether it
+/// is a GGUF file (loaded by ComfyUI-GGUF's loader) and whether it is such
+/// a stand-in.
+(String file, bool gguf, bool standIn)? resolveComfyUnet(Recipe recipe, ComfyModels installed) {
+  final plain = findModel(recipe.model, installed.unets, (n) => [n]);
+  if (plain != null) return (plain, false, false);
+  final gguf = findModel(recipe.model, installed.ggufUnets, (n) => [n]);
+  if (gguf != null) return (gguf, true, false);
+  final family = _familyNames[recipe.family];
+  if (family == null) return null;
+  // The plain files first: no extra nodes needed to load them.
+  final kin = [
+    for (final n in installed.unets)
+      if (family.hasMatch(n)) (n, false),
+    for (final n in installed.ggufUnets)
+      if (family.hasMatch(n)) (n, true),
+  ];
+  if (kin.isEmpty) return null;
+  final wanted = _words(recipe.model);
+  final turbo = _wantsTurbo(recipe, wanted);
+  double score((String, bool) m) {
+    final w = _words(m.$1);
+    var s = w.contains('turbo') == turbo ? 10.0 : 0.0;
+    s += w.intersection(wanted).length;
+    if (!m.$2) s += 0.5;
+    return s;
+  }
+
+  final best = kin.reduce((a, b) => score(b) > score(a) ? b : a);
+  return (best.$1, best.$2, true);
+}
+
+/// How each family's files are named, to find one under another name.
+final Map<String, RegExp> _familyNames = {
+  'krea-2': RegExp(r'krea[\s_-]?2', caseSensitive: false),
+};
+
+/// A model name's words, for telling how alike two names are.
+Set<String> _words(String name) => modelKey(name).split(RegExp(r'[^a-z0-9]+')).where((w) => w.length > 1).toSet();
+
+/// Whether [recipe] was made with a distilled (Turbo) model: named so, or
+/// told by its settings (few steps, CFG off). [wanted] is its model's words.
+bool _wantsTurbo(Recipe recipe, Set<String> wanted) =>
+    wanted.contains('turbo') ||
+    (!wanted.contains('raw') && !wanted.contains('base') && (recipe.steps ?? 8) <= 12 && (recipe.cfg ?? 1) <= 1.5);
+
+/// A ComfyUI API-format graph making [recipe] with [seed], with the model
+/// and LoRAs found in [installed]: a checkpoint, or a Krea 2 diffusion model
+/// with its text encoder and VAE loaded apart, as ComfyUI's own Krea 2
+/// template does. [skipped] collects the LoRAs left out because the server
+/// does not have them; [standIn] the model used in place of one the server
+/// has under no such name.
 ///
-/// Throws [StateError] with a message for the user when the checkpoint is
-/// not there.
-Map<String, dynamic> comfyGraph(Recipe recipe, int seed, ComfyModels installed, {List<String>? skipped}) {
+/// Throws [StateError] with a message for the user when the model, or a
+/// part it needs, is not there.
+Map<String, dynamic> comfyGraph(
+  Recipe recipe,
+  int seed,
+  ComfyModels installed, {
+  List<String>? skipped,
+  List<String>? standIn,
+}) {
   final ckpt = findModel(recipe.model, installed.checkpoints, (n) => [n]);
-  if (ckpt == null) {
+  final split = ckpt == null ? resolveComfyUnet(recipe, installed) : null;
+  if (ckpt == null && split == null) {
     throw StateError(
       recipe.model.isEmpty
           ? 'This picture does not say which model made it, so ComfyUI cannot be given a workflow for it.'
+          : recipe.family == 'krea-2'
+          ? 'ComfyUI has no Krea 2 model installed (this picture was made with "${recipe.model}"). '
+                'Put one in its diffusion_models folder, such as krea2_turbo_fp8_scaled.'
           : 'ComfyUI has no checkpoint called "${recipe.model}". Install it there, or send to another server.',
     );
   }
+  if (split != null && recipe.family != 'krea-2') {
+    throw StateError(
+      '"${modelKey(split.$1)}" is loaded on its own in ComfyUI, without its text encoder and VAE. '
+      'Only Krea 2 workflows of that kind can be made for pictures from other programs.',
+    );
+  }
+  if (split != null && split.$3) standIn?.add(modelKey(split.$1));
+
   final g = <String, dynamic>{};
   var next = 1;
   String add(String type, Map<String, dynamic> inputs) {
@@ -257,40 +368,67 @@ Map<String, dynamic> comfyGraph(Recipe recipe, int seed, ComfyModels installed, 
     return id;
   }
 
-  final loader = add('CheckpointLoaderSimple', {'ckpt_name': ckpt});
-  List<Object> model = [loader, 0];
-  List<Object> clip = [loader, 1];
-  final vae = [loader, 2];
+  late List<Object> model;
+  late List<Object> clip;
+  late List<Object> vae;
+  final krea2 = split != null;
+  if (krea2) {
+    final (encoder, vaeFile) = _krea2Parts(recipe, installed);
+    final (file, gguf, _) = split;
+    final unet = gguf
+        ? add('UnetLoaderGGUF', {'unet_name': file})
+        : add('UNETLoader', {'unet_name': file, 'weight_dtype': 'default'});
+    final clipLoader = add('CLIPLoader', {'clip_name': encoder, 'type': 'krea2', 'device': 'default'});
+    model = [unet, 0];
+    clip = [clipLoader, 0];
+    vae = [add('VAELoader', {'vae_name': vaeFile}), 0];
+  } else {
+    final loader = add('CheckpointLoaderSimple', {'ckpt_name': ckpt});
+    model = [loader, 0];
+    clip = [loader, 1];
+    vae = [loader, 2];
+  }
   for (final l in recipe.loras) {
     final file = findModel(l.name, installed.loras, (n) => [n]);
     if (file == null) {
       skipped?.add(l.name);
       continue;
     }
-    final id = add('LoraLoader', {
-      'lora_name': file,
-      'strength_model': l.weight ?? 1.0,
-      'strength_clip': l.weightClip ?? l.weight ?? 1.0,
-      'model': model,
-      'clip': clip,
-    });
+    // Krea 2's LoRAs change the model alone, as its template loads them.
+    final id = krea2
+        ? add('LoraLoaderModelOnly', {'lora_name': file, 'strength_model': l.weight ?? 1.0, 'model': model})
+        : add('LoraLoader', {
+            'lora_name': file,
+            'strength_model': l.weight ?? 1.0,
+            'strength_clip': l.weightClip ?? l.weight ?? 1.0,
+            'model': model,
+            'clip': clip,
+          });
     model = [id, 0];
-    clip = [id, 1];
+    if (!krea2) clip = [id, 1];
   }
   final skip = recipe.clipSkip;
-  if (skip != null && skip > 1) {
+  if (!krea2 && skip != null && skip > 1) {
     final id = add('CLIPSetLastLayer', {'stop_at_clip_layer': -skip, 'clip': clip});
     clip = [id, 0];
   }
+
+  // Krea 2 Turbo is distilled: 8 steps, CFG off (1), with the negative
+  // zeroed out as ComfyUI's template does. Raw wants full sampling.
+  final turbo = krea2 && _wantsTurbo(recipe, _words(split.$1));
+  final steps = recipe.steps ?? (krea2 ? (turbo ? 8 : 52) : 25);
+  final cfg = recipe.cfg ?? (krea2 ? (turbo ? 1.0 : 5.5) : 7.0);
   final positive = add('CLIPTextEncode', {'text': recipe.prompt, 'clip': clip});
-  final negative = add('CLIPTextEncode', {'text': recipe.negative, 'clip': clip});
+  final negative = krea2 && cfg <= 1
+      ? add('ConditioningZeroOut', {'conditioning': [positive, 0]})
+      : add('CLIPTextEncode', {'text': recipe.negative, 'clip': clip});
   final latent = add('EmptyLatentImage', {'width': recipe.width, 'height': recipe.height, 'batch_size': 1});
   final sampler = add('KSampler', {
     'seed': seed,
-    'steps': recipe.steps ?? 25,
-    'cfg': recipe.cfg ?? 7.0,
+    'steps': steps,
+    'cfg': cfg,
     'sampler_name': recipe.sampler ?? 'euler',
-    'scheduler': recipe.scheduler ?? 'normal',
+    'scheduler': recipe.scheduler ?? (krea2 ? 'simple' : 'normal'),
     'denoise': 1.0,
     'model': model,
     'positive': [positive, 0],
@@ -300,6 +438,31 @@ Map<String, dynamic> comfyGraph(Recipe recipe, int seed, ComfyModels installed, 
   final decode = add('VAEDecode', {'samples': [sampler, 0], 'vae': vae});
   add('SaveImage', {'filename_prefix': 'GenerativeView', 'images': [decode, 0]});
   return g;
+}
+
+/// The text encoder and VAE a Krea 2 diffusion model loads with in ComfyUI:
+/// the ones the picture names when the server has them, else a Qwen3-VL 4B
+/// encoder and the Qwen-Image VAE. Throws [StateError] naming what is
+/// missing, or when this ComfyUI is too old to know Krea 2's encoder.
+(String, String) _krea2Parts(Recipe recipe, ComfyModels installed) {
+  if (installed.encoderTypes.isNotEmpty && !installed.encoderTypes.contains('krea2')) {
+    throw StateError(
+      'This ComfyUI does not know Krea 2\'s text encoder yet. Update it (0.26 or later) to make Krea 2 pictures there.',
+    );
+  }
+  final encoderName = RegExp(r'qwen[\s_-]?3[\s_-]?vl[\s_-]?4b', caseSensitive: false);
+  final vaeName = RegExp(r'qwen[\s_-]?image', caseSensitive: false);
+  final encoder = findModel(recipe.textEncoder, installed.encoders, (n) => [n]) ??
+      installed.encoders.where(encoderName.hasMatch).firstOrNull;
+  final vae = findModel(recipe.vae, installed.vaes, (n) => [n]) ?? installed.vaes.where(vaeName.hasMatch).firstOrNull;
+  final missing = [
+    if (encoder == null) 'a Qwen3-VL 4B text encoder (text_encoders folder)',
+    if (vae == null) 'the Qwen-Image VAE (vae folder)',
+  ];
+  if (missing.isNotEmpty) {
+    throw StateError('Krea 2 in ComfyUI needs ${missing.join(' and ')} installed alongside the model.');
+  }
+  return (encoder!, vae!);
 }
 
 // ---------------------------------------------------------------- InvokeAI
@@ -718,16 +881,14 @@ String? pictureFamily(GenInfo info) {
   if (family == null) return (null, false);
   final kin = [for (final m in mains) if (m.base == family && (m.type.isEmpty || m.type == 'main')) m];
   if (kin.isEmpty) return (null, false);
-  Set<String> words(String name) => modelKey(name).split(RegExp(r'[^a-z0-9]+')).where((w) => w.length > 1).toSet();
-  final wanted = words(recipe.model);
+  final wanted = _words(recipe.model);
   // Turbo is distilled: few steps and CFG off. Named, or told by its settings.
-  final wantsTurbo = wanted.contains('turbo') ||
-      (!wanted.contains('raw') && !wanted.contains('base') && (recipe.steps ?? 8) <= 12 && (recipe.cfg ?? 1) <= 1.5);
+  final wantsTurbo = _wantsTurbo(recipe, wanted);
   double score(InvokeModel m) {
-    final turbo = m.variant.isEmpty ? words(m.name).contains('turbo') : m.variant == 'krea2_turbo';
+    final turbo = m.variant.isEmpty ? _words(m.name).contains('turbo') : m.variant == 'krea2_turbo';
     var s = turbo == wantsTurbo ? 10.0 : 0.0;
     for (final n in m.names) {
-      s += words(n).intersection(wanted).length;
+      s += _words(n).intersection(wanted).length;
     }
     // One that needs no VAE or encoder chosen for it is the surer choice.
     if (m.format == 'diffusers') s += 0.5;

@@ -487,13 +487,39 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     }
   }
   ComfyModels? installed;
+  final standIn = <String>[];
   if (raw == null) {
     if (!remix.info.hasGeneration) throw BackendException(backendSupport(remix.info)['comfyui']!);
-    final checkpoints = await _get(client, '$base/object_info/CheckpointLoaderSimple');
+    final checkpoints = ComfyModels.options(
+      await _get(client, '$base/object_info/CheckpointLoaderSimple'),
+      'CheckpointLoaderSimple',
+      'ckpt_name',
+    );
     final loras = remix.sentLoras.isEmpty ? const <String, dynamic>{} : await _get(client, '$base/object_info/LoraLoader');
+    // A model loaded apart from its text encoder and VAE (Krea 2 from the
+    // diffusion_models folder) is not among the checkpoints: what the
+    // loaders for those parts list is asked for too. A loader this ComfyUI
+    // lacks (UnetLoaderGGUF without ComfyUI-GGUF) lists nothing.
+    final split = <String, Map<String, dynamic>>{};
+    final family = pictureFamily(remix.info);
+    if (family != null || findModel(remix.info.model, checkpoints, (n) => [n]) == null) {
+      for (final node in ComfyModels.splitLoaders.keys) {
+        try {
+          split[node] = await _get(client, '$base/object_info/$node');
+        } on BackendException {
+          split[node] = const {};
+        }
+      }
+    }
+    List<String> listed(String node) => ComfyModels.options(split[node] ?? const {}, node, ComfyModels.splitLoaders[node]!);
     installed = ComfyModels(
-      ComfyModels.options(checkpoints, 'CheckpointLoaderSimple', 'ckpt_name'),
+      checkpoints,
       ComfyModels.options(loras, 'LoraLoader', 'lora_name'),
+      unets: listed('UNETLoader'),
+      ggufUnets: listed('UnetLoaderGGUF'),
+      encoders: listed('CLIPLoader'),
+      encoderTypes: ComfyModels.options(split['CLIPLoader'] ?? const {}, 'CLIPLoader', 'type'),
+      vaes: listed('VAELoader'),
     );
   }
   final recipe = Recipe.from(
@@ -521,7 +547,13 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
       if (remix.loras != null) editComfyLoras(graph, remix.loras!);
     } else {
       try {
-        graph = comfyGraph(recipe, seed, installed!, skipped: run == 0 ? skipped : null);
+        graph = comfyGraph(
+          recipe,
+          seed,
+          installed!,
+          skipped: run == 0 ? skipped : null,
+          standIn: run == 0 ? standIn : null,
+        );
       } on StateError catch (e) {
         throw BackendException(e.message);
       }
@@ -535,7 +567,7 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
   }
   final done = StreamController<String>();
   return RemixTicket(
-    'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped)}',
+    'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}',
     remix.count,
     _comfyResults(base, ids, done),
     kind: 'comfyui',
