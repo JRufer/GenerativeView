@@ -9,6 +9,8 @@ import 'dart:io';
 import 'dart:math' as math;
 
 // ignore: unnecessary_import
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
+// ignore: unnecessary_import
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1501,6 +1503,81 @@ void main() {
 
     await tester.pump(const Duration(seconds: 2)); // let the toast go
     await close(tester, state);
+  });
+
+  testWidgets('on an Android tablet the top bar keeps its ⋮ menu on screen, and press-and-hold opens menus', (
+    tester,
+  ) async {
+    // As the app lays itself out on Android: touch-sized targets and the
+    // like. Put back before the test ends, as flutter_test insists.
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      final state = await launch(tester, size: const Size(1280, 800));
+      await pumpUntil(
+        tester,
+        () => state.items.length == 9 && tilesWithImages(tester) == 9,
+        what: '9 thumbnails',
+      );
+      // Tablets and the Fold's inner screen, both ways round, either side
+      // of where the top bar becomes two rows.
+      for (final (size, info) in [
+        for (final size in const [
+        // The Galaxy Tab S10 Ultra at its usual scaling, and a step smaller.
+        Size(1316, 821),
+        Size(821, 1316),
+        Size(1480, 924),
+        Size(924, 1480),
+        Size(1280, 800),
+        Size(800, 1280),
+        Size(1024, 768),
+        Size(904, 720),
+        Size(882, 700),
+        Size(840, 700),
+        Size(700, 840),
+        Size(600, 960),
+        ])
+          for (final info in [false, true]) (size, info),
+      ]) {
+        tester.view.physicalSize = size;
+        if (state.rightOpen != info) state.toggleRight();
+        await settle(tester);
+        final where = 'at $size with the info panel ${info ? 'open' : 'closed'}';
+        final more = find.byKey(const ValueKey<String>('more-menu'));
+        expect(more, findsOneWidget, reason: where);
+        final rect = tester.getRect(more);
+        final tools = tester.getRect(find.byKey(const ValueKey<String>('bar-tools')).first);
+        expect(
+          rect.right,
+          lessThanOrEqualTo(size.width + 0.5),
+          reason: '$where the ⋮ button is at $rect, the tools at $tools: off the edge',
+        );
+        expect(rect.width, greaterThan(20), reason: '$where the ⋮ button is squeezed to $rect');
+        final hit = tester.hitTestOnBinding(rect.center);
+        expect(
+          hit.path.any((e) => e.target == tester.renderObject(more)),
+          isTrue,
+          reason: '$where something is drawn over the ⋮ button at $rect',
+        );
+        await tester.tap(more);
+        await settle(tester);
+        expect(find.text('About GenerativeView'), findsOneWidget, reason: '$where the ⋮ menu opens');
+        await tester.tapAt(const Offset(5, 400));
+        await settle(tester);
+
+        await tester.longPress(tiles().first);
+        await settle(tester);
+        expect(find.text('Copy image'), findsOneWidget, reason: '$where press-and-hold on a tile opens its menu');
+        await tester.tapAt(const Offset(5, 400));
+        await settle(tester);
+      }
+    } on TestFailure catch (e) {
+      // Shown on the CI run's page too, where the log may not be at hand.
+      // ignore: avoid_print
+      print('::error title=Android tablet layout::${'$e'.replaceAll('\n', ' ')}');
+      rethrow;
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('zoom moves in steps of ten percent and marks 100%', (
