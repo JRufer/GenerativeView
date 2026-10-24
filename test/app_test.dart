@@ -1518,7 +1518,13 @@ void main() {
       );
       // Tablets and the Fold's inner screen, both ways round, either side
       // of where the top bar becomes two rows.
-      for (final size in const [
+      for (final (size, info) in [
+        for (final size in const [
+        // The Galaxy Tab S10 Ultra at its usual scaling, and a step smaller.
+        Size(1316, 821),
+        Size(821, 1316),
+        Size(1480, 924),
+        Size(924, 1480),
         Size(1280, 800),
         Size(800, 1280),
         Size(1024, 768),
@@ -1527,28 +1533,38 @@ void main() {
         Size(840, 700),
         Size(700, 840),
         Size(600, 960),
+        ])
+          for (final info in [false, true]) (size, info),
       ]) {
         tester.view.physicalSize = size;
+        if (state.rightOpen != info) state.toggleRight();
         await settle(tester);
+        final where = 'at $size with the info panel ${info ? 'open' : 'closed'}';
         final more = find.byKey(const ValueKey<String>('more-menu'));
-        expect(more, findsOneWidget, reason: 'at $size');
+        expect(more, findsOneWidget, reason: where);
         final rect = tester.getRect(more);
         final tools = tester.getRect(find.byKey(const ValueKey<String>('bar-tools')).first);
         expect(
           rect.right,
           lessThanOrEqualTo(size.width + 0.5),
-          reason: 'at $size the ⋮ button is at $rect, the tools at $tools: off the edge',
+          reason: '$where the ⋮ button is at $rect, the tools at $tools: off the edge',
         );
-        expect(rect.width, greaterThan(20), reason: 'at $size the ⋮ button is squeezed to $rect');
+        expect(rect.width, greaterThan(20), reason: '$where the ⋮ button is squeezed to $rect');
+        final hit = tester.hitTestOnBinding(rect.center);
+        expect(
+          hit.path.any((e) => e.target == tester.renderObject(more)),
+          isTrue,
+          reason: '$where something is drawn over the ⋮ button at $rect',
+        );
         await tester.tap(more);
         await settle(tester);
-        expect(find.text('About GenerativeView'), findsOneWidget, reason: 'at $size the ⋮ menu opens');
+        expect(find.text('About GenerativeView'), findsOneWidget, reason: '$where the ⋮ menu opens');
         await tester.tapAt(const Offset(5, 400));
         await settle(tester);
 
         await tester.longPress(tiles().first);
         await settle(tester);
-        expect(find.text('Copy image'), findsOneWidget, reason: 'at $size press-and-hold on a tile opens its menu');
+        expect(find.text('Copy image'), findsOneWidget, reason: '$where press-and-hold on a tile opens its menu');
         await tester.tapAt(const Offset(5, 400));
         await settle(tester);
       }
