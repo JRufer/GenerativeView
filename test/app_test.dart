@@ -1503,6 +1503,60 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('on an Android tablet the top bar keeps its ⋮ menu on screen, and press-and-hold opens menus', (
+    tester,
+  ) async {
+    // As the app lays itself out on Android: touch-sized targets and the
+    // like. Put back before the test ends, as flutter_test insists.
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      final state = await launch(tester, size: const Size(1280, 800));
+      await pumpUntil(
+        tester,
+        () => state.items.length == 9 && tilesWithImages(tester) == 9,
+        what: '9 thumbnails',
+      );
+      // Tablets and the Fold's inner screen, both ways round, either side
+      // of where the top bar becomes two rows.
+      for (final size in const [
+        Size(1280, 800),
+        Size(800, 1280),
+        Size(1024, 768),
+        Size(904, 720),
+        Size(882, 700),
+        Size(840, 700),
+        Size(700, 840),
+        Size(600, 960),
+      ]) {
+        tester.view.physicalSize = size;
+        await settle(tester);
+        final more = find.byKey(const ValueKey<String>('more-menu'));
+        expect(more, findsOneWidget, reason: 'at $size');
+        final rect = tester.getRect(more);
+        final tools = tester.getRect(find.byKey(const ValueKey<String>('bar-tools')).first);
+        expect(
+          rect.right,
+          lessThanOrEqualTo(size.width + 0.5),
+          reason: 'at $size the ⋮ button is at $rect, the tools at $tools: off the edge',
+        );
+        expect(rect.width, greaterThan(20), reason: 'at $size the ⋮ button is squeezed to $rect');
+        await tester.tap(more);
+        await settle(tester);
+        expect(find.text('About GenerativeView'), findsOneWidget, reason: 'at $size the ⋮ menu opens');
+        await tester.tapAt(const Offset(5, 400));
+        await settle(tester);
+
+        await tester.longPress(tiles().first);
+        await settle(tester);
+        expect(find.text('Copy image'), findsOneWidget, reason: 'at $size press-and-hold on a tile opens its menu');
+        await tester.tapAt(const Offset(5, 400));
+        await settle(tester);
+      }
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('zoom moves in steps of ten percent and marks 100%', (
     tester,
   ) async {
