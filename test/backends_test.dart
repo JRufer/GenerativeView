@@ -686,6 +686,101 @@ void main() {
     expect(nodes['positive']['prompt'], 'a red fox');
   });
 
+  test('InvokeAI: a Krea 2 picture whose file the server lacks gets its closest Krea 2 model instead', () {
+    // ComfyUI saved the file it loaded; InvokeAI has Krea 2 under its own
+    // names and formats.
+    final info = GenInfo.fromJson({
+      'source': 'comfyui',
+      'prompt': 'a face in paint',
+      'seed': '489',
+      'model': 'krea2_turbo_fp8_scaled.safetensors',
+      'params': [
+        ['Steps', '8'],
+        ['CFG', '1'],
+      ],
+      'width': 896,
+      'height': 1184,
+    });
+    final recipe = Recipe.from(info, prompt: info.prompt, negative: '', width: 896, height: 1184);
+    expect(recipe.family, 'krea-2');
+    final raw = m('raw', 'Krea-2-Raw', 'krea-2', 'main', format: 'diffusers', variant: 'krea2_base');
+    final turbo = m('turbo', 'Krea-2-Turbo', 'krea-2', 'main', format: 'diffusers', variant: 'krea2_turbo');
+    final sdxl = m('xl', 'juggernautXL_v9', 'sdxl', 'main');
+    // The Turbo one, as the picture was a Turbo picture: by name and by its
+    // settings (8 steps, CFG 1).
+    expect(resolveMain(recipe, [sdxl, raw, turbo]), (turbo, true));
+    final unnamed = Recipe.from(
+      GenInfo.fromJson({'source': 'comfyui', 'model': 'krea2_fp8.safetensors', 'params': [['Steps', '8'], ['CFG', '1']]}),
+      prompt: 'p', negative: '', width: 512, height: 512,
+    );
+    expect(resolveMain(unnamed, [raw, turbo]).$1, turbo);
+    final rawPicture = Recipe.from(
+      GenInfo.fromJson({'source': 'comfyui', 'model': 'krea2_raw_bf16.safetensors', 'params': [['Steps', '28'], ['CFG', '5']]}),
+      prompt: 'p', negative: '', width: 512, height: 512,
+    );
+    expect(resolveMain(rawPicture, [turbo, raw]).$1, raw);
+    // The one it names, when the server has it, is not a stand-in.
+    expect(resolveMain(recipe, [turbo, m('x', 'krea2_turbo_fp8_scaled', 'krea-2', 'main')]).$2, isFalse);
+    // The graph is built with it, and says so.
+    final standIn = <String>[];
+    final graph = invokeGraph(recipe, 489, [sdxl, raw, turbo], const [], standIn: standIn);
+    expect(((graph['nodes'] as Map)['model_loader'] as Map)['model']['key'], 'turbo');
+    expect(standIn, ['Krea-2-Turbo']);
+    // No Krea 2 at all: said for what it is.
+    expect(
+      () => invokeGraph(recipe, 1, [sdxl], const []),
+      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('no Krea 2 model installed'))),
+    );
+    // A picture of no family it can tell is not given a stand-in.
+    final sd = Recipe.from(forgePicture(), prompt: 'p', negative: 'n', width: 512, height: 512);
+    expect(sd.family, isNull);
+    expect(
+      () => invokeGraph(sd, 1, [m('o', 'other_xl', 'sdxl', 'main')], const []),
+      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('InvokeAI has no model called'))),
+    );
+  });
+
+  test('InvokeAI: a Krea 2 remix with a stand-in model says which it used', () async {
+    final batches = <Map<String, dynamic>>[];
+    final (server, base) = await serve((request) async {
+      final path = request.uri.path;
+      if (path == '/api/v2/models/') {
+        final type = request.uri.queryParameters['model_type'] ?? '';
+        json(request, {
+          'models': type == 'main'
+              ? [
+                  {'key': 'turbo', 'hash': 'h', 'name': 'Krea-2-Turbo', 'base': 'krea-2', 'type': 'main', 'format': 'diffusers', 'variant': 'krea2_turbo'},
+                ]
+              : const [],
+        });
+      } else if (path == '/api/v1/queue/default/enqueue_batch') {
+        batches.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+        json(request, {'item_ids': [batches.length]});
+      } else {
+        request.response.statusCode = 404;
+      }
+    });
+    addTearDown(() => server.close(force: true));
+    final info = GenInfo.fromJson({
+      'source': 'comfyui',
+      'prompt': 'a face in paint',
+      'seed': '489',
+      'model': 'krea2_turbo_fp8_scaled.safetensors',
+      'params': [
+        ['Steps', '8'],
+        ['CFG', '1'],
+      ],
+      'width': 512,
+      'height': 512,
+    });
+    final ticket = await sendRemix('invokeai', base, remix(info));
+    expect(ticket.message, contains('with Krea-2-Turbo in place of krea2_turbo_fp8_scaled'));
+    final nodes = ((batches.single['batch'] as Map)['graph'] as Map)['nodes'] as Map;
+    expect(nodes['model_loader']['model']['key'], 'turbo');
+    // Diffusers: no VAE or encoder to choose.
+    expect((nodes['model_loader'] as Map).containsKey('vae_model'), isFalse);
+  });
+
   // ------------------------------------------------ LoRAs set in the panel
 
   LoraChoice choice(String name, double? weight, {bool enabled = true, double? to, double? clip}) =>

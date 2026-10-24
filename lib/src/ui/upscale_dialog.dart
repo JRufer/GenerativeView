@@ -510,5 +510,6 @@ Future<String?> refineUpscale(
     throw HiresNotSent('upscaled, but $name did not take the refine: $e');
   }
   state.collectRemix(original, ticket, label: 'hires');
-  return 'Hires fix of ${original.name} sent to $name, at $width × $height';
+  // What the server was given, model stand-ins and LoRAs left out included.
+  return 'Hires fix of ${original.name} at $width × $height: ${ticket.message}';
 }
