@@ -1664,6 +1664,14 @@ class AppState extends ChangeNotifier {
     final stem = dot > 0 ? file.substring(0, dot) : file;
     final id = ++_remixIds;
     final saved = <String>[];
+    // How it is spoken of when something goes wrong.
+    final what = label == 'hires' ? 'Hires fix' : 'Remix';
+    final server = switch (ticket.kind) {
+      'comfyui' => 'ComfyUI ',
+      'invokeai' => 'InvokeAI ',
+      'forge' => 'Forge ',
+      _ => '',
+    };
     var failed = false;
     var saving = Future<void>.value();
     StreamSubscription<String>? finishedSub;
@@ -1689,8 +1697,9 @@ class AppState extends ChangeNotifier {
       final at = list.indexWhere((j) => j.id == id);
       if (at < 0) return;
       if (saved.isEmpty) {
-        // Nothing came back to go to; the notice has said why.
-        if (!failed) _notices.add('The remix brought nothing back');
+        // Nothing came back to go to; the notice has said why, and the
+        // round button keeps it.
+        if (!failed) _remixProblem('$what of $originalName', '${server}finished, but brought no picture back');
         list.removeAt(at);
       } else {
         list[at] = list[at].finished(saved);
@@ -1708,12 +1717,21 @@ class AppState extends ChangeNotifier {
       },
       onError: (Object e) {
         failed = true;
-        if (!_disposed) _notices.add('Remix failed: $e');
+        _remixProblem('$what of $originalName', '$e');
       },
       onDone: () => saving.whenComplete(finish),
     );
     _remixSubs.add(sub);
     remixes.value = [...remixes.value, RemixJob(id, originalName)];
+  }
+
+  /// Say that a remix went wrong, and keep it on the round button (in
+  /// [problems]) until put away, so it is not missed.
+  void _remixProblem(String what, String why) {
+    if (_disposed) return;
+    final text = '$what: $why';
+    _notices.add(text);
+    problems.value = [...problems.value, text];
   }
 
   /// Remixes sent and not yet back, as they are kept between runs of the
