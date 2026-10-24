@@ -21,6 +21,8 @@ class Recipe {
     this.sampler,
     this.scheduler,
     this.clipSkip,
+    this.vae = '',
+    this.textEncoder = '',
   });
 
   final String prompt;
@@ -38,6 +40,11 @@ class Recipe {
   /// In ComfyUI's words: `normal`, `karras`, `exponential`...
   final String? scheduler;
   final int? clipSkip;
+
+  /// The VAE and text encoder the picture names, if it names them: for a
+  /// model that needs them chosen apart from it (a single-file Krea 2).
+  final String vae;
+  final String textEncoder;
 
   /// Read from [info], with the user's own [prompt], [negative] and size,
   /// and their [steps] and [cfg] where set.
@@ -74,6 +81,8 @@ class Recipe {
       sampler: sampler,
       scheduler: scheduler,
       clipSkip: int.tryParse(p(['clip skip', 'clip_skip']) ?? ''),
+      vae: [for (final m in info.models) if (m.kind == 'vae') m.name].firstOrNull ?? '',
+      textEncoder: [for (final m in info.models) if (m.kind == 'clip') m.name].firstOrNull ?? '',
     );
   }
 }
@@ -289,13 +298,28 @@ Map<String, dynamic> comfyGraph(Recipe recipe, int seed, ComfyModels installed, 
 
 /// A model as InvokeAI identifies it in a graph.
 class InvokeModel {
-  const InvokeModel({required this.key, required this.hash, required this.name, required this.base, required this.type, this.path = ''});
+  const InvokeModel({
+    required this.key,
+    required this.hash,
+    required this.name,
+    required this.base,
+    required this.type,
+    this.path = '',
+    this.format = '',
+    this.variant = '',
+  });
   final String key;
   final String hash;
   final String name;
   final String base;
   final String type;
   final String path;
+
+  /// How it is stored: `diffusers`, `checkpoint`, `gguf_quantized`...
+  final String format;
+
+  /// Which of its kind it is: `krea2_turbo`, `qwen3_vl_4b`...
+  final String variant;
 
   factory InvokeModel.fromJson(Map<String, dynamic> j) => InvokeModel(
         key: '${j['key'] ?? ''}',
@@ -304,6 +328,8 @@ class InvokeModel {
         base: '${j['base'] ?? ''}',
         type: '${j['type'] ?? ''}',
         path: '${j['path'] ?? ''}',
+        format: '${j['format'] ?? ''}',
+        variant: '${j['variant'] ?? ''}',
       );
 
   Map<String, dynamic> get identifier => {'key': key, 'hash': hash, 'name': name, 'base': base, 'type': type};
@@ -341,6 +367,8 @@ Map<String, dynamic> invokeGraph(
   List<InvokeModel> loras, {
   List<String>? skipped,
   GraphInit? init,
+  List<InvokeModel> vaes = const [],
+  List<InvokeModel> encoders = const [],
 }) {
   final main = findModel(recipe.model, mains, (m) => m.names);
   if (main == null) {
@@ -350,10 +378,13 @@ Map<String, dynamic> invokeGraph(
           : 'InvokeAI has no model called "${recipe.model}". Install it there, or send to another server.',
     );
   }
+  if (main.base == 'krea-2') {
+    return _krea2Graph(recipe, seed, main, loras, vaes, encoders, skipped: skipped, init: init);
+  }
   final xl = main.base == 'sdxl';
   if (!xl && main.base != 'sd-1' && main.base != 'sd-2') {
     throw StateError(
-      '"${main.name}" is a ${main.base} model. Only SD 1.x, SD 2.x and SDXL '
+      '"${main.name}" is a ${main.base} model. Only SD 1.x, SD 2.x, SDXL and Krea 2 '
       'graphs can be made for pictures from other programs.',
     );
   }
@@ -479,4 +510,167 @@ Map<String, dynamic> invokeGraph(
   edge('metadata', 'metadata', 'l2i', 'metadata');
 
   return {'id': init == null ? 'generativeview_txt2img' : 'generativeview_img2img', 'nodes': nodes, 'edges': edges};
+}
+
+/// Whether InvokeAI needs a VAE and a Qwen3-VL encoder chosen for [main]:
+/// a Krea 2 model saved as one file (a checkpoint or a GGUF) holds only the
+/// transformer. One installed as Diffusers carries both.
+bool krea2NeedsParts(InvokeModel main) => main.base == 'krea-2' && main.format != 'diffusers';
+
+/// The bases of the VAEs InvokeAI lets a Krea 2 model decode with: the
+/// Qwen-Image VAE (the same file can be registered as Anima's).
+const Set<String> _krea2VaeBases = {'qwen-image', 'anima', 'krea-2'};
+
+/// A Krea 2 graph for InvokeAI, built the way InvokeAI's own Generate tab
+/// builds one: the model loader, a Krea 2 text encoder for the prompt (and
+/// for the negative prompt, only with CFG on, above 1), LoRAs through the
+/// collection loader, Krea 2's denoise step, and the Qwen-Image VAE's
+/// latents-to-image to finish. With [init], the picture is encoded with
+/// the same VAE and the denoise step starts part way along.
+Map<String, dynamic> _krea2Graph(
+  Recipe recipe,
+  int seed,
+  InvokeModel main,
+  List<InvokeModel> loras,
+  List<InvokeModel> vaes,
+  List<InvokeModel> encoders, {
+  List<String>? skipped,
+  GraphInit? init,
+}) {
+  InvokeModel? vae;
+  InvokeModel? encoder;
+  if (krea2NeedsParts(main)) {
+    final fitting = [for (final m in vaes) if (m.type == 'vae' && _krea2VaeBases.contains(m.base)) m];
+    vae = findModel(recipe.vae, fitting, (m) => m.names) ?? fitting.firstOrNull;
+    // The 4B encoder is Krea 2's; the 8B one is another model's.
+    final encoding = [
+      for (final m in encoders)
+        if (m.type == 'qwen3_vl_encoder' && m.variant != 'qwen3_vl_8b') m,
+    ];
+    encoder = findModel(recipe.textEncoder, encoding, (m) => m.names) ?? encoding.firstOrNull;
+    final missing = [
+      if (vae == null) 'a Qwen-Image VAE',
+      if (encoder == null) 'a Qwen3-VL encoder',
+    ];
+    if (missing.isNotEmpty) {
+      throw StateError(
+        '"${main.name}" is a single-file Krea 2 model, so InvokeAI needs ${missing.join(' and ')} '
+        'installed alongside it. The Krea-2 bundle in InvokeAI\'s Model Manager has both.',
+      );
+    }
+  }
+
+  final nodes = <String, dynamic>{};
+  final edges = <Map<String, dynamic>>[];
+  void node(String id, String type, [Map<String, dynamic> fields = const {}]) {
+    nodes[id] = {'id': id, 'type': type, 'is_intermediate': true, 'use_cache': true, ...fields};
+  }
+
+  void edge(String from, String out, String to, String into) {
+    edges.add({
+      'source': {'node_id': from, 'field': out},
+      'destination': {'node_id': to, 'field': into},
+    });
+  }
+
+  // Turbo is distilled: 8 steps, CFG off (1). The undistilled base model
+  // wants more of both. A picture that says what it used keeps that.
+  final distilled = main.variant != 'krea2_base';
+  final steps = recipe.steps ?? (distilled ? 8 : 28);
+  final cfg = recipe.cfg ?? (distilled ? 1.0 : 5.5);
+  final guided = cfg > 1;
+
+  node('model_loader', 'krea2_model_loader', {
+    'model': main.identifier,
+    'vae_model': ?vae?.identifier,
+    'qwen3_vl_encoder_model': ?encoder?.identifier,
+  });
+  var transformer = 'model_loader';
+  var textEncoder = 'model_loader';
+
+  // LoRAs: each picked, collected, and applied together, which reroutes
+  // the transformer and the text encoder through the collection loader.
+  final picked = <Map<String, dynamic>>[];
+  for (final l in recipe.loras) {
+    final found = findModel(l.name, loras.where((m) => m.base == 'krea-2' && m.type == 'lora'), (m) => m.names);
+    if (found == null) {
+      skipped?.add(l.name);
+      continue;
+    }
+    picked.add({'model': found.identifier, 'weight': l.weight ?? 1.0});
+  }
+  if (picked.isNotEmpty) {
+    node('lora_collect', 'collect');
+    node('lora_loader', 'krea2_lora_collection_loader');
+    for (var i = 0; i < picked.length; i++) {
+      node('lora_$i', 'lora_selector', {'lora': picked[i]['model'], 'weight': picked[i]['weight']});
+      edge('lora_$i', 'lora', 'lora_collect', 'item');
+    }
+    edge('lora_collect', 'collection', 'lora_loader', 'loras');
+    edge('model_loader', 'transformer', 'lora_loader', 'transformer');
+    edge('model_loader', 'qwen3_vl_encoder', 'lora_loader', 'qwen3_vl_encoder');
+    transformer = textEncoder = 'lora_loader';
+  }
+
+  node('positive', 'krea2_text_encoder', {'prompt': recipe.prompt});
+  edge(textEncoder, 'qwen3_vl_encoder', 'positive', 'qwen3_vl_encoder');
+  node('positive_collect', 'collect');
+  edge('positive', 'conditioning', 'positive_collect', 'item');
+  if (guided) {
+    node('negative', 'krea2_text_encoder', {'prompt': recipe.negative});
+    edge(textEncoder, 'qwen3_vl_encoder', 'negative', 'qwen3_vl_encoder');
+  }
+
+  final strength = init?.strength.clamp(0.0, 1.0);
+  node('denoise', 'krea2_denoise', {
+    'cfg_scale': cfg,
+    'steps': steps,
+    'seed': seed,
+    'width': recipe.width,
+    'height': recipe.height,
+    // Starting part way along is how much of the picture is kept.
+    'denoising_start': strength == null ? 0.0 : 1 - strength,
+    'denoising_end': 1.0,
+  });
+  edge(transformer, 'transformer', 'denoise', 'transformer');
+  edge('positive_collect', 'collection', 'denoise', 'positive_conditioning');
+  if (guided) edge('negative', 'conditioning', 'denoise', 'negative_conditioning');
+
+  if (init != null) {
+    // The picture to start from, encoded with the same VAE.
+    node('i2l', 'qwen_image_i2l', {'image': {'image_name': init.image}});
+    edge('model_loader', 'vae', 'i2l', 'vae');
+    edge('i2l', 'latents', 'denoise', 'latents');
+    if (init.mask != null) {
+      // Only the part not kept is redrawn.
+      node('denoise_mask', 'create_denoise_mask', {'mask': {'image_name': init.mask}});
+      edge('model_loader', 'vae', 'denoise_mask', 'vae');
+      edge('denoise_mask', 'denoise_mask', 'denoise', 'denoise_mask');
+    }
+  }
+
+  // So the picture carries its settings, and reads (and remixes) like any
+  // other InvokeAI picture.
+  node('metadata', 'core_metadata', {
+    'generation_mode': 'krea2_${init == null ? 'txt2img' : init.mask == null ? 'img2img' : 'inpaint'}',
+    'strength': ?strength,
+    'positive_prompt': recipe.prompt,
+    if (guided) 'negative_prompt': recipe.negative,
+    'width': recipe.width,
+    'height': recipe.height,
+    'seed': seed,
+    'cfg_scale': cfg,
+    'steps': steps,
+    'model': main.identifier,
+    'vae': ?vae?.identifier,
+    'qwen3_vl_encoder': ?encoder?.identifier,
+    'loras': picked,
+  });
+
+  node('l2i', 'qwen_image_l2i', {'is_intermediate': false, 'use_cache': false});
+  edge('denoise', 'latents', 'l2i', 'latents');
+  edge('model_loader', 'vae', 'l2i', 'vae');
+  edge('metadata', 'metadata', 'l2i', 'metadata');
+
+  return {'id': init == null ? 'generativeview_krea2_txt2img' : 'generativeview_krea2_img2img', 'nodes': nodes, 'edges': edges};
 }
