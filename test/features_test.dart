@@ -18,7 +18,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
-import 'package:generativeview/src/core/backends.dart' show RemixImage, RemixTicket;
+import 'package:generativeview/src/core/backends.dart' show BackendException, RemixImage, RemixTicket;
 import 'package:generativeview/src/core/civitai.dart';
 import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
@@ -820,6 +820,19 @@ void main() {
     expect(find.byKey(const ValueKey('activity-card')), findsNothing);
     expect(button, findsNothing);
     await pumpUntil(tester, () => state.highlightIds.isEmpty, what: 'the highlight to end');
+
+    // A remix the server failed, or one that came back with nothing, is
+    // kept on it too, saying which and why.
+    state.collectRemix(owl, RemixTicket('', 1, Stream<RemixImage>.error(BackendException('InvokeAI: CUDA out of memory'))), label: 'hires');
+    state.collectRemix(sailor, RemixTicket('', 1, const Stream<RemixImage>.empty()));
+    await pumpUntil(tester, () => state.problems.value.length == 2, what: 'both failures kept');
+    expect(state.problems.value, [
+      'Hires fix of owl_01.png: InvokeAI: CUDA out of memory',
+      'Remix of sailor.png: finished, but brought no picture back',
+    ]);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-problem-icon')).evaluate().isNotEmpty, what: 'them shown');
+    state.dismissProblems();
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the failures');
 
     // Something that went wrong is kept on it, in red, until put away.
     state.problems.value = ['heron.png: upscaled, but InvokeAI did not take the refine: out of memory'];
