@@ -343,19 +343,32 @@ flutter::EncodableValue PasteSource(HWND hwnd) {
     if (hDrop) {
       HDROP hDropHandle = static_cast<HDROP>(hDrop);
       UINT count = DragQueryFileW(hDropHandle, 0xFFFFFFFF, nullptr, 0);
-      if (count > 0) {
-        UINT len = DragQueryFileW(hDropHandle, 0, nullptr, 0);
-        if (len > 0) {
-          std::vector<wchar_t> buf(len + 1);
-          if (DragQueryFileW(hDropHandle, 0, buf.data(), len + 1)) {
-            std::string normPath = FromWindowsPath(buf.data());
-            CloseClipboard();
-            flutter::EncodableMap map;
-            map[flutter::EncodableValue("path")] =
-                flutter::EncodableValue(normPath);
-            return flutter::EncodableValue(map);
-          }
+      // Every copied file: the first as {"path"}, the rest under "more".
+      std::vector<std::string> paths;
+      for (UINT i = 0; i < count; i++) {
+        UINT len = DragQueryFileW(hDropHandle, i, nullptr, 0);
+        if (len == 0) continue;
+        std::vector<wchar_t> buf(len + 1);
+        if (DragQueryFileW(hDropHandle, i, buf.data(), len + 1)) {
+          paths.push_back(FromWindowsPath(buf.data()));
         }
+      }
+      if (!paths.empty()) {
+        CloseClipboard();
+        flutter::EncodableMap map;
+        map[flutter::EncodableValue("path")] =
+            flutter::EncodableValue(paths.front());
+        if (paths.size() > 1) {
+          flutter::EncodableList more;
+          for (size_t i = 1; i < paths.size(); i++) {
+            flutter::EncodableMap item;
+            item[flutter::EncodableValue("path")] =
+                flutter::EncodableValue(paths[i]);
+            more.push_back(flutter::EncodableValue(item));
+          }
+          map[flutter::EncodableValue("more")] = flutter::EncodableValue(more);
+        }
+        return flutter::EncodableValue(map);
       }
     }
   }

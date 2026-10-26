@@ -329,16 +329,34 @@ static FlValue* paste_source() {
   GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
   gchar** uris = gtk_clipboard_wait_for_uris(clipboard);
   if (uris != nullptr) {
+    // Every copied file, not just the first: the first as {"path"}, the
+    // rest as a list under "more".
+    FlValue* result = nullptr;
+    FlValue* more = nullptr;
     for (gchar** uri = uris; *uri != nullptr; uri++) {
       g_autofree gchar* path = g_filename_from_uri(*uri, nullptr, nullptr);
-      if (path != nullptr && g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
-        FlValue* result = fl_value_new_map();
+      if (path == nullptr || !g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
+        continue;
+      }
+      if (result == nullptr) {
+        result = fl_value_new_map();
         fl_value_set_string_take(result, "path", fl_value_new_string(path));
-        g_strfreev(uris);
-        return result;
+      } else {
+        if (more == nullptr) {
+          more = fl_value_new_list();
+        }
+        FlValue* item = fl_value_new_map();
+        fl_value_set_string_take(item, "path", fl_value_new_string(path));
+        fl_value_append_take(more, item);
       }
     }
     g_strfreev(uris);
+    if (result != nullptr) {
+      if (more != nullptr) {
+        fl_value_set_string_take(result, "more", more);
+      }
+      return result;
+    }
   }
   // Ask for the types that keep a picture's own bytes first.
   static const gchar* kTypes[] = {"image/png", "image/webp", "image/jpeg",

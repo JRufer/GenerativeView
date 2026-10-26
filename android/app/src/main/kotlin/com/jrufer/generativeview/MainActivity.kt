@@ -416,39 +416,48 @@ class MainActivity : FlutterActivity() {
      */
     private fun pasteSource(result: MethodChannel.Result) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val uri = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
-        if (uri == null) {
+        val clip = clipboard.primaryClip
+        // Every item on the clip, not just the first: copying several images
+        // puts one address per image there.
+        val uris = if (clip == null) emptyList() else (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+        if (uris.isEmpty()) {
             result.success(null)
             return
         }
+        workers.execute {
+            val found = uris.mapNotNull { pasteItem(it) }
+            // The first item as before, the rest under "more".
+            val answer: Map<String, Any>? = found.firstOrNull()?.let { first ->
+                if (found.size == 1) first else first + ("more" to found.drop(1))
+            }
+            runOnUiThread { result.success(answer) }
+        }
+    }
+
+    /** One clipboard item to paste: {"path"} for a file of ours, else its bytes. */
+    private fun pasteItem(uri: Uri): Map<String, Any>? {
         if (uri.authority == packageName + ".copied") {
             val path = uri.path
-            if (path != null && File(path).isFile) {
-                result.success(mapOf("path" to path))
-                return
-            }
+            if (path != null && File(path).isFile) return mapOf("path" to path)
         }
-        workers.execute {
-            val found: Map<String, Any>? = try {
-                val type = contentResolver.getType(uri)
-                if (type == null || !(type.startsWith("image/") || type.startsWith("video/"))) {
-                    null
-                } else {
-                    var name: String? = null
-                    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                        if (c.moveToFirst()) name = c.getString(0)
-                    }
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    if (bytes == null) null else buildMap {
-                        put("bytes", bytes)
-                        put("type", type)
-                        name?.let { put("name", it) }
-                    }
-                }
-            } catch (e: Exception) {
+        return try {
+            val type = contentResolver.getType(uri)
+            if (type == null || !(type.startsWith("image/") || type.startsWith("video/"))) {
                 null
+            } else {
+                var name: String? = null
+                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) name = c.getString(0)
+                }
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null) null else buildMap {
+                    put("bytes", bytes)
+                    put("type", type)
+                    name?.let { put("name", it) }
+                }
             }
-            runOnUiThread { result.success(found) }
+        } catch (e: Exception) {
+            null
         }
     }
 
