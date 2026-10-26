@@ -11,7 +11,9 @@ name: build
 #
 # Every push to main then publishes what was built as a release named
 # build-<run number> (the newest ten are kept). Pushing a tag like v0.1.0
-# publishes a release under that name instead.
+# publishes a release under that name instead. Each release's notes list the
+# pull requests merged since the previous release (tool/release-notes.sh),
+# then how to install.
 #
 # Android signing: set the repository secrets ANDROID_KEYSTORE_BASE64 and
 # ANDROID_KEYSTORE_PASSWORD (see README) and every APK carries the same
@@ -464,6 +466,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tool
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -489,13 +494,25 @@ jobs:
           ls -la out
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes out/*
-            exit 0
+            tag="$GITHUB_REF_NAME"
+            title="$GITHUB_REF_NAME"
+            prefix="v"
+          else
+            tag="build-$GITHUB_RUN_NUMBER"
+            title="Build $GITHUB_RUN_NUMBER"
+            prefix="build-"
           fi
 
-          tag="build-$GITHUB_RUN_NUMBER"
           {
-            echo "Automatic build of \`${GITHUB_SHA::7}\`: $(echo "$COMMIT_SUBJECT" | head -1)"
+            echo "Built from [\`${GITHUB_SHA::7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo
+            # The changes since the previous release, from the pull requests
+            # merged (and commits pushed) in between. A failure here must not
+            # stop the release going out.
+            bash tool/release-notes.sh "$GITHUB_SHA" "$prefix" \
+              || echo "_The list of changes could not be put together; see the [commits](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA})._"
+            echo
+            echo "## Install"
             echo
             echo "- **Linux**: \`GenerativeView-x86_64.AppImage\` — \`chmod +x\` it and run. Runs on Ubuntu 22.04, Debian 12, Arch and newer, on Wayland or X11. Needs GTK 3, and \`ffmpeg\` for video thumbnails; it brings its own video player library where \`mpv\` isn't installed. The \`.tar.gz\` is the same app as a plain folder with an \`install.sh\`."
             echo "- **Windows**: \`GenerativeView-windows-x64.zip\` — unzip and run \`generativeview.exe\`."
@@ -509,7 +526,13 @@ jobs:
             echo
             echo "GenerativeView is released under the [MIT License](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/LICENSE). Third-party licences are listed in the app under ⋮ → About → Open-source licences."
           } > notes.md
-          gh release create "$tag" --target "$GITHUB_SHA" --title "Build $GITHUB_RUN_NUMBER" --notes-file notes.md --latest out/*
+          cat notes.md
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            gh release create "$tag" --title "$title" --notes-file notes.md out/*
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md --latest out/*
 
           # Keep the ten newest automatic builds.
           gh api "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name | select(startswith("build-"))' \
