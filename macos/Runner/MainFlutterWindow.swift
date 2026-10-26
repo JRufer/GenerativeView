@@ -113,7 +113,12 @@ class MainFlutterWindow: NSWindow, NSDraggingSource {
         let pb = NSPasteboard.general
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            let first = urls.first {
-          result(["path": first.path])
+          // Every copied file: the first as "path", the rest under "more".
+          var answer: [String: Any] = ["path": first.path]
+          if urls.count > 1 {
+            answer["more"] = urls.dropFirst().map { ["path": $0.path] }
+          }
+          result(answer)
           return
         }
         if let pngData = pb.data(forType: .png) {

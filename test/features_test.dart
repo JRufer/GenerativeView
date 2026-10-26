@@ -996,6 +996,23 @@ void main() {
     await pumpUntil(tester, () => names(state).any((n) => n.startsWith('pasted-')), what: 'the pasted picture');
     final pasted = names(state).firstWhere((n) => n.startsWith('pasted-'));
     expect(pasted, endsWith('.png'));
+    // Several copied files all arrive, not just the first.
+    pasteAnswer = {
+      'path': '${library.path}/heron.png',
+      'more': [
+        {'path': '${library.path}/owl_01.png'},
+        {'path': '${library.path}/heron.png'},
+      ],
+    };
+    await menuOn('heron.png', 'Paste into this folder');
+    final multi = ['heron (3).png', 'owl_01 (2).png', 'heron (4).png'];
+    await pumpUntil(tester, () => multi.every((n) => indexOf(state, n) >= 0), what: 'all three pasted');
+    await pumpUntil(tester, () => snack()?.contains('Pasted 3 files') ?? false, what: 'the three-file toast');
+    for (final n in multi) {
+      File('${library.path}/$n').deleteSync();
+    }
+    state.rescan();
+    await pumpUntil(tester, () => multi.every((n) => indexOf(state, n) < 0), what: 'the extra copies gone');
 
     // ---- in a collection, it can be taken out ----------------------------------
     final copy = state.items[indexOf(state, 'heron (2).png')];

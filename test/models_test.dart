@@ -245,6 +245,10 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
             'path': 'C:/pics/a.png',
             'type': 'image/png',
             'name': 'a.png',
+            'more': [
+              {'path': 'C:/pics/b.png'},
+              {'bytes': Uint8List.fromList([9]), 'type': 'image/webp'},
+            ],
           };
         case 'trashFile':
           return nextTrashReply;
@@ -274,6 +278,11 @@ test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
     expect(paste?.path, 'C:/pics/a.png');
     expect(paste?.type, 'image/png');
     expect(paste?.name, 'a.png');
+    // Several copied items paste as several, in order.
+    final all = await readPasteSources();
+    expect(all.length, 3);
+    expect(all[1].path, 'C:/pics/b.png');
+    expect(all[2].type, 'image/webp');
 
     expect(await trashFile('C:/pics/a.png'), (TrashOutcome.trashed, null));
     nextTrashReply = 'cancelled';

@@ -240,17 +240,31 @@ Future<void> deleteFiles(BuildContext context, AppState state, List<MediaItem> i
 /// Paste what is on the clipboard (a copied file, or a picture copied from
 /// a browser or an editor) into [dir].
 Future<void> pasteInto(BuildContext context, AppState state, String dir) async {
-  final source = await readPasteSource();
+  final sources = await readPasteSources();
   if (!context.mounted) return;
-  if (source == null) {
+  if (sources.isEmpty) {
     toast(context, 'Nothing to paste: copy an image or a video first');
     return;
   }
-  try {
-    final saved = await state.pasteInto(dir, source);
-    if (context.mounted) toast(context, 'Pasted ${saved.split(Platform.pathSeparator).last}');
-  } catch (e) {
-    if (context.mounted) toast(context, 'Could not paste here: $e');
+  // Every copied item, not just the first.
+  final saved = <String>[];
+  Object? error;
+  for (final source in sources) {
+    try {
+      saved.add(await state.pasteInto(dir, source));
+    } catch (e) {
+      error ??= e;
+    }
+  }
+  if (!context.mounted) return;
+  if (saved.isEmpty) {
+    toast(context, 'Could not paste here: $error');
+  } else if (error != null) {
+    toast(context, 'Pasted ${saved.length} of ${sources.length}; the rest failed: $error');
+  } else if (saved.length == 1) {
+    toast(context, 'Pasted ${saved.single.split(Platform.pathSeparator).last}');
+  } else {
+    toast(context, 'Pasted ${saved.length} files');
   }
 }
 

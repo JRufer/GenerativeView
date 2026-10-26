@@ -224,18 +224,38 @@ class PasteSource {
 }
 
 /// What a paste would bring in, or null if the clipboard holds no picture.
+/// Only the first item; see [readPasteSources] for all of them.
 Future<PasteSource?> readPasteSource() async {
+  final all = await readPasteSources();
+  return all.isEmpty ? null : all.first;
+}
+
+/// Everything a paste would bring in, in clipboard order: several copied
+/// files paste as several. Empty if the clipboard holds no picture.
+Future<List<PasteSource>> readPasteSources() async {
   try {
     final raw = await _media.invokeMethod<Map<Object?, Object?>>('pasteSource');
-    if (raw == null) return null;
-    final path = raw['path'] as String?;
-    final bytes = raw['bytes'] as Uint8List?;
-    if (path == null && bytes == null) return null;
-    return PasteSource(path: path, bytes: bytes, type: raw['type'] as String?, name: raw['name'] as String?);
+    if (raw == null) return const [];
+    final out = <PasteSource>[];
+    void add(Map<Object?, Object?> m) {
+      final path = m['path'] as String?;
+      final bytes = m['bytes'] as Uint8List?;
+      if (path == null && bytes == null) return;
+      out.add(PasteSource(path: path, bytes: bytes, type: m['type'] as String?, name: m['name'] as String?));
+    }
+
+    add(raw);
+    final more = raw['more'];
+    if (more is List) {
+      for (final m in more) {
+        if (m is Map) add(m.cast<Object?, Object?>());
+      }
+    }
+    return out;
   } on PlatformException {
-    return null;
+    return const [];
   } on MissingPluginException {
-    return null;
+    return const [];
   }
 }
 
