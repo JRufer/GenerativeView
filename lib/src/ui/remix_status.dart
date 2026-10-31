@@ -20,8 +20,8 @@ const Color _remixBlue = Color(0xFF3B7BF6);
 /// Tapped while something runs, it opens a card listing what is running
 /// (remixes waiting on the server, upscales with their progress and a way to
 /// stop each) and what is done. Tapped when all is done, it goes straight to
-/// the new pictures: remixes in the Remixes collection, upscales in their
-/// folder, each picked out. Pressed and held (or right-clicked) when done, it
+/// the new pictures: remixes in the Remixes collection, upscales in the
+/// Upscales collection, each picked out. Pressed and held (or right-clicked) when done, it
 /// is put away without going there.
 class ActivityButton extends StatefulWidget {
   const ActivityButton({super.key, required this.state, this.compact = false});
@@ -376,7 +376,7 @@ class _ActivityCard extends StatelessWidget {
           key: const ValueKey<String>('activity-upscale-done'),
           icon: const Icon(Icons.check_circle, size: 18, color: Colors.white),
           label: a.upscaled.length == 1 ? 'Upscale Done' : '${a.upscaled.length} Upscales Done',
-          tooltip: 'Show ${a.upscaled.length == 1 ? 'it' : 'them'} in the folder',
+          tooltip: 'Show ${a.upscaled.length == 1 ? 'it' : 'them'} in ${AppState.upscaleCollection}',
           go: true,
           onTap: () {
             onGo();

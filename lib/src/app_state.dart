@@ -1808,6 +1808,10 @@ class AppState extends ChangeNotifier {
   /// soon as one picture is in them, so the first remix makes it.
   static const String remixCollection = 'Remixes';
 
+  /// The collection every upscale made here is put in instead: upscales on
+  /// the device and hires fixes alike.
+  static const String upscaleCollection = 'Upscales';
+
   /// Remixes sent: those still waiting on the server, and those back whose
   /// pictures have not been gone to yet.
   final ValueNotifier<List<RemixJob>> remixes = ValueNotifier(const []);
@@ -1834,7 +1838,8 @@ class AppState extends ChangeNotifier {
   /// are fetched the next time it starts.
   ///
   /// [label] names the new files instead of `remix`: a hires fix comes back
-  /// as `<name>_hires1.png`.
+  /// as `<name>_hires1.png`, goes in the [upscaleCollection], and once back
+  /// is shown with the upscales done rather than the remixes.
   void collectRemix(MediaItem original, RemixTicket ticket, {String label = 'remix'}) =>
       _collectRemix(original.path, original.name, ticket, label: label);
 
@@ -1900,6 +1905,10 @@ class AppState extends ChangeNotifier {
         // round button keeps it.
         if (!failed) _remixProblem('$what of $originalName', '${server}finished, but brought no picture back');
         list.removeAt(at);
+      } else if (label == 'hires') {
+        // An upscale, finished on the server: done with the upscales.
+        list.removeAt(at);
+        upscaled.value = [...upscaled.value, ...saved];
       } else {
         list[at] = list[at].finished(saved);
       }
@@ -1972,8 +1981,9 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Write [image] beside the original and put it in the remix collection;
-  /// answers with where it went, or null if it could not be saved.
+  /// Write [image] beside the original and put it in the remix collection
+  /// (a hires fix: the upscale collection); answers with where it went, or
+  /// null if it could not be saved.
   Future<String?> _saveRemix(String dir, String stem, RemixImage image, {String label = 'remix'}) async {
     late final String path;
     late final String name;
@@ -1997,14 +2007,15 @@ class AppState extends ChangeNotifier {
       return null;
     }
     if (_disposed) return path;
+    final collection = label == 'hires' ? upscaleCollection : remixCollection;
     try {
       await core.call('notes_set', {
         'paths': [path],
-        'add': [remixCollection],
+        'add': [collection],
       });
       notesTick.value++;
     } catch (e) {
-      _notices.add('Saved $name, but could not add it to $remixCollection: $e');
+      _notices.add('Saved $name, but could not add it to $collection: $e');
       _rescanSoon();
       return path;
     }
@@ -2027,12 +2038,12 @@ class AppState extends ChangeNotifier {
     await _showNew(paths, exactTerm('collection', remixCollection));
   }
 
-  /// Show the upscales saved since they were last gone to, in their folder
-  /// with no search on, picked out by the same animation as remixes.
+  /// Show the [upscaleCollection], with the upscales saved since they were
+  /// last gone to picked out by the same animation as remixes.
   Future<void> showUpscales() async {
     final paths = upscaled.value;
     upscaled.value = const [];
-    await _showNew(paths, '', withFolder: false);
+    await _showNew(paths, exactTerm('collection', upscaleCollection));
   }
 
   /// Put away the upscales that are done, without going to them.
@@ -2300,9 +2311,11 @@ class AppState extends ChangeNotifier {
         _rescanSoon();
         final then = _upscaleThen.remove(job);
         if (then != null && path.isNotEmpty) {
+          // Only a step on the way: what the server sends back is the
+          // upscale that goes in the collection.
           unawaited(_runUpscaleThen(then.$1, path, then.$2, then.$3));
         } else if (path.isNotEmpty) {
-          upscaled.value = [...upscaled.value, path];
+          unawaited(_addToUpscales(path));
         }
       case 'cancelled':
         list.removeAt(at);
@@ -2314,6 +2327,23 @@ class AppState extends ChangeNotifier {
     }
     upscales.value = list;
     if (list.isEmpty && _upscaleQueue.isNotEmpty) unawaited(_nextUpscale());
+  }
+
+  /// Put the upscale saved at [path] in the [upscaleCollection], then show
+  /// it as done.
+  Future<void> _addToUpscales(String path) async {
+    try {
+      await core.call('notes_set', {
+        'paths': [path],
+        'add': [upscaleCollection],
+      });
+      if (_disposed) return;
+      notesTick.value++;
+    } catch (e) {
+      if (_disposed) return;
+      _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}, but could not add it to $upscaleCollection: $e');
+    }
+    upscaled.value = [...upscaled.value, path];
   }
 
   /// Run [then] on each of [targets] as it is, with no upscale here first:

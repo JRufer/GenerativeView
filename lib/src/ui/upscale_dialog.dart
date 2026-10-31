@@ -340,20 +340,20 @@ class _UpscalePanelState extends State<UpscalePanel> {
               ownSize
                   ? (many
                         ? '${widget.items.length} pictures, one after another: each sent to ${backendNames[_server]} at its own size, '
-                              'nothing upscaled here, and saved beside its original as name_hires1, in ${AppState.remixCollection}'
+                              'nothing upscaled here, and saved beside its original as name_hires1, in ${AppState.upscaleCollection}'
                         : 'Sent to ${backendNames[_server]} at its own size, nothing upscaled here, and saved as '
-                              '${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                              '${_stem(item.name)}_hires1, in ${AppState.upscaleCollection}')
                   : refine
                   ? (many
                         ? '${widget.items.length} pictures, one after another: each upscaled here as name_up${scaleText(_hiresScale)}x, '
-                              'then refined on ${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.remixCollection}'
+                              'then refined on ${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.upscaleCollection}'
                         : 'Upscaled here as ${_stem(item.name)}_up${scaleText(_hiresScale)}x.$ext, then refined on ${backendNames[_server]} '
-                              'and saved as ${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                              'and saved as ${_stem(item.name)}_hires1, in ${AppState.upscaleCollection}')
                   : _factor == null
                   ? 'Nothing to upscale at this size.'
                   : many
-                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${scaleText(factor)}x'
-                  : 'Saved as ${_stem(item.name)}_up${scaleText(factor)}x.$ext',
+                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${scaleText(factor)}x, in ${AppState.upscaleCollection}'
+                  : 'Saved as ${_stem(item.name)}_up${scaleText(factor)}x.$ext, in ${AppState.upscaleCollection}',
               key: const ValueKey<String>('upscale-saved-as'),
               style: const TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
             ),
