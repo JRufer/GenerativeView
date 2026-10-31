@@ -1419,14 +1419,19 @@ void main() {
     await settle(tester);
     expect(find.text('Copy 2 images'), findsOneWidget);
     expect(find.text('Rate…'), findsOneWidget);
-    expect(find.text('Keep all (P)'), findsOneWidget);
+    expect(find.text('Keep all (P)'), findsNothing, reason: 'flags are set with P / X, not from the menu');
+    expect(find.text('Reject all (X)'), findsNothing);
     expect(find.text('Upscale 2 images… (Shift U)'), findsOneWidget);
     expect(find.text('Delete 2 images…'), findsOneWidget);
     expect(find.text('Remix… (R)'), findsNothing);
     expect(find.text('More like this (L)'), findsNothing);
     expect(find.text('Copy prompt'), findsNothing);
     await screenshot(tester, boundary, '49-many-menu');
-    await tester.tap(find.text('Keep all (P)'));
+    // Close the menu (leaving the ticks alone), then flag both with the key.
+    Navigator.of(tester.element(find.text('Rate…'))).pop();
+    await settle(tester);
+    expect(state.checkedCount, 2);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
     await pumpUntil(tester, () => item('fox_01.png').flag == Flag.keep && item('fox_02.png').flag == Flag.keep, what: 'both kept');
     expect(item('owl_01.png').flag, owlFlag, reason: 'unticked: left alone');
 
