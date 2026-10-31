@@ -64,9 +64,12 @@ class _Activity {
   /// Done of both kinds at once: there is no one place to go.
   bool get doneBothKinds => remixesDone.isNotEmpty && upscaled.isNotEmpty;
 
-  /// Things running or done, for the badge.
+  /// Renders still to finish, for the badge: each picture a remix still
+  /// waits on from the server (a remix of 4 counts 4, then 3 as one comes
+  /// back), each hires fix being sent, and each upscale running or waiting.
+  /// What is done is not counted.
   int get count =>
-      remixesRunning.length + upscales.length + waiting + sending.length + remixesDone.length + upscaled.length + problems.length;
+      remixesRunning.fold<int>(0, (n, j) => n + (j.remaining < 1 ? 1 : j.remaining)) + upscales.length + waiting + sending.length;
 
   /// One upscale and nothing else: its progress can be shown on the ring.
   double? get progress =>
@@ -273,8 +276,8 @@ class _RoundButton extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         circle,
-        // How many, when more than one thing is going on.
-        if (count > 1)
+        // How many renders are left, while any are.
+        if (busy && count > 0)
           Positioned(
             right: compact ? -4 : -2,
             top: compact ? -4 : -2,

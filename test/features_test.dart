@@ -812,6 +812,8 @@ void main() {
     );
     final sailorRemix = File('${library.path}/sub/sailor_remix1.png');
     expect(sailorRemix.existsSync(), isTrue);
+    // The count is renders still to come, not how many were sent: one left.
+    expect(find.descendant(of: find.byKey(const ValueKey('activity-count')), matching: find.text('1')), findsOneWidget);
     expect((notesFile('${library.path}/sub')['images']['sailor_remix1.png'] as Map)['collections'], [AppState.remixCollection]);
 
     second.add(RemixImage(pngWithText(320, 320, 98, const {})));
@@ -825,8 +827,9 @@ void main() {
     expect(owlRemix.existsSync(), isTrue);
     final after = await tester.runAsync(state.collections);
     expect(after!.any((c) => c.$1 == AppState.remixCollection && c.$2 == 2), isTrue);
-    // All back: the button is a tick.
+    // All back: the button is a tick, with nothing left to count.
     expect(find.byKey(const ValueKey('activity-done-icon')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activity-count')), findsNothing);
     expect(find.byKey(const ValueKey('activity-spinner')), findsNothing);
 
     // Tapped: the Remixes collection, both new pictures picked out.
