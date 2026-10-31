@@ -340,6 +340,32 @@ impl Engine {
             .collect()
     }
 
+    /// Why no candidate could be given likely stars although `samples`
+    /// (rated pictures' vectors) are there: what was compared with what.
+    fn why_unscored(&self, prompt: String, samples: &[(Vec<f32>, f32)]) -> String {
+        let text = match self.content.text_vectors(&[prompt]) {
+            Ok(v) => v.into_iter().next(),
+            Err(e) => return e,
+        };
+        let Some(text) = text else { return "the prompt could not be read".into() };
+        let bad_text = text.iter().filter(|v| !v.is_finite()).count();
+        let mut lengths: Vec<usize> = samples.iter().map(|(v, _)| v.len()).collect();
+        lengths.sort_unstable();
+        lengths.dedup();
+        let alike = samples.iter().filter(|(v, _)| v.len() == text.len()).count();
+        let bad_samples = samples.iter().filter(|(v, t)| !t.is_finite() || v.iter().any(|x| !x.is_finite())).count();
+        format!(
+            "the prompts' vectors ({} numbers{}) could not be compared with the {} rated pictures' ({} of length {:?}, {} the same length{})",
+            text.len(),
+            if bad_text > 0 { format!(", {bad_text} not numbers") } else { String::new() },
+            samples.len(),
+            lengths.len(),
+            lengths,
+            alike,
+            if bad_samples > 0 { format!(", {bad_samples} with values that are not numbers") } else { String::new() },
+        )
+    }
+
     /// New recipes mixed from two to four pictures, the likeliest liked
     /// first (see [`crate::works::breed`]).
     fn breed(&self, args: &Value) -> Result<String, String> {
@@ -403,6 +429,12 @@ impl Engine {
             vec![None; children.len()]
         } else {
             match self.content.likely(&children.iter().map(|c| c.prompt()).collect::<Vec<_>>(), &samples) {
+                // Rated pictures looked at, and still no star for any: say
+                // why rather than show a dash on every one without a word.
+                Ok(likely) if !likely.is_empty() && likely.iter().all(Option::is_none) => {
+                    why = Some(format!("error: {}", self.why_unscored(children.first().map(|c| c.prompt()).unwrap_or_default(), &samples)));
+                    likely
+                }
                 Ok(likely) => likely,
                 Err(e) => {
                     why = Some(format!("error: {e}"));
