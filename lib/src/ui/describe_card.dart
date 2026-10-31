@@ -31,6 +31,14 @@ class _DescribeCardState extends State<DescribeCard> {
   final Set<String> _flipped = {};
 
   @override
+  void initState() {
+    super.initState();
+    // Whether the picture model is here is otherwise only asked once
+    // content search is used.
+    if (!widget.state.content.value.known) widget.state.refreshContent();
+  }
+
+  @override
   void didUpdateWidget(DescribeCard old) {
     super.didUpdateWidget(old);
     if (old.item.path != widget.item.path) {
@@ -104,8 +112,12 @@ class _DescribeCardState extends State<DescribeCard> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final installed = widget.state.content.value.installed;
+  Widget build(BuildContext context) => ValueListenableBuilder<ContentStatus>(
+    valueListenable: widget.state.content,
+    builder: (context, status, _) => _build(context, status.installed),
+  );
+
+  Widget _build(BuildContext context, bool installed) {
     final description = _for == widget.item.path ? _description : null;
     if (description == null) {
       return Padding(
