@@ -1850,19 +1850,20 @@ class AppState extends ChangeNotifier {
   // ================================================================ moving
 
   /// Pictures cut (Ctrl X) to be moved into the next folder they are
-  /// pasted into, by path. They stay where they are until then.
-  final Set<String> _cut = {};
+  /// pasted into: their index ids, which a move keeps, with the path each
+  /// had when it was cut. They stay where they are until then.
+  final Map<int, String> _cut = {};
 
   bool get hasCut => _cut.isNotEmpty;
   int get cutCount => _cut.length;
-  bool isCut(MediaItem item) => _cut.contains(item.path);
+  bool isCut(MediaItem item) => _cut.containsKey(item.id);
 
   /// Mark [targets] to be moved by the next paste, in place of whatever
   /// was cut before.
   void cutFiles(List<MediaItem> targets) {
     _cut
       ..clear()
-      ..addAll([for (final t in targets) t.path]);
+      ..addAll({for (final t in targets) t.id: t.path});
     notifyListeners();
   }
 
@@ -1872,12 +1873,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Move what was cut into [dir]. Pictures deleted since, or already in
-  /// [dir], are left out.
+  /// Move what was cut into [dir], from wherever each picture is now.
+  /// Pictures already in [dir] are left out; any deleted since are
+  /// reported as no longer there.
   Future<MoveOutcome> moveCutTo(String dir) async {
     final paths = [
-      for (final p in _cut)
-        if (File(p).existsSync()) p,
+      for (final MapEntry(key: id, value: then) in _cut.entries)
+        switch (items.indexOfId(id)) {
+          final i when i >= 0 && File(items[i].path).existsSync() => items[i].path,
+          _ => then,
+        },
     ];
     _cut.clear();
     notifyListeners();
@@ -1919,7 +1924,7 @@ class AppState extends ChangeNotifier {
         final i = items.indexOfId(id);
         return i >= 0 && gone.contains(normalizePath(items[i].path));
       });
-      _cut.removeAll([for (final (from, _) in moved) from]);
+      _cut.removeWhere((_, path) => gone.contains(normalizePath(path)));
       if (remember) _rememberMoveTarget(to);
       await scanMediaFiles([for (final (from, dest) in moved) ...[from, dest]]);
       notesTick.value++;

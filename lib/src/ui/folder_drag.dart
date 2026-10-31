@@ -181,6 +181,7 @@ class _PictureDragState extends State<PictureDrag> {
     if (items.isEmpty) return;
     _items = items;
     _drag.value = FolderDragInfo(items, position, null);
+    _removeFeedback();
     final entry = OverlayEntry(builder: (_) => _DragFeedback(state: widget.state));
     _feedback = entry;
     Overlay.of(context, rootOverlay: true).insert(entry);
