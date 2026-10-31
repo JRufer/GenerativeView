@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'src/licenses.dart';
 import 'src/platform.dart';
 import 'src/remix_alerts.dart';
 import 'src/theme.dart';
+import 'src/ui/about_panel.dart' show buildCommit;
 import 'src/ui/home_page.dart';
 import 'src/ui/shortcut_layer.dart';
 
@@ -52,6 +54,7 @@ Future<void> main(List<String> args) async {
         ? Directory(requested).absolute.path
         : null;
     await state.restore(initialFolder: initial);
+    unawaited(state.checkCoreBuild(buildCommit, NativeCore.loadedFrom));
   } catch (e) {
     failure = e;
   }

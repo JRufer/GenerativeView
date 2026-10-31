@@ -119,23 +119,43 @@ class NativeCore {
 
   /// Resolve the shared library filename or path for [operatingSystem] and
   /// [environment]. Supports `GVCORE_LIB` override across all platforms.
+  ///
+  /// On Linux and Windows, the copy shipped beside the app ([executableDir],
+  /// in `lib/` on Linux) is named by its full path when it is there: by bare
+  /// name the system may find another build's core first (one on
+  /// `LD_LIBRARY_PATH` or in `/usr/local/lib`, say), and the app would run
+  /// with an old core without a word.
   static String resolveLibraryPath({
     String? operatingSystem,
     Map<String, String>? environment,
+    String? executableDir,
+    bool Function(String path)? exists,
   }) {
     final env = environment ?? Platform.environment;
     final override = env['GVCORE_LIB'];
     if (override != null && override.isNotEmpty) return override;
-    return switch (operatingSystem ?? Platform.operatingSystem) {
+    final os = operatingSystem ?? Platform.operatingSystem;
+    final name = switch (os) {
       'windows' => 'gvcore.dll',
       'macos' => 'libgvcore.dylib',
       _ => 'libgvcore.so',
     };
+    final shipped = switch (os) {
+      'linux' when executableDir != null => '$executableDir/lib/$name',
+      'windows' when executableDir != null => '$executableDir\\$name',
+      _ => null,
+    };
+    if (shipped != null && (exists ?? (p) => File(p).existsSync())(shipped)) return shipped;
+    return name;
   }
 
-  /// Where the shared library lives. Bundled builds find it by name; tests
-  /// and `flutter run` from a checkout can point at a cargo build.
-  static String defaultLibraryPath() => resolveLibraryPath();
+  /// Where the shared library lives: the copy shipped with the app when
+  /// there is one; tests and `flutter run` from a checkout can point at a
+  /// cargo build.
+  static String defaultLibraryPath() => resolveLibraryPath(executableDir: File(Platform.resolvedExecutable).parent.path);
+
+  /// The library the running core was loaded from, as asked for.
+  static String loadedFrom = '';
 
   static DynamicLibrary _openLibrary(String path) {
     try {
@@ -161,7 +181,8 @@ class NativeCore {
   }) {
     final DynamicLibrary lib;
     try {
-      lib = _openLibrary(libraryPath ?? defaultLibraryPath());
+      loadedFrom = libraryPath ?? defaultLibraryPath();
+      lib = _openLibrary(loadedFrom);
     } on ArgumentError catch (e) {
       throw CoreException('Could not load the GenerativeView core: $e');
     }

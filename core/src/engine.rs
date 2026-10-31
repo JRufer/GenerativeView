@@ -917,7 +917,14 @@ impl Engine {
                 self.thumbs.warm(Vec::new());
                 Ok("null".into())
             }
-            "stats" => Ok(json!({ "files": self.db.count(), "version": env!("CARGO_PKG_VERSION") }).to_string()),
+            "stats" => Ok(json!({
+                "files": self.db.count(),
+                "version": env!("CARGO_PKG_VERSION"),
+                // The commit CI built it from (empty for a build by hand), so
+                // the app can tell when it has loaded another build's core.
+                "commit": option_env!("GV_COMMIT").unwrap_or(""),
+            })
+            .to_string()),
             other => Err(format!("unknown method: {other}")),
         }
     }

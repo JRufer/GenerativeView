@@ -195,6 +195,28 @@ void main() {
     );
   });
 
+  test('NativeCore.resolveLibraryPath prefers the core shipped beside the app', () {
+    // Linux: the bundle's lib/, by full path, so no other build's core on
+    // the system is found first.
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'linux', environment: {}, executableDir: '/opt/gv', exists: (p) => p == '/opt/gv/lib/libgvcore.so'),
+      '/opt/gv/lib/libgvcore.so',
+    );
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'windows', environment: {}, executableDir: r'C:\gv', exists: (p) => p == r'C:\gv\gvcore.dll'),
+      r'C:\gv\gvcore.dll',
+    );
+    // Not there (a checkout run): by name, as before.
+    expect(NativeCore.resolveLibraryPath(operatingSystem: 'linux', environment: {}, executableDir: '/opt/gv', exists: (_) => false), 'libgvcore.so');
+    // Android loads it from the APK by name.
+    expect(NativeCore.resolveLibraryPath(operatingSystem: 'android', environment: {}, executableDir: '/system/bin', exists: (_) => true), 'libgvcore.so');
+    // GVCORE_LIB still wins.
+    expect(
+      NativeCore.resolveLibraryPath(operatingSystem: 'linux', environment: {'GVCORE_LIB': '/dev/core.so'}, executableDir: '/opt/gv', exists: (_) => true),
+      '/dev/core.so',
+    );
+  });
+
 test('desktopUrlCommand and shortcut modifiers adapt to Windows and macOS', () {
     final linuxCmd = desktopUrlCommand('https://civitai.com/models/1', operatingSystem: 'linux');
     expect(linuxCmd?.executable, 'xdg-open');

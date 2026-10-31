@@ -316,6 +316,28 @@ class AppState extends ChangeNotifier {
   /// Put away [problems].
   void dismissProblems() => problems.value = const [];
 
+  /// Check that the core library running is the one built with the app
+  /// ([appCommit], empty for a build by hand, which is not checked). When
+  /// it is another build's (one found on the system before the app's own,
+  /// say), features can quietly misbehave, so it is said on the round
+  /// button, where it is not missed.
+  Future<void> checkCoreBuild(String appCommit, String loadedFrom) async {
+    if (appCommit.isEmpty) return;
+    try {
+      final stats = await core.call('stats', const {}) as Map<String, dynamic>;
+      final commit = stats['commit'] as String? ?? '';
+      if (commit == appCommit || _disposed) return;
+      String short(String c) => c.length > 7 ? c.substring(0, 7) : c;
+      final text = 'The core library loaded is ${commit.isEmpty ? 'from another build' : 'from build ${short(commit)}'}, '
+          'not this app\'s own (${short(appCommit)}): $loadedFrom. Some features may not work until it is removed '
+          '(or GVCORE_LIB is unset).';
+      _notices.add(text);
+      problems.value = [...problems.value, text];
+    } catch (_) {
+      // Only a check; the app runs on regardless.
+    }
+  }
+
   /// Upscales saved and not gone to yet: where each went. One that a hires
   /// fix sends on to a server is not here; its remix is.
   final ValueNotifier<List<String>> upscaled = ValueNotifier(const []);
