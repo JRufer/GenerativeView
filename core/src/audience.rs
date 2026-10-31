@@ -1,14 +1,19 @@
 //! Who a picture is suitable for, on the film-rating scale G, PG, PG-13, R
 //! and NC-17, judged on nudity and violence.
 //!
-//! MOCKUP: this is the stand-in behind the audience UI, there so the
-//! screens can be reviewed working. The prompt side is real but rough: a
-//! phrase list read against the positive prompt (never the negative, where
-//! "nsfw" usually sits). The image side is not built yet: it will score the
-//! content-search vectors the app already keeps against phrases for each
-//! level, calibrated on a real library, and until then reports nothing.
-//! Overrides live in memory only; the real ones go in the folder's notes
-//! file, so they travel between devices with stars and flags.
+//! Two readings, and the user's own say over both:
+//!
+//! * The prompt: [`PHRASES`] read against the positive prompt (never the
+//!   negative, where "nsfw" usually sits). Instant, worked out when a file is
+//!   indexed, and only as honest as the prompt.
+//! * The picture: the vector content search already keeps for it, scored
+//!   against [`IMAGE_PHRASES`] the way a typed description is (see
+//!   `clip::Fit`). Needs the content-search model and its pass over the
+//!   folder; until a picture has been looked at it has no picture reading.
+//!
+//! A level set by hand is kept in the folder's notes file with the stars
+//! and flags (see `crate::notes`), so it travels between devices, and always
+//! wins.
 
 use serde_json::{json, Value};
 
@@ -231,20 +236,78 @@ impl Want {
     }
 }
 
-/// The reasons for one picture, for the info panel.
-pub fn explain(source: Source, prompt_text: &str, image: Option<Level>, own: Option<Level>) -> Value {
+/// The reasons for one picture, for the info panel. `image` is the
+/// picture reading with what set it, None when there is none yet;
+/// `model` whether the content-search model is installed.
+pub fn explain(source: Source, prompt_text: &str, image: Option<(Level, Vec<(&'static str, Level, f32)>)>, own: Option<Level>, model: bool) -> Value {
     let (prompt, found) = from_prompt(prompt_text);
-    let level = decide(source, image, prompt, own);
+    let level = decide(source, image.as_ref().map(|i| i.0), prompt, own);
+    let image_topic = |p: &str| IMAGE_PHRASES.iter().find(|(q, _, _)| *q == p).map_or("", |(_, _, t)| t);
     json!({
         "level": level as u8,
         "source": match source { Source::Image => "image", Source::Prompt => "prompt", Source::Strictest => "both" },
         "prompt": prompt as u8,
         "prompt_reasons": found.iter().map(|(p, l)| json!({ "phrase": p, "level": *l as u8, "topic": topic(p) })).collect::<Vec<_>>(),
-        // Not built yet: null means "no picture score".
-        "image": image.map(|l| l as u8),
-        "image_ready": false,
+        "image": image.as_ref().map(|i| i.0 as u8),
+        "image_reasons": image.as_ref().map(|i| i.1.iter().take(4).map(|(p, l, f)| json!({ "phrase": p, "level": *l as u8, "topic": image_topic(p), "fit": f })).collect::<Vec<_>>()).unwrap_or_default(),
+        "model": model,
         "own": own.map(|l| l as u8),
     })
+}
+
+/// What the picture reading looks for: a description content search scores
+/// each picture against, the level it stands for, and what it is about.
+/// A picture's reading is the highest level any of them clearly fits; one
+/// fitting none of them is G.
+pub const IMAGE_PHRASES: &[(&str, Level, &str)] = &[
+    ("explicit sexual activity", Level::Nc17, "sexual content"),
+    ("pornography", Level::Nc17, "sexual content"),
+    ("graphic dismemberment", Level::Nc17, "graphic violence"),
+    ("a tortured body", Level::Nc17, "graphic violence"),
+    ("a nude person", Level::R, "nudity"),
+    ("a naked body", Level::R, "nudity"),
+    ("bare breasts", Level::R, "nudity"),
+    ("gore", Level::R, "gore"),
+    ("a bloody corpse", Level::R, "gore"),
+    ("graphic bloody wounds", Level::R, "gore"),
+    ("a woman in lingerie", Level::Pg13, "suggestive"),
+    ("a person in underwear", Level::Pg13, "suggestive"),
+    ("revealing clothing", Level::Pg13, "suggestive"),
+    ("blood", Level::Pg13, "violence"),
+    ("a gun", Level::Pg13, "weapons"),
+    ("violent combat", Level::Pg13, "violence"),
+    ("a person in a swimsuit", Level::Pg, "swimwear"),
+    ("a sword fight", Level::Pg, "action"),
+    ("a scary monster", Level::Pg, "scary"),
+    ("a skull", Level::Pg, "scary"),
+];
+
+/// How clearly (in `clip::Fit::level` units, where 1 is a match) a picture
+/// has to fit a description of `level` for it to count. The higher the
+/// level, the surer the reading has to be before it rates a picture there:
+/// a G picture wrongly shown as R costs a look; an R one wrongly let
+/// through "up to PG-13" costs more, so PG-13 is the easiest bar.
+/// Tune them for a library with `examples/audience_probe`.
+pub fn image_bar(level: Level) -> f32 {
+    match level {
+        Level::Nc17 => 1.3,
+        Level::R => 1.1,
+        _ => 1.0,
+    }
+}
+
+/// The picture reading from how clearly a picture fits each of
+/// [`IMAGE_PHRASES`] (in order), with the descriptions that set it,
+/// clearest first.
+pub fn from_fits(fits: &[f32]) -> (Level, Vec<(&'static str, Level, f32)>) {
+    let mut found: Vec<(&'static str, Level, f32)> = IMAGE_PHRASES
+        .iter()
+        .zip(fits)
+        .filter(|((_, level, _), fit)| **fit >= image_bar(*level))
+        .map(|((phrase, level, _), fit)| (*phrase, *level, *fit))
+        .collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.total_cmp(&a.2)));
+    (found.first().map_or(Level::G, |f| f.1), found)
 }
 
 /// Words added to the negative prompt to keep each topic out, for steering
@@ -397,6 +460,22 @@ mod tests {
         assert_eq!(decide(Source::Strictest, None, Level::Pg, None), Level::Pg);
         assert_eq!(decide(Source::Image, None, Level::Pg, None), Level::Unknown);
         assert_eq!(decide(Source::Prompt, Some(Level::R), Level::Pg, Some(Level::G)), Level::G);
+    }
+
+    #[test]
+    fn a_picture_is_rated_by_the_highest_level_it_clearly_fits() {
+        let mut fits = vec![0.0; IMAGE_PHRASES.len()];
+        assert_eq!(from_fits(&fits).0, Level::G);
+        let at = |p: &str| IMAGE_PHRASES.iter().position(|(q, _, _)| *q == p).unwrap();
+        fits[at("a sword fight")] = 1.4;
+        fits[at("blood")] = 1.05;
+        assert_eq!(from_fits(&fits).0, Level::Pg13);
+        // R needs a surer fit than PG-13.
+        fits[at("gore")] = 1.05;
+        assert_eq!(from_fits(&fits).0, Level::Pg13);
+        fits[at("gore")] = 1.2;
+        let (level, why) = from_fits(&fits);
+        assert_eq!((level, why[0].0), (Level::R, "gore"));
     }
 
     #[test]

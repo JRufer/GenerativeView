@@ -33,11 +33,6 @@ pub struct Engine {
     /// The model of the user's taste, with a fingerprint of the ratings it
     /// learned from: fitted again only when they change.
     taste: parking_lot::Mutex<Option<(u64, Arc<Taste>)>>,
-    /// MOCKUP: audience levels the user set by hand, by path. The real ones
-    /// belong in the folder's notes file.
-    audience_own: parking_lot::Mutex<std::collections::HashMap<String, crate::audience::Level>>,
-    /// Prompt levels already worked out, by (id, mtime).
-    audience_cache: parking_lot::Mutex<std::collections::HashMap<(i64, i64), crate::audience::Level>>,
 }
 
 /// The taste model, or why there is none yet, with how many of the
@@ -79,7 +74,7 @@ impl Engine {
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
         let dupes = crate::dupes::Duplicates::open(data_dir);
-        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default(), audience_own: Default::default(), audience_cache: Default::default() })
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default() })
     }
 
     pub fn close(&self) {
@@ -118,33 +113,43 @@ impl Engine {
         crate::audience::Source::parse(self.db.get_setting(crate::audience::SOURCE_SETTING).as_deref())
     }
 
-    /// Each row's audience level, as the user has chosen to judge it.
+    /// The picture reading of each row of `found`: None for a picture
+    /// content search has not looked at, or when there is no model.
+    fn image_audience(&self, found: &crate::db::QueryResult) -> Vec<Option<(crate::audience::Level, Vec<(&'static str, crate::audience::Level, f32)>)>> {
+        let phrases: Vec<String> = crate::audience::IMAGE_PHRASES.iter().map(|p| p.0.to_string()).collect();
+        self.content.fits(found, &phrases).into_iter().map(|fits| fits.map(|f| crate::audience::from_fits(&f))).collect()
+    }
+
+    /// Each row's audience level, as the user has chosen to judge it, with
+    /// any level they set by hand winning.
     fn audience_levels(&self, found: &crate::db::QueryResult) -> Vec<crate::audience::Level> {
-        use crate::audience::{decide, from_prompt, Level};
+        use crate::audience::{decide, Level, Source};
         let source = self.audience_source();
-        let missing: Vec<i64> = {
-            let cache = self.audience_cache.lock();
-            found.rows.iter().filter(|r| !cache.contains_key(&(r.0, r.6))).map(|r| r.0).collect()
-        };
-        if !missing.is_empty() {
-            let prompts = self.db.prompts(&missing).unwrap_or_default();
-            let mut cache = self.audience_cache.lock();
-            for r in found.rows.iter().filter(|r| missing.contains(&r.0)) {
-                let level = prompts.get(&r.0).map_or(Level::Unknown, |p| from_prompt(p).0);
-                cache.insert((r.0, r.6), level);
-            }
-        }
-        let cache = self.audience_cache.lock();
-        let own = self.audience_own.lock();
-        found
-            .rows
-            .iter()
-            .map(|r| {
-                let prompt = cache.get(&(r.0, r.6)).copied().unwrap_or_default();
-                // The picture side is not built yet: no image score.
-                decide(source, None, prompt, own.get(&join(&found.dirs[r.1 as usize], &r.2)).copied())
+        let ids: Vec<i64> = found.rows.iter().map(|r| r.0).collect();
+        let marks = self.db.audience_of(&ids).unwrap_or_default();
+        let image: Vec<Option<Level>> =
+            if source == Source::Prompt { vec![None; ids.len()] } else { self.image_audience(found).into_iter().map(|i| i.map(|i| i.0)).collect() };
+        ids.iter()
+            .zip(image)
+            .map(|(id, image)| {
+                let (prompt, own) = marks.get(id).copied().unwrap_or_default();
+                decide(source, image, Level::from_u8(prompt), (own > 0).then(|| Level::from_u8(own)))
             })
             .collect()
+    }
+
+    /// What the audience level of the picture at `path` rests on: both
+    /// readings and the user's own say. `prompt` is its positive prompt.
+    fn audience_info(&self, path: &str, prompt: &str) -> Result<String, String> {
+        let (dir, name) = split_path(path)?;
+        let own = self.db.note(&dir, &name).audience;
+        let all = self.db.query(&Query { dir: dir.clone(), ..Default::default() }).map_err(|e| e.to_string())?;
+        let image = match all.rows.iter().position(|r| r.2 == name) {
+            Some(i) => self.image_audience(&all.pick([i])).into_iter().next().flatten(),
+            None => None,
+        };
+        let own = (own > 0).then(|| crate::audience::Level::from_u8(own));
+        Ok(crate::audience::explain(self.audience_source(), prompt, image, own, self.content.installed()).to_string())
     }
 
     /// `found` with each row's audience level in its mark (bits 5 to 7),
@@ -520,6 +525,7 @@ impl Engine {
             },
             add: names("add"),
             remove: names("remove"),
+            audience: args.get("audience").and_then(Value::as_u64).map(|a| a.min(5) as u8),
         };
         // One write per folder.
         let mut by_dir: Vec<(String, Vec<String>, Vec<usize>)> = Vec::new();
@@ -550,7 +556,7 @@ impl Engine {
         let (dir, name) = split_path(path)?;
         let note = self.db.note(&dir, &name);
         if !note.is_empty() {
-            let change = Change { rating: Some(0), flag: Some(Flag::None), add: Vec::new(), remove: note.collections.clone() };
+            let change = Change { rating: Some(0), flag: Some(Flag::None), add: Vec::new(), remove: note.collections.clone(), audience: Some(0) };
             self.notes.change(&self.db, &dir, std::slice::from_ref(&name), &change)?;
         }
         self.db.delete_path(&dir, &name).map_err(|e| e.to_string())?;
@@ -711,21 +717,13 @@ impl Engine {
                 Ok(self.content.check_prompt(&normalize(str_arg(args, "path")?), str_arg(args, "prompt")?, make)?.to_string())
             }
             "taste_status" => Ok(self.taste_status().to_string()),
-            "audience_info" => {
-                let path = normalize(str_arg(args, "path")?);
-                let own = self.audience_own.lock().get(&path).copied();
-                Ok(crate::audience::explain(self.audience_source(), str_arg(args, "prompt")?, None, own).to_string())
-            }
+            "audience_info" => self.audience_info(str_arg(args, "path")?, args.get("prompt").and_then(Value::as_str).unwrap_or("")),
             "audience_set" => {
-                // A level 1 to 5, or 0 to go back to the app's own reading.
-                let path = normalize(str_arg(args, "path")?);
-                let level = crate::audience::Level::from_u8(args.get("level").and_then(Value::as_u64).unwrap_or(0) as u8);
-                let mut own = self.audience_own.lock();
-                if level == crate::audience::Level::Unknown {
-                    own.remove(&path);
-                } else {
-                    own.insert(path, level);
-                }
+                // A level 1 to 5, or 0 to go back to the app's own reading;
+                // kept in the folder's notes file with the stars and flags.
+                let (dir, name) = split_path(str_arg(args, "path")?)?;
+                let level = args.get("level").and_then(Value::as_u64).unwrap_or(0).min(5) as u8;
+                self.notes.change(&self.db, &dir, &[name], &Change { audience: Some(level), ..Change::default() })?;
                 Ok("null".into())
             }
             "audience_steer" => {

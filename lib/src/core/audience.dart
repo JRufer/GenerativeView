@@ -46,7 +46,7 @@ abstract final class Audience {
     pg13 => 'Suggestive, weapons, some blood',
     r => 'Nudity, gore',
     nc17 => 'Sexual or extreme content',
-    _ => 'No prompt to read and no picture score yet',
+    _ => 'No prompt to read, and not looked at yet',
   };
 }
 
@@ -58,7 +58,8 @@ class AudienceInfo {
     required this.prompt,
     required this.promptReasons,
     required this.image,
-    required this.imageReady,
+    required this.imageReasons,
+    required this.model,
     required this.own,
   });
 
@@ -71,7 +72,11 @@ class AudienceInfo {
         if (r is Map) (phrase: '${r['phrase']}', level: (r['level'] as num).toInt(), topic: '${r['topic']}'),
     ],
     image: (j['image'] as num?)?.toInt(),
-    imageReady: j['image_ready'] == true,
+    imageReasons: [
+      for (final r in (j['image_reasons'] as List? ?? const []))
+        if (r is Map) (phrase: '${r['phrase']}', level: (r['level'] as num).toInt(), topic: '${r['topic']}'),
+    ],
+    model: j['model'] == true,
     own: (j['own'] as num?)?.toInt(),
   );
 
@@ -83,11 +88,14 @@ class AudienceInfo {
   final int prompt;
   final List<({String phrase, int level, String topic})> promptReasons;
 
-  /// What the picture shows; null until it has been scored.
+  /// What the picture shows; null until content search has looked at it.
   final int? image;
 
-  /// Whether picture scoring exists at all yet.
-  final bool imageReady;
+  /// The descriptions that set [image], clearest first.
+  final List<({String phrase, int level, String topic})> imageReasons;
+
+  /// Whether the content-search model is installed.
+  final bool model;
 
   /// The user's own say, which wins; null for none.
   final int? own;

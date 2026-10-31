@@ -509,7 +509,7 @@ fn notes_live_in_the_folder() {
 
     // Rated from the app: written beside the pictures, one file per folder.
     let out = h.call("notes_set", json!({ "paths": [path("a.png"), path("sub/c.png")], "rating": 4, "flag": "keep", "add": ["Best"] }));
-    assert_eq!(out[1], json!({ "rating": 4, "flag": "keep", "collections": ["Best"] }));
+    assert_eq!(out[1], json!({ "rating": 4, "flag": "keep", "collections": ["Best"], "audience": 0 }));
     let file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
     assert_eq!(file["images"]["a.png"]["rating"], 4);
     assert!(root.join("sub/.generativeview.json").exists());
@@ -533,6 +533,76 @@ fn notes_live_in_the_folder() {
     let usage = h.call("usage", json!({ "dir": dir, "recursive": true, "text": "fox" }));
     let ratings = usage["groups"].as_array().unwrap().iter().find(|g| g["kind"] == "rating").unwrap();
     assert_eq!(ratings["items"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn audience_levels_filter_and_set_by_hand() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    let pictures = [
+        ("fox.png", "a red fox in snow"),
+        ("knight.png", "a knight with a sword"),
+        ("soldier.png", "a soldier on a battlefield, blood, smoke"),
+        ("zombie.png", "a zombie, gore, horror"),
+    ];
+    for (i, (name, prompt)) in pictures.iter().enumerate() {
+        write_png(&root.join(name), i as u32, &[("prompt", &comfy_prompt(prompt, i as u64, "flux.safetensors"))]);
+    }
+    write_png(&root.join("bare.png"), 9, &[]);
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+    let levels = |h: &Harness| -> Vec<(String, u64)> {
+        let r = h.call("query", json!({ "dir": dir, "recursive": true, "text": "", "sort": "name" }));
+        let marks = r["marks"].as_array().unwrap();
+        r["rows"].as_array().unwrap().iter().zip(marks).map(|(row, m)| (row[2].as_str().unwrap().to_string(), m.as_u64().unwrap() >> 5)).collect()
+    };
+
+    // No content-search model: the prompt decides, and each level rides in
+    // the top bits of the row's mark.
+    assert_eq!(
+        levels(&h),
+        [("bare.png".to_string(), 0), ("fox.png".into(), 1), ("knight.png".into(), 2), ("soldier.png".into(), 3), ("zombie.png".into(), 4)]
+    );
+    h.expect_names(&root, true, "audience:..pg13", &["fox.png", "knight.png", "soldier.png"]);
+    h.expect_names(&root, true, "audience:..pg|none", &["bare.png", "fox.png", "knight.png"]);
+    h.expect_names(&root, true, "aud:r..", &["zombie.png"]);
+    assert_eq!(h.call("count", json!({ "dir": dir, "recursive": true, "text": "audience:g" }))["count"], 1);
+
+    // Set by hand: it wins, and is kept in the folder's notes file.
+    h.call("audience_set", json!({ "path": path("fox.png"), "level": 4 }));
+    h.expect_names(&root, true, "audience:r..", &["fox.png", "zombie.png"]);
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
+    assert_eq!(file["images"]["fox.png"]["audience"], "r");
+    let info = h.call("audience_info", json!({ "path": path("fox.png"), "prompt": "a red fox in snow" }));
+    assert_eq!((info["level"].as_u64(), info["own"].as_u64(), info["prompt"].as_u64()), (Some(4), Some(4), Some(1)));
+    assert_eq!(info["model"], false);
+    assert!(info["image"].is_null());
+    h.call("audience_set", json!({ "path": path("fox.png"), "level": 0 }));
+    h.expect_names(&root, true, "audience:g", &["fox.png"]);
+
+    // By the picture alone, with no model: nothing is rated.
+    h.call("set_setting", json!({ "key": "audience_source", "value": "image" }));
+    assert!(levels(&h).iter().all(|(_, l)| *l == 0));
+
+    // With the model, once it has looked: every picture has a picture reading.
+    install_mini_model(&h);
+    h.call("content_index", json!({ "dir": dir, "recursive": true }));
+    h.wait("content pass", |e| e["t"] == "content" && e["state"] == "done");
+    assert!(levels(&h).iter().all(|(_, l)| *l >= 1), "{:?}", levels(&h));
+    let info = h.call("audience_info", json!({ "path": path("zombie.png"), "prompt": "a zombie, gore, horror" }));
+    assert_eq!(info["model"], true);
+    assert!(info["image"].as_u64().unwrap() >= 1);
+    // The stricter reading is never below the prompt's.
+    h.call("set_setting", json!({ "key": "audience_source", "value": "both" }));
+    assert!(levels(&h).iter().find(|(n, _)| n == "zombie.png").unwrap().1 >= 4);
+
+    // Aiming a prompt lower takes parts out and guards the negative.
+    let aimed = h.call("audience_steer", json!({ "prompt": "a zombie, gore, horror", "negative": "lowres", "target": 3 }));
+    assert_eq!(aimed["prompt"], "a zombie, horror");
+    assert_eq!(aimed["negative"], "lowres, blood, gore");
 }
 
 #[test]

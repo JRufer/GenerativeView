@@ -22,7 +22,7 @@ use std::path::Path;
 
 pub type DbResult<T> = Result<T, rusqlite::Error>;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 // `files` stays narrow so listing a folder touches few pages. The search
 // text lives beside it in `ftext`, lower-cased; it is only ever searched,
@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS files (
     duration INTEGER NOT NULL DEFAULT 0,
     source   TEXT NOT NULL DEFAULT '',
     seed     TEXT NOT NULL DEFAULT '',
+    -- The audience level its prompt reads as (crate::audience::from_prompt).
+    aprompt  INTEGER NOT NULL DEFAULT 0,
     UNIQUE (dir, name)
 );
 CREATE INDEX IF NOT EXISTS files_dir_mtime ON files (dir, mtime);
@@ -70,6 +72,7 @@ CREATE TABLE IF NOT EXISTS notes (
     rating      INTEGER NOT NULL DEFAULT 0,
     flag        INTEGER NOT NULL DEFAULT 0,
     collections TEXT NOT NULL DEFAULT '',
+    audience    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (dir, name)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS note_files (
@@ -230,14 +233,20 @@ impl Db {
 
     // ------------------------------------------------------------ settings
 
-    /// The positive prompts of the files with `ids`, by id.
-    pub fn prompts(&self, ids: &[i64]) -> DbResult<HashMap<i64, String>> {
+    /// For the files with `ids`: the audience level each one's prompt reads
+    /// as, and the one the user set (0 for none), by id.
+    pub fn audience_of(&self, ids: &[i64]) -> DbResult<HashMap<i64, (u8, u8)>> {
         let conn = self.read.lock();
-        let mut stmt = conn.prepare_cached("SELECT prompt FROM ftext WHERE id = ?1")?;
         let mut out = HashMap::with_capacity(ids.len());
-        for id in ids {
-            if let Ok(p) = stmt.query_row([id], |r| r.get::<_, String>(0)) {
-                out.insert(*id, p);
+        for chunk in ids.chunks(500) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let mut stmt = conn.prepare_cached(&format!(
+                "SELECT f.id, f.aprompt, coalesce(n.audience, 0) FROM files f
+                 LEFT JOIN notes n ON n.dir = f.dir AND n.name = f.name WHERE f.id IN ({marks})"
+            ))?;
+            let mut rows = stmt.query(params_from_iter(chunk.iter()))?;
+            while let Some(r) = rows.next()? {
+                out.insert(r.get::<_, i64>(0)?, (r.get::<_, i64>(1)?.clamp(0, 5) as u8, r.get::<_, i64>(2)?.clamp(0, 5) as u8));
             }
         }
         Ok(out)
@@ -297,8 +306,8 @@ impl Db {
     /// Every note held for pictures in `dir`, by name.
     pub fn notes_in(&self, dir: &str) -> DbResult<Vec<(String, Note)>> {
         let conn = self.read.lock();
-        let mut stmt = conn.prepare_cached("SELECT name, rating, flag, collections FROM notes WHERE dir = ?1 ORDER BY name")?;
-        let rows = stmt.query_map([dir], |r| Ok((r.get::<_, String>(0)?, note_from(r.get(1)?, r.get(2)?, &r.get::<_, String>(3)?))))?;
+        let mut stmt = conn.prepare_cached("SELECT name, rating, flag, collections, audience FROM notes WHERE dir = ?1 ORDER BY name")?;
+        let rows = stmt.query_map([dir], |r| Ok((r.get::<_, String>(0)?, note_from(r.get(1)?, r.get(2)?, &r.get::<_, String>(3)?, r.get(4)?))))?;
         rows.collect()
     }
 
@@ -308,13 +317,13 @@ impl Db {
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM notes WHERE dir = ?1", [dir])?;
         {
-            let mut stmt = tx.prepare_cached("INSERT OR REPLACE INTO notes (dir, name, rating, flag, collections) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            let mut stmt = tx.prepare_cached("INSERT OR REPLACE INTO notes (dir, name, rating, flag, collections, audience) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?;
             for (name, note) in notes {
                 if note.is_empty() {
                     continue;
                 }
                 let collections = note.collections.iter().map(|c| format!("{c}\n")).collect::<String>();
-                stmt.execute(params![dir, name, note.rating, note.flag as u8, collections])?;
+                stmt.execute(params![dir, name, note.rating, note.flag as u8, collections, note.audience])?;
             }
         }
         tx.commit()
@@ -324,8 +333,8 @@ impl Db {
     pub fn note(&self, dir: &str, name: &str) -> Note {
         self.read
             .lock()
-            .query_row("SELECT rating, flag, collections FROM notes WHERE dir = ?1 AND name = ?2", [dir, name], |r| {
-                Ok(note_from(r.get(0)?, r.get(1)?, &r.get::<_, String>(2)?))
+            .query_row("SELECT rating, flag, collections, audience FROM notes WHERE dir = ?1 AND name = ?2", [dir, name], |r| {
+                Ok(note_from(r.get(0)?, r.get(1)?, &r.get::<_, String>(2)?, r.get(3)?))
             })
             .unwrap_or_default()
     }
@@ -396,12 +405,12 @@ impl Db {
         let tx = conn.transaction()?;
         {
             let mut file = tx.prepare_cached(
-                "INSERT INTO files (dir, name, size, mtime, kind, width, height, duration, source, seed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "INSERT INTO files (dir, name, size, mtime, kind, width, height, duration, source, seed, aprompt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT (dir, name) DO UPDATE SET
                     size = excluded.size, mtime = excluded.mtime, kind = excluded.kind,
                     width = excluded.width, height = excluded.height, duration = excluded.duration,
-                    source = excluded.source, seed = excluded.seed
+                    source = excluded.source, seed = excluded.seed, aprompt = excluded.aprompt
                  RETURNING id",
             )?;
             let mut text = tx.prepare_cached(
@@ -411,7 +420,7 @@ impl Db {
             for r in records {
                 let i = &r.info;
                 let id: i64 = file.query_row(
-                    params![r.dir, r.name, r.size, r.mtime, r.video as i64, i.width, i.height, i.duration_ms as i64, i.source, i.seed],
+                    params![r.dir, r.name, r.size, r.mtime, r.video as i64, i.width, i.height, i.duration_ms as i64, i.source, i.seed, crate::audience::from_prompt(&i.prompt).0 as u8],
                     |row| row.get(0),
                 )?;
                 let lname = r.name.to_lowercase();
@@ -524,8 +533,9 @@ fn needs_text(terms: &[Term]) -> bool {
     terms.iter().any(Term::reads_text)
 }
 
-fn note_from(rating: i64, flag: i64, collections: &str) -> Note {
+fn note_from(rating: i64, flag: i64, collections: &str, audience: i64) -> Note {
     Note {
+        audience: audience.clamp(0, 5) as u8,
         rating: rating.clamp(0, crate::notes::MAX_RATING as i64) as u8,
         flag: Flag::from_i64(flag),
         collections: collections.split('\n').filter(|c| !c.is_empty()).map(str::to_string).collect(),
@@ -1942,7 +1952,7 @@ mod tests {
             rec("/out/sub", "d.png", 4, "a heron", "flux1-dev.safetensors", ""),
         ])
         .unwrap();
-        let note = |rating, flag, collections: &[&str]| Note { rating, flag, collections: collections.iter().map(|c| c.to_string()).collect() };
+        let note = |rating, flag, collections: &[&str]| Note { rating, flag, collections: collections.iter().map(|c| c.to_string()).collect(), audience: 0 };
         db.replace_notes("/out", &[("a.png".into(), note(5, Flag::Keep, &["Night city", "Foxes"])), ("b.png".into(), note(3, Flag::None, &["foxes"])), ("c.png".into(), note(0, Flag::Reject, &[]))]).unwrap();
         db.replace_notes("/out/sub", &[("d.png".into(), note(4, Flag::None, &["Night City"]))]).unwrap();
 

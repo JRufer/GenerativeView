@@ -690,7 +690,7 @@ class AppState extends ChangeNotifier {
     unawaited(rev);
     await _reload();
     unawaited(refreshSmart());
-    if (contentSearch) unawaited(refreshContent());
+    if (_wantsVectors) unawaited(refreshContent());
   }
 
   void setRecursive(bool value) {
@@ -795,7 +795,7 @@ class AppState extends ChangeNotifier {
     }
     if (_disposed || dir != folder) return;
     content.value = status;
-    if (status.installed && (contentSearch || lookingAlike)) {
+    if (status.installed && _wantsVectors) {
       _fire(core.call('content_index', {'dir': dir, 'recursive': recursive}));
     }
   }
@@ -803,7 +803,7 @@ class AppState extends ChangeNotifier {
   /// Something about the folder's pictures changed: look again, but not on
   /// every single event of a burst.
   void _contentSoon() {
-    if (!(contentSearch || lookingAlike) || !content.value.installed) return;
+    if (!_wantsVectors || !content.value.installed) return;
     _contentTimer?.cancel();
     _contentTimer = Timer(const Duration(milliseconds: 1200), refreshContent);
   }
@@ -838,6 +838,14 @@ class AppState extends ChangeNotifier {
       _reloadTimer ??= Timer(const Duration(milliseconds: 900), () {
         _reloadTimer = null;
         _reload();
+      });
+    } else if (audienceByPicture && (done > 0 || state == 'done')) {
+      // Newly looked-at pictures have a picture reading now: the badges
+      // and any audience filter follow, a few times a pass at most.
+      _reloadTimer ??= Timer(Duration(milliseconds: state == 'done' ? 300 : 4000), () {
+        _reloadTimer = null;
+        _reload();
+        notesTick.value++;
       });
     }
   }
@@ -1279,6 +1287,8 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
     await _reload();
     notesTick.value++;
+    // Rating by picture needs content search to have looked at them.
+    if (audienceByPicture) unawaited(refreshContent());
   }
 
   /// Why [item] got its audience level: what its prompt asks for, what the
@@ -1742,6 +1752,13 @@ class AppState extends ChangeNotifier {
 
   /// Whether the search is for pictures that look like one.
   bool get lookingAlike => query.contains('similar:');
+
+  /// Whether audience levels take in what the pictures show, which needs
+  /// content search to look at them.
+  bool get audienceByPicture => audienceSource != 'prompt';
+
+  /// Whether content search should look at the folder's pictures.
+  bool get _wantsVectors => contentSearch || lookingAlike || audienceByPicture;
 
   /// Show the pictures that look like [item], most alike first.
   void findSimilar(MediaItem item) {

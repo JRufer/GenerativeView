@@ -1,10 +1,6 @@
 // Audience levels (G to NC-17) wherever they show: the badge on a tile, the
 // filter section, the row in the info panel, and the target picker that
-// Remix and Breed share.
-//
-// MOCKUP: the levels come from the core's stand-in (core/src/audience.rs):
-// the prompt reading is real but rough, picture scoring is not built yet,
-// and levels set by hand last until the app closes.
+// Remix and Breed share. The core works the levels out (core/src/audience.rs).
 
 import 'package:flutter/material.dart';
 
@@ -130,7 +126,6 @@ class AudienceFilterSection extends StatelessWidget {
       selected: source == value,
       onTap: () => state.setAudienceSource(value),
     );
-    const note = TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -172,16 +167,69 @@ class AudienceFilterSection extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 6),
-        Text(
-          switch (source) {
-            'image' => 'Pictures content search has not looked at yet count as not rated. Picture scoring is not built in this mockup.',
-            'prompt' => 'Instant, from what each picture was made with. Pictures with no prompt count as not rated.',
-            _ => 'A picture is only as safe as the less forgiving reading. Picture scoring is not built in this mockup, so the prompt decides for now.',
-          },
-          key: const ValueKey<String>('filter-audience-note'),
-          style: note,
-        ),
+        PictureReadingStatus(state: state),
       ],
+    );
+  }
+}
+
+/// Where rating by what the pictures show stands for this folder: the model
+/// to fetch, pictures still being looked at, or what each choice means.
+class PictureReadingStatus extends StatelessWidget {
+  const PictureReadingStatus({super.key, required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    const note = TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4);
+    return ValueListenableBuilder<ContentStatus>(
+      valueListenable: state.content,
+      builder: (context, status, _) => ValueListenableBuilder<DownloadProgress?>(
+        valueListenable: state.download,
+        builder: (context, progress, _) {
+          final source = state.audienceSource;
+          final unseen = status.total - status.embedded;
+          final String text;
+          Widget? action;
+          if (source == 'prompt') {
+            text = 'Instant, from what each picture was made with. Pictures with no prompt count as not rated.';
+          } else if (progress != null) {
+            final pct = progress.total > 0 ? (progress.received * 100 ~/ progress.total) : 0;
+            text = 'Fetching the content search model: $pct%.';
+          } else if (status.known && !status.installed) {
+            text = source == 'image'
+                ? 'Rating by what a picture shows needs the content search model (${status.downloadBytes ~/ 1000000} MB, once). Until then nothing is rated.'
+                : 'Rating by what a picture shows needs the content search model (${status.downloadBytes ~/ 1000000} MB, once). Until then the prompt decides.';
+            action = TextButton.icon(
+              key: const ValueKey<String>('filter-audience-download'),
+              onPressed: state.downloadModel,
+              style: TextButton.styleFrom(minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 8)),
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Get the model'),
+            );
+          } else if (status.indexing && status.todo > 0) {
+            text = source == 'image'
+                ? 'Looking at pictures: ${status.done} of ${status.todo}. The rest count as not rated until then.'
+                : 'Looking at pictures: ${status.done} of ${status.todo}. The rest go by their prompt until then.';
+          } else if (status.known && unseen > 0) {
+            text = source == 'image'
+                ? '$unseen not looked at yet count as not rated.'
+                : '$unseen not looked at yet go by their prompt.';
+          } else {
+            text = source == 'image'
+                ? 'From what content search sees in each picture, on this device.'
+                : 'A picture is only as safe as the less forgiving reading: what it shows or what its prompt asks for.';
+          }
+          return Column(
+            key: const ValueKey<String>('filter-audience-note'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(text, style: note),
+              if (action != null) Align(alignment: Alignment.centerLeft, child: action),
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -199,6 +247,24 @@ class AudienceRow extends StatefulWidget {
 }
 
 class _AudienceRowState extends State<AudienceRow> {
+  /// A reading: its level, then what set it, each in its level's colour.
+  static Widget _reasons(int level, List<({String phrase, int level, String topic})> why, String none) {
+    const value = TextStyle(fontSize: 12, color: Color(0xFFCFCFD6));
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        AudienceBadge(level),
+        if (why.isEmpty)
+          Text(level == Audience.unknown ? '' : none, style: value)
+        else
+          for (final r in why)
+            Text('“${r.phrase}”${r.topic.isEmpty ? '' : ' · ${r.topic}'}', style: value.copyWith(color: audienceColor(r.level))),
+      ],
+    );
+  }
+
   AudienceInfo? _info;
   bool _open = false;
 
@@ -260,8 +326,7 @@ class _AudienceRowState extends State<AudienceRow> {
     final info = _info;
     if (info == null) return const SizedBox.shrink();
     const label = TextStyle(fontSize: 12, color: Palette.muted);
-    const value = TextStyle(fontSize: 12, color: Color(0xFFCFCFD6));
-    final reasons = info.promptReasons.where((r) => r.level >= Audience.pg).take(4).toList();
+    final reasons = info.promptReasons.where((r) => r.level >= Audience.pg).take(3).toList();
     Widget line(String name, Widget body, {Key? key}) => Padding(
       key: key,
       padding: const EdgeInsets.only(top: 6),
@@ -322,27 +387,16 @@ class _AudienceRowState extends State<AudienceRow> {
                   line(
                     'Picture',
                     info.image != null
-                        ? Align(alignment: Alignment.centerLeft, child: AudienceBadge(info.image!))
-                        : const Text('Not scored yet (picture scoring is not built in this mockup)', style: TextStyle(fontSize: 12, color: Palette.faint)),
+                        ? _reasons(info.image!, info.imageReasons.where((r) => r.level >= Audience.pg).take(3).toList(), 'Nothing that raises it')
+                        : Text(
+                            info.model ? 'Not looked at yet' : 'Needs the content search model',
+                            style: const TextStyle(fontSize: 12, color: Palette.faint),
+                          ),
+                    key: const ValueKey<String>('audience-picture'),
                   ),
                   line(
                     'Prompt',
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        AudienceBadge(info.prompt),
-                        if (reasons.isEmpty)
-                          Text(info.prompt == Audience.unknown ? 'No prompt to read' : 'Nothing that raises it', style: value)
-                        else
-                          for (final r in reasons)
-                            Text(
-                              '“${r.phrase}”${r.topic.isEmpty ? '' : ' · ${r.topic}'}',
-                              style: value.copyWith(color: audienceColor(r.level)),
-                            ),
-                      ],
-                    ),
+                    _reasons(info.prompt, reasons, info.prompt == Audience.unknown ? 'No prompt to read' : 'Nothing that raises it'),
                     key: const ValueKey<String>('audience-prompt'),
                   ),
                   line(

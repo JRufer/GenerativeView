@@ -1,8 +1,9 @@
-// MOCKUP: audience levels (G to NC-17) against the real core, as the
-// screens for review: the filter panel's Audience section, the grid
-// filtered with badges on its tiles, the info panel's audience row, and
-// aiming Remix and Breed at a level. Screenshots at the sizes of a Galaxy
-// Z Fold 8 (closed and open) and a Galaxy Tab S10 Ultra, when
+// Audience levels (G to NC-17) against the real core: the filter panel's
+// Audience section, the grid filtered with badges on its tiles, the info
+// panel's audience row and a level set by hand, and aiming Remix and Breed
+// at a level. No content-search model is installed, so the prompt decides
+// and the panels say what rating by picture needs. Screenshots at the sizes
+// of a Galaxy Z Fold 8 (closed and open) and a Galaxy Tab S10 Ultra, when
 // GV_SCREENSHOT_DIR is set.
 
 import 'dart:io';
@@ -69,11 +70,6 @@ void main() {
       n++;
       file.writeAsBytesSync(pngWithText(320, 320, n * 11, prompt.isEmpty ? const {} : {'prompt': comfyGraph(prompt: prompt, seed: n)}));
       file.setLastModifiedSync(DateTime(2026, 10, 1, 12).add(Duration(minutes: n)));
-    }
-    final model = Directory('${Directory.current.path}/core/tests/fixtures/clip_mini');
-    final home = Directory('${scratch.path}/data/models/tinyclip-vit-40m-32-text-19m')..createSync(recursive: true);
-    for (final name in ['config.json', 'tokenizer.json', 'model.safetensors']) {
-      File('${model.path}/$name').copySync('${home.path}/$name');
     }
     core = NativeCore.start(dataDir: '${scratch.path}/data', cacheDir: '${scratch.path}/cache', libraryPath: coreLibraryPath());
   });
@@ -170,6 +166,7 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('audience-detail')), findsOneWidget);
       expect(find.textContaining('gore'), findsWidgets);
+      expect(find.text('Needs the content search model'), findsOneWidget);
       await settle(tester);
       await screenshot(tester, boundary, 'audience-info-$name');
 
@@ -182,6 +179,9 @@ void main() {
       await screenshot(tester, boundary, 'audience-set-$name');
       await tester.tap(find.byKey(const ValueKey('audience-set-pg13')));
       await pumpUntil(tester, () => item(state, 'zombie.png').audience == Audience.pg13, what: 'the level set by hand');
+      // Kept beside the pictures, with the stars and flags.
+      final notes = File('${library.path}/.generativeview.json').readAsStringSync();
+      expect(notes, contains('"audience": "pg13"'));
       // Back to the app's reading, for the tests after.
       await tester.runAsync(() => state.setAudience(item(state, 'zombie.png'), 0));
       await close(tester, state);
