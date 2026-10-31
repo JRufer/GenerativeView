@@ -453,17 +453,18 @@ impl Engine {
         self.content.similar(&target, &all, &sort, bar)
     }
 
-    /// Upscale the picture at `path` with `model` by `factor` (2 or 4) in the
+    /// Upscale the picture at `path` with `model` by `factor` (over 1, within
+    /// [crate::sr::upscaled_size]'s limits) in the
     /// background, and save it beside the original with its `metadata`
     /// (strip or copy). Answers at once with a job number; how it goes is
     /// told as `upscale` events with that number.
     fn start_upscale(&self, args: &Value) -> Result<String, String> {
         let path = std::path::PathBuf::from(str_arg(args, "path")?);
         let info = crate::sr::model_info(str_arg(args, "model")?).ok_or("unknown upscale model")?;
-        let factor = args.get("factor").and_then(Value::as_u64).unwrap_or(4) as u32;
-        if factor != 2 && factor != 4 {
-            return Err("the factor is 2 or 4".into());
-        }
+        let factor = args.get("factor").and_then(Value::as_f64).unwrap_or(4.0);
+        // Too large is said now, not after the model has run.
+        let (w, h) = image::image_dimensions(&path).map_err(|e| format!("cannot read the picture: {e}"))?;
+        crate::sr::upscaled_size(w, h, factor)?;
         let metadata = crate::upscale::Metadata::parse(args.get("metadata").and_then(Value::as_str).unwrap_or("copy")).ok_or("metadata is strip or copy")?;
         let model_path = crate::sr::model_dir(&self.data_dir).join(info.file);
         let job = NEXT_JOB.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -750,7 +751,17 @@ impl Engine {
                         json!({ "id": m.id, "name": m.name, "detail": m.detail, "file": m.file, "bytes": m.bytes, "installed": installed })
                     })
                     .collect();
-                Ok(json!({ "dir": dir.to_string_lossy(), "source": crate::sr::SOURCE, "models": models }).to_string())
+                Ok(json!({
+                    "dir": dir.to_string_lossy(),
+                    "source": crate::sr::SOURCE,
+                    "models": models,
+                    // How large an upscale may be, so the panel offers only
+                    // sizes that will be made.
+                    "max_side": crate::sr::MAX_SIDE,
+                    "max_pixels": crate::sr::MAX_PIXELS,
+                    "max_factor": crate::sr::MAX_FACTOR,
+                })
+                .to_string())
             }
             "upscale" => self.start_upscale(args),
             "upscale_cancel" => {

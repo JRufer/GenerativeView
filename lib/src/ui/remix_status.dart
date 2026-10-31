@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import 'upscale_dialog.dart' show scaleText;
 
 /// The blue of the activity button: a step brighter than the accent, so it
 /// reads as something happening rather than one more control.
@@ -527,7 +528,7 @@ class _UpscaleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = 'Upscaling ${job.name} ${job.factor}×${job.then == null ? '' : ', ${job.then}'}';
+    final label = 'Upscaling ${job.name} ${scaleText(job.factor)}×${job.then == null ? '' : ', ${job.then}'}';
     return Row(
       children: [
         const SizedBox(width: 10),

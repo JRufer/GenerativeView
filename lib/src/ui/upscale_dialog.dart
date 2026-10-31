@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -57,7 +58,17 @@ class UpscalePanel extends StatefulWidget {
 
 class _UpscalePanelState extends State<UpscalePanel> {
   late String _model = widget.models.models.isEmpty ? '' : widget.models.models.first.id;
-  int _factor = 2;
+
+  /// The sizes on offer, worked out from the pictures' own sizes: the
+  /// largest of them decides, so every one of them fits.
+  late final double _maxFactor = maxUpscaleFactor(widget.items, widget.models);
+  late final List<double> _factors = upscaleFactors(_maxFactor);
+  late final double _maxHires = maxHiresScale(widget.items);
+  late final List<double> _hiresScales = hiresScalesFor(_maxHires);
+
+  /// How much bigger the upscale here is; null when the pictures are
+  /// already as large as one can be.
+  late double? _factor = _factors.contains(2.0) ? 2.0 : (_factors.isEmpty ? null : _factors.last);
   bool _keepMetadata = true;
   bool _busy = false;
 
@@ -71,8 +82,9 @@ class _UpscalePanelState extends State<UpscalePanel> {
   /// How much the server redraws: low, so the picture stays itself.
   double _hiresStrength = hiresDefaultStrength;
 
-  /// How much bigger the refined picture is than the original.
-  double _hiresScale = 2;
+  /// How much bigger the refined picture is than the original; 1 sends it
+  /// at its own size, with no upscale here.
+  late double _hiresScale = defaultHiresScale(widget.items, _hiresScales);
 
   /// The servers set up, in the usual order.
   List<String> get _servers => [
@@ -113,36 +125,62 @@ class _UpscalePanelState extends State<UpscalePanel> {
   }
 
   Future<void> _start() async {
-    final model = _chosen;
-    if (model == null) return;
+    final model = _usesModel ? _chosen : null;
+    if (_usesModel && model == null) return;
     setState(() => _busy = true);
-    var ready = model.installed;
-    if (!ready) ready = await widget.state.downloadUpscaleModel(widget.models, model);
-    if (!mounted) return;
-    if (!ready) {
-      setState(() => _busy = false);
-      return;
+    if (model != null) {
+      var ready = model.installed;
+      if (!ready) ready = await widget.state.downloadUpscaleModel(widget.models, model);
+      if (!mounted) return;
+      if (!ready) {
+        setState(() => _busy = false);
+        return;
+      }
     }
     final server = _refine ? _server : null;
+    final factor = _factor;
     if (server == null) {
-      await widget.state.startUpscales(widget.items, model: model.id, factor: _factor, keepMetadata: _keepMetadata);
+      if (factor == null) {
+        setState(() => _busy = false);
+        return;
+      }
+      await widget.state.startUpscales(widget.items, model: model!.id, factor: factor, keepMetadata: _keepMetadata);
     } else {
       final state = widget.state;
       final strength = _hiresStrength;
       final scale = _hiresScale;
-      await state.startUpscales(
-        widget.items,
-        model: model.id,
-        // The upscale here is the starting point; the server's picture is
-        // made at [scale] from it.
-        factor: 2,
-        keepMetadata: _keepMetadata,
-        then: (original, upscaled) => refineUpscale(state, original, upscaled, kind: server, strength: strength, scale: scale),
-        thenLabel: 'then refined on ${backendNames[server]}',
-      );
+      Future<String?> refine(MediaItem original, String upscaled) =>
+          refineUpscale(state, original, upscaled, kind: server, strength: strength, scale: scale);
+      if (scale <= 1) {
+        // At its own size: the picture itself goes, nothing is made here.
+        unawaited(state.startWithoutUpscale(widget.items, refine, label: 'refining on ${backendNames[server]}'));
+      } else {
+        await state.startUpscales(
+          widget.items,
+          model: model!.id,
+          // The upscale here is made at the size the server redraws at, so
+          // what is sent is the model's detail, not a stretched picture.
+          factor: scale,
+          keepMetadata: _keepMetadata,
+          then: refine,
+          thenLabel: 'then refined on ${backendNames[server]}',
+        );
+      }
     }
     if (mounted) Navigator.of(context).maybePop();
   }
+
+  /// Whether the button has anything to do: an upscale needs a size on
+  /// offer and a model; a hires fix at its own size needs neither here.
+  bool get _canStart {
+    if (_busy) return false;
+    if (_refine && _server != null) return _hiresScale <= 1 || _chosen != null;
+    return _chosen != null && _factor != null;
+  }
+
+  /// Whether a model is used at all: not by a hires fix at the picture's
+  /// own size.
+  bool get _usesModel => !(_refine && _server != null && _hiresScale <= 1);
 
   Future<void> _setUpServer() async {
     await openBackendSettings(context, widget.state);
@@ -155,7 +193,11 @@ class _UpscalePanelState extends State<UpscalePanel> {
     final item = widget.items.first;
     final many = widget.items.length > 1;
     final refine = _refine && _server != null;
-    final (w, h) = refine ? hiresSize(item.width, item.height, _hiresScale) : (item.width * _factor, item.height * _factor);
+    final factor = _factor ?? 1;
+    final (w, h) = refine
+        ? hiresSize(item.width, item.height, _hiresScale)
+        : ((item.width * factor).round(), (item.height * factor).round());
+    final ownSize = refine && _hiresScale <= 1;
     final ext = item.name.contains('.') ? item.name.split('.').last.toLowerCase() : 'png';
     final servers = _servers;
     final body = SingleChildScrollView(
@@ -195,39 +237,68 @@ class _UpscalePanelState extends State<UpscalePanel> {
           const PanelHeading('Size'),
           Wrap(
             spacing: 8,
+            runSpacing: 8,
             children: [
               if (!refine)
-                for (final f in const [2, 4])
+                for (final f in _factors)
                   ChoiceChipButton(
-                    key: ValueKey<String>('upscale-factor-$f'),
-                    label: '$f×',
+                    key: ValueKey<String>('upscale-factor-${scaleText(f)}'),
+                    label: f == _maxFactor && !upscaleSteps.contains(f) ? '${scaleText(f)}× max' : '${scaleText(f)}×',
                     selected: _factor == f,
                     onTap: _busy ? null : () => setState(() => _factor = f),
                   )
               else
-                for (final f in hiresScales)
+                for (final f in _hiresScales)
                   ChoiceChipButton(
-                    key: ValueKey<String>('hires-scale-$f'),
-                    label: '${scaleText(f)}×',
+                    key: ValueKey<String>('hires-scale-${scaleText(f)}'),
+                    label: f <= 1
+                        ? 'Same size'
+                        : f == _maxHires && !hiresSteps.contains(f)
+                        ? '${scaleText(f)}× max'
+                        : '${scaleText(f)}×',
                     selected: _hiresScale == f,
                     onTap: _busy ? null : () => setState(() => _hiresScale = f),
                   ),
             ],
           ),
-          if (item.width > 0 && !many)
+          if (!refine && _factor == null)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                '${item.width} × ${item.height} to $w × $h',
+                many
+                    ? 'The largest of these is already as big as an upscale here can be '
+                          '(${widget.models.maxSide} on a side). A hires fix at the same size still works.'
+                    : 'Already as big as an upscale here can be (${widget.models.maxSide} on a side). '
+                          'A hires fix at the same size still works.',
+                key: const ValueKey<String>('upscale-too-large'),
+                style: const TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
+              ),
+            )
+          else if (item.width > 0 && !many)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                ownSize ? '${item.width} × ${item.height}, redrawn at $w × $h' : '${item.width} × ${item.height} to $w × $h',
+                key: const ValueKey<String>('upscale-size'),
+                style: const TextStyle(fontSize: 12, color: Palette.faint),
+              ),
+            )
+          else if (many)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                refine
+                    ? 'Up to ${scaleText(_maxHires)}× for these: the largest of them decides.'
+                    : 'Up to ${scaleText(_maxFactor)}× for these: the largest of them decides.',
                 key: const ValueKey<String>('upscale-size'),
                 style: const TextStyle(fontSize: 12, color: Palette.faint),
               ),
             ),
-          if (refine && math.max(w, h) > hiresLargeSide)
+          if (refine && !ownSize && math.max(w, h) > hiresLargeSide)
             const Padding(
               padding: EdgeInsets.only(top: 4),
               child: Text(
-                'That is large for most models and graphics cards; 1.5× is gentler on the server.',
+                'That is large for most models and graphics cards; a smaller size is gentler on the server.',
                 style: TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
               ),
             ),
@@ -266,15 +337,23 @@ class _UpscalePanelState extends State<UpscalePanel> {
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              refine
+              ownSize
                   ? (many
-                        ? '${widget.items.length} pictures, one after another: each upscaled here as name_up2x, then refined on '
-                              '${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.remixCollection}'
-                        : 'Upscaled here as ${_stem(item.name)}_up2x.$ext, then refined on ${backendNames[_server]} and saved as '
+                        ? '${widget.items.length} pictures, one after another: each sent to ${backendNames[_server]} at its own size, '
+                              'nothing upscaled here, and saved beside its original as name_hires1, in ${AppState.remixCollection}'
+                        : 'Sent to ${backendNames[_server]} at its own size, nothing upscaled here, and saved as '
                               '${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                  : refine
+                  ? (many
+                        ? '${widget.items.length} pictures, one after another: each upscaled here as name_up${scaleText(_hiresScale)}x, '
+                              'then refined on ${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.remixCollection}'
+                        : 'Upscaled here as ${_stem(item.name)}_up${scaleText(_hiresScale)}x.$ext, then refined on ${backendNames[_server]} '
+                              'and saved as ${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                  : _factor == null
+                  ? 'Nothing to upscale at this size.'
                   : many
-                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${_factor}x'
-                  : 'Saved as ${_stem(item.name)}_up${_factor}x.$ext',
+                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${scaleText(factor)}x'
+                  : 'Saved as ${_stem(item.name)}_up${scaleText(factor)}x.$ext',
               key: const ValueKey<String>('upscale-saved-as'),
               style: const TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
             ),
@@ -326,8 +405,10 @@ class _UpscalePanelState extends State<UpscalePanel> {
           },
           actionKey: const ValueKey<String>('upscale-start'),
           icon: Icons.photo_size_select_large,
-          onSend: _busy || _chosen == null ? null : _start,
-          action: _chosen?.installed == false
+          onSend: _canStart ? _start : null,
+          action: ownSize
+              ? (many ? 'Refine ${widget.items.length}' : 'Refine')
+              : _chosen?.installed == false
               ? (refine ? 'Download, upscale and refine' : 'Download and upscale')
               : refine
               ? (many ? 'Upscale and refine ${widget.items.length}' : 'Upscale and refine')
@@ -417,8 +498,102 @@ class _UpscalePanelState extends State<UpscalePanel> {
   }
 }
 
-/// How much bigger a hires fix may make the picture.
-const List<double> hiresScales = [1.5, 2];
+/// The sizes an upscale here is offered at, as far as the picture allows;
+/// past the last of these that fits, the largest it may be is offered too.
+const List<double> upscaleSteps = [1.5, 2, 3, 4, 6, 8, 12, 16];
+
+/// The same for a hires fix. 1 is the picture at its own size: redrawn by
+/// the server with nothing upscaled here first.
+const List<double> hiresSteps = [1, 1.25, 1.5, 2, 3, 4];
+
+/// The largest a server is asked to redraw at, on a side and in all. A
+/// picture larger still is only ever sent at its own size, which the server
+/// that made it can draw.
+const int hiresMaxSide = 4096;
+const int hiresMaxPixels = 4096 * 4096;
+
+/// The sizes of [items] that are known, as (width, height).
+Iterable<(int, int)> _sizes(List<MediaItem> items) => [
+  for (final i in items)
+    if (i.width > 0 && i.height > 0) (i.width, i.height),
+];
+
+/// How many times larger [items] may all be upscaled here, by
+/// [models]' limits: the largest of them decides. To a tenth, rounded down,
+/// and checked as the core checks it (sizes rounded), so what is offered
+/// is made. Below 1.1 there is nothing worth offering, and it answers 1.
+/// Pictures of unknown size leave it at 4, the model's own factor.
+double maxUpscaleFactor(List<MediaItem> items, UpscaleModels models) {
+  final sizes = _sizes(items).toList();
+  if (sizes.isEmpty) return math.min(4.0, models.maxFactor);
+  bool fits(double f) => sizes.every((s) {
+    final (w, h) = ((s.$1 * f).round(), (s.$2 * f).round());
+    return math.max(w, h) <= models.maxSide && w * h <= models.maxPixels;
+  });
+  var tenths = (models.maxFactor * 10).floor();
+  for (final (w, h) in sizes) {
+    final bySide = models.maxSide / math.max(w, h);
+    final byPixels = math.sqrt(models.maxPixels / (w * h));
+    tenths = math.min(tenths, (math.min(bySide, byPixels) * 10).floor());
+  }
+  while (tenths > 10 && !fits(tenths / 10)) {
+    tenths--;
+  }
+  return tenths >= 11 ? tenths / 10 : 1.0;
+}
+
+/// The factors to offer up to [max]: the steps that fit, and [max] itself
+/// when it is past the last of them by 0.2 or more. None when
+/// [max] is 1.
+List<double> upscaleFactors(double max) {
+  final out = [for (final f in upscaleSteps) if (f <= max) f];
+  // (0.15, not 0.2: tenths are not exact, and 1.7 − 1.5 comes out under 0.2.)
+  if (max > 1 && (out.isEmpty || max - out.last > 0.15)) out.add(max);
+  return out;
+}
+
+/// How many times larger a hires fix of [items] may be: as far as the
+/// server's limits allow for the largest, to a twentieth, rounded down,
+/// never past 4 and never below 1 (the picture at its own size). Pictures
+/// of unknown size leave it at 2.
+double maxHiresScale(List<MediaItem> items) {
+  final sizes = _sizes(items).toList();
+  if (sizes.isEmpty) return 2;
+  var twentieths = 80;
+  for (final (w, h) in sizes) {
+    final bySide = hiresMaxSide / math.max(w, h);
+    final byPixels = math.sqrt(hiresMaxPixels / (w * h));
+    twentieths = math.min(twentieths, (math.min(bySide, byPixels) * 20).floor());
+  }
+  bool fits(double f) => sizes.every((s) {
+    final (w, h) = hiresSize(s.$1, s.$2, f);
+    return math.max(w, h) <= hiresMaxSide && w * h <= hiresMaxPixels;
+  });
+  while (twentieths > 20 && !fits(twentieths / 20)) {
+    twentieths--;
+  }
+  return math.max(20, twentieths) / 20;
+}
+
+/// The hires sizes to offer up to [max], as [upscaleFactors] does.
+List<double> hiresScalesFor(double max) {
+  final out = [for (final f in hiresSteps) if (f <= max) f];
+  if (max - out.last > 0.075) out.add(max);
+  return out;
+}
+
+/// Where the hires size starts: 2× where it fits without being heavy for the
+/// server ([hiresLargeSide]), else the largest of [scales] that is not, else
+/// the picture's own size.
+double defaultHiresScale(List<MediaItem> items, List<double> scales) {
+  final sizes = _sizes(items).toList();
+  bool light(double f) => sizes.every((s) {
+    final (w, h) = hiresSize(s.$1, s.$2, f);
+    return math.max(w, h) <= hiresLargeSide;
+  });
+  final ok = [for (final f in scales) if (f <= 2 && (f <= 1 || light(f))) f];
+  return ok.isEmpty ? scales.first : ok.last;
+}
 
 /// Denoising strength for a hires fix: where it starts, and how far it goes.
 const double hiresDefaultStrength = 0.35;

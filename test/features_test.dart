@@ -34,7 +34,8 @@ import 'package:generativeview/src/ui/meta_panel.dart';
 import 'package:generativeview/src/ui/prompt_editor.dart';
 import 'package:generativeview/src/ui/remix_dialog.dart';
 import 'package:generativeview/src/ui/thumb_image.dart';
-import 'package:generativeview/src/ui/upscale_dialog.dart' show HiresNotSent, hiresSize, madeOn, refineUpscale, scaleText;
+import 'package:generativeview/src/ui/upscale_dialog.dart'
+    show HiresNotSent, defaultHiresScale, hiresScalesFor, hiresSize, madeOn, maxHiresScale, maxUpscaleFactor, refineUpscale, scaleText, upscaleFactors;
 
 import 'support.dart';
 
@@ -663,9 +664,12 @@ void main() {
     expect(find.byKey(const ValueKey('hires-server-forge')), findsOneWidget);
     expect(find.byKey(const ValueKey('hires-strength')), findsOneWidget);
     expect(tester.widget<Text>(find.byKey(const ValueKey('hires-strength-value'))).data, '0.35');
-    // 4× is not offered for a hires fix; 1.5× and 2× are.
-    expect(find.byKey(const ValueKey('upscale-factor-4')), findsNothing);
+    // The upscale's own sizes give way to the hires ones, which run from
+    // the picture's own size up as far as the server is asked to go.
+    expect(find.byKey(const ValueKey('upscale-factor-16')), findsNothing);
+    expect(find.byKey(const ValueKey('hires-scale-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('hires-scale-1.5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hires-scale-4')), findsOneWidget);
     expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 640 × 640');
     await tester.tap(find.byKey(const ValueKey('hires-scale-1.5')));
     await settle(tester);
@@ -673,6 +677,12 @@ void main() {
     expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-saved-as'))).data, contains('heron_hires1'));
     // 'Upscale and refine', or 'Download, upscale and refine' while the model is not here.
     expect(find.textContaining(RegExp('[Uu]pscale and refine\$')), findsOneWidget);
+    // At its own size: nothing upscaled here, the picture itself is sent.
+    await tester.tap(find.byKey(const ValueKey('hires-scale-1')));
+    await settle(tester);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320, redrawn at 320 × 320');
+    expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-saved-as'))).data, contains('at its own size'));
+    expect(find.text('Refine'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await settle(tester);
 
@@ -736,6 +746,7 @@ void main() {
     // The sizes and names the panel works with.
     expect(hiresSize(832, 1216, 1.5), (1248, 1824));
     expect(scaleText(1.5), '1.5');
+    expect(scaleText(1.25), '1.25');
     expect(scaleText(2), '2');
     expect(madeOn('a1111'), 'forge');
     expect(madeOn('swarmui'), isNull);
@@ -1832,5 +1843,47 @@ void main() {
     state.applySearch('');
     await pumpUntil(tester, () => state.items.length == 6, what: 'everything');
     await close(tester, state);
+  });
+
+  test('upscale sizes are worked out from the picture, not fixed', () {
+    MediaItem pic(int w, int h) =>
+        MediaItem(id: 0, dir: '/x', name: 'p.png', isVideo: false, width: w, height: h, mtime: 0, size: 0, durationMs: 0);
+    const models = UpscaleModels('', '', []);
+    // Small: every step up to the cap of 16.
+    expect(maxUpscaleFactor([pic(320, 320)], models), 16);
+    expect(upscaleFactors(16), [1.5, 2, 3, 4, 6, 8, 12, 16]);
+    // A usual size: as far as 8192 on a side and 40 megapixels allow, with
+    // the largest offered past the last step.
+    expect(maxUpscaleFactor([pic(1024, 1024)], models), 6.1);
+    expect(upscaleFactors(6.1), [1.5, 2, 3, 4, 6]);
+    expect(maxUpscaleFactor([pic(832, 1216)], models), 6.2);
+    expect(upscaleFactors(6.2), [1.5, 2, 3, 4, 6, 6.2]);
+    expect(upscaleFactors(1.7), [1.5, 1.7]);
+    // Several: the largest decides.
+    expect(maxUpscaleFactor([pic(512, 512), pic(2048, 2048)], models), 3);
+    // Already large: nothing to offer, and it says 1.
+    expect(maxUpscaleFactor([pic(8000, 5000)], models), 1);
+    expect(upscaleFactors(1), isEmpty);
+    // Unknown sizes keep to the model's own 4×.
+    expect(maxUpscaleFactor([pic(0, 0)], models), 4);
+    // The limits come from the core.
+    expect(maxUpscaleFactor([pic(1000, 1000)], const UpscaleModels('', '', [], maxSide: 2000, maxPixels: 4000000)), 2);
+
+    // A hires fix: the picture's own size always, larger as the server's
+    // 4096 allows, never past 4×.
+    expect(maxHiresScale([pic(512, 512)]), 4);
+    expect(hiresScalesFor(4), [1, 1.25, 1.5, 2, 3, 4]);
+    expect(maxHiresScale([pic(1536, 1536)]), 2.65);
+    expect(hiresScalesFor(2.65), [1, 1.25, 1.5, 2, 2.65]);
+    expect(maxHiresScale([pic(3000, 2000)]), 1.35);
+    expect(hiresScalesFor(1.35), [1, 1.25, 1.35]);
+    // Already past what a server is asked to go to: only its own size.
+    expect(maxHiresScale([pic(5000, 3000)]), 1);
+    expect(hiresScalesFor(1), [1]);
+    // Where it starts: 2× unless that is heavy, then smaller, then 1.
+    expect(defaultHiresScale([pic(832, 1216)], hiresScalesFor(maxHiresScale([pic(832, 1216)]))), 2);
+    expect(defaultHiresScale([pic(1536, 1536)], hiresScalesFor(2.65)), 1.5);
+    expect(defaultHiresScale([pic(2048, 2048)], hiresScalesFor(maxHiresScale([pic(2048, 2048)]))), 1.25);
+    expect(defaultHiresScale([pic(3000, 2000)], hiresScalesFor(1.35)), 1);
   });
 }

@@ -62,7 +62,7 @@ Krea 2 picture, and a Forge picture:
 - [ ] LoRA section: one switched off, one reweighted
 - [ ] Image to image at a few strengths
 - [ ] Mask painted, then traced, only that area redrawn
-- [ ] Hires fix (upscale, then refine on ComfyUI) at 1.5× and 2×
+- [ ] Hires fix (upscale, then refine on ComfyUI) at the same size, 1.5× and 2×
 - [ ] Close the app mid-render: the remix is picked up on reopening
 - [ ] Android: screen locked while waiting; notification when done
 - [ ] Status button: running, then done; tapping done opens Remixes with the
