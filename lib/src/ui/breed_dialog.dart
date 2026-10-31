@@ -14,6 +14,7 @@ import 'kit.dart';
 import 'meta_panel.dart' show toast;
 import 'remix_dialog.dart' show SizeField, SizeSlider, cfgText, openBackendSettings, remixTwoColumns, snapSize;
 import 'sheet.dart';
+import 'thumb_image.dart' show ThumbImage;
 
 /// The colours that tie each phrase of a bred prompt to its parent.
 const List<Color> parentColors = [Palette.accent, keepGreen, attention, Color(0xFFC792EA)];
@@ -108,14 +109,33 @@ class _BreedPanelState extends State<BreedPanel> {
   final Set<int> _ticked = {};
 
   String? _backend;
+
+  /// Whether the server was picked by hand, so reordering leaves it be.
+  bool _backendPicked = false;
   bool _sending = false;
+
+  /// The parents in the order the user has dragged them into. The first is
+  /// the one new pictures are made on (its model, workflow and size), and
+  /// the rest follow it in [parentColors]' order.
+  late final List<MediaItem> _parents = [...widget.parents];
+  late final List<GenInfo> _infos = [...widget.infos];
+
+  /// The order when a drag started, to tell on dropping whether it changed.
+  List<MediaItem>? _dragStart;
+
+  /// Counts requests for candidates, so an older answer never replaces a
+  /// newer one (after a reorder, say).
+  int _writing = 0;
 
   /// The size every new picture is made at: the first parent's to start,
   /// set as in Remix, with the same box, lock and slider.
-  late final (int, int) _original = recipeSize(widget.infos.first);
-  late final TextEditingController _width = TextEditingController(text: '${snapSize(_original.$1 > 0 ? _original.$1 : 1024)}');
-  late final TextEditingController _height = TextEditingController(text: '${snapSize(_original.$2 > 0 ? _original.$2 : 1024)}');
-  late final double _aspect = _original.$1 > 0 && _original.$2 > 0 ? _original.$1 / _original.$2 : 1;
+  late (int, int) _original = recipeSize(_infos.first);
+  late final TextEditingController _width = TextEditingController(text: '${_startSize(_original).$1}');
+  late final TextEditingController _height = TextEditingController(text: '${_startSize(_original).$2}');
+  late double _aspect = _aspectOf(_original);
+
+  static (int, int) _startSize((int, int) size) => (snapSize(size.$1 > 0 ? size.$1 : 1024), snapSize(size.$2 > 0 ? size.$2 : 1024));
+  static double _aspectOf((int, int) size) => size.$1 > 0 && size.$2 > 0 ? size.$1 / size.$2 : 1;
 
   @override
   void dispose() {
@@ -160,43 +180,88 @@ class _BreedPanelState extends State<BreedPanel> {
   @override
   void initState() {
     super.initState();
+    _pickBackend();
+    widget.state.judged.addListener(_judgedMoved);
+    _write();
+  }
+
+  /// A server that is set up, the one that made the first picture if it is;
+  /// otherwise the one that made it, to be set up on sending.
+  void _pickBackend() {
     final urls = widget.state.backendUrls;
-    final support = backendSupport(widget.infos.first);
+    final support = backendSupport(_infos.first);
     final ready = [
       for (final k in backendNames.keys)
         if (support[k] == null && (urls[k] ?? '').isNotEmpty) k,
     ];
-    final made = switch (widget.infos.first.source) {
+    final made = switch (_infos.first.source) {
       'comfyui' => 'comfyui',
       'invokeai' => 'invokeai',
       'a1111' || 'forge' => 'forge',
       _ => null,
     };
-    // A server that is set up, the one that made the first picture if it is;
-    // otherwise the one that made it, to be set up on sending.
     _backend = ready.contains(made) ? made : (ready.isNotEmpty ? ready.first : (made ?? 'comfyui'));
-    widget.state.judged.addListener(_judgedMoved);
+  }
+
+  /// Move the parent at [from] to [to], as it is dragged over the others.
+  void _move(int from, int to) {
+    if (from == to || from < 0 || to < 0 || from >= _parents.length || to >= _parents.length) return;
+    setState(() {
+      _parents.insert(to, _parents.removeAt(from));
+      _infos.insert(to, _infos.removeAt(from));
+    });
+  }
+
+  /// A drag has ended: when the order changed, the first parent may be a
+  /// new one, so its size and server are taken up, and the candidates are
+  /// written again on the new order.
+  void _dropped() {
+    final before = _dragStart;
+    if (before == null) return;
+    setState(() => _dragStart = null);
+    var same = true;
+    for (var i = 0; i < before.length; i++) {
+      if (!identical(before[i], _parents[i])) same = false;
+    }
+    if (same) return;
+    if (!identical(before.first, _parents.first)) {
+      final was = _startSize(_original);
+      final next = recipeSize(_infos.first);
+      setState(() {
+        // A size typed or slid by hand is kept; the old first one's own
+        // size gives way to the new first one's.
+        if (_width.text == '${was.$1}' && _height.text == '${was.$2}') {
+          final size = _startSize(next);
+          _width.text = '${size.$1}';
+          _height.text = '${size.$2}';
+        }
+        _original = next;
+        _aspect = _aspectOf(next);
+        if (!_backendPicked) _pickBackend();
+      });
+    }
     _write();
   }
 
   /// Ask for a new set of children, as the choices now are.
   Future<void> _write() async {
+    final ticket = ++_writing;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final bred = await widget.state.breed(
-        widget.parents,
+        List.of(_parents),
         phrases: _phrases,
         loras: _loras,
         settings: _settings,
         model: _model,
         change: _change,
         seed: _seed,
-        prompts: [for (final i in widget.infos) i.source == 'described' ? i.prompt : ''],
+        prompts: [for (final i in _infos) i.source == 'described' ? i.prompt : ''],
       );
-      if (!mounted) return;
+      if (!mounted || ticket != _writing) return;
       final children = bred.children;
       setState(() {
         _children = children;
@@ -210,9 +275,9 @@ class _BreedPanelState extends State<BreedPanel> {
       });
       await _aimAll();
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted && ticket == _writing) setState(() => _error = '$e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && ticket == _writing) setState(() => _loading = false);
     }
   }
 
@@ -223,7 +288,7 @@ class _BreedPanelState extends State<BreedPanel> {
     final target = _audience;
     final steers = await Future.wait([
       for (final child in children)
-        widget.state.steerAudience(child.prompt, widget.infos[child.base].negative, target).then<AudienceSteer?>((s) => s, onError: (Object _) => null),
+        widget.state.steerAudience(child.prompt, _infos[child.base].negative, target).then<AudienceSteer?>((s) => s, onError: (Object _) => null),
     ]);
     // A newer choice, or newer candidates, have taken over.
     if (mounted && target == _audience && identical(children, _children)) setState(() => _steers = steers);
@@ -256,8 +321,8 @@ class _BreedPanelState extends State<BreedPanel> {
     try {
       for (final i in _ticked.toList()..sort()) {
         final child = children[i];
-        final base = widget.parents[child.base];
-        final info = widget.infos[child.base];
+        final base = _parents[child.base];
+        final info = _infos[child.base];
         // The base's LoRA tags stay in the prompt (Forge reads them there);
         // their weights follow the child's.
         final tags = RegExp(r'<lora:[^>]+>', caseSensitive: false).allMatches(info.prompt).map((m) => m.group(0)!).join(' ');
@@ -308,10 +373,29 @@ class _BreedPanelState extends State<BreedPanel> {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          ThumbStrip(state: widget.state, items: widget.parents, size: 64, borders: parentColors),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < _parents.length; i++)
+                Padding(
+                  key: ObjectKey(_parents[i]),
+                  padding: EdgeInsets.only(left: i == 0 ? 0 : 6),
+                  child: _ParentSlot(
+                    state: widget.state,
+                    item: _parents[i],
+                    index: i,
+                    size: 64,
+                    onHover: (dragged) => _move(_parents.indexOf(dragged), i),
+                    onDragStarted: () => setState(() => _dragStart = List.of(_parents)),
+                    onDragEnd: _dropped,
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(
-            width: 220,
+            width: 240,
             child: Text(
+              'Drag left or right to reorder: new pictures are made on the first one\'s model, size and server. '
               'Underlines show which picture each phrase came from; blue words are new.',
               style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
             ),
@@ -386,8 +470,17 @@ class _BreedPanelState extends State<BreedPanel> {
         ),
       ),
       const PanelHeading('Size'),
-      SizeField(key: const ValueKey<String>('breed-size'), width: _width, height: _height, aspect: _aspect, expand: true),
-      SizeSlider(key: const ValueKey<String>('breed-size-slider'), width: _width, height: _height, original: _original),
+      // Set up again for a new first parent, whose shape the lock keeps to.
+      KeyedSubtree(
+        key: ObjectKey(_parents.first),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizeField(key: const ValueKey<String>('breed-size'), width: _width, height: _height, aspect: _aspect, expand: true),
+            SizeSlider(key: const ValueKey<String>('breed-size-slider'), width: _width, height: _height, original: _original),
+          ],
+        ),
+      ),
       const Padding(
         padding: EdgeInsets.only(top: 4),
         child: Text('Every picture rendered is made at this size.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
@@ -445,7 +538,7 @@ class _BreedPanelState extends State<BreedPanel> {
         );
       },
     );
-    final support = backendSupport(widget.infos.first);
+    final support = backendSupport(_infos.first);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -455,14 +548,17 @@ class _BreedPanelState extends State<BreedPanel> {
           state: widget.state,
           backend: _backend,
           support: support,
-          onBackend: (k) => setState(() => _backend = k),
+          onBackend: (k) => setState(() {
+            _backend = k;
+            _backendPicked = true;
+          }),
           onServersChanged: () {
             if (mounted) setState(() {});
           },
           chipKey: (k) => ValueKey<String>('breed-server-$k'),
           actionKey: const ValueKey<String>('breed-send'),
           action: 'Render ${_ticked.length}',
-          onSend: _backend == null || _ticked.isEmpty || _loading ? null : _send,
+          onSend: _backend == null || _ticked.isEmpty || _loading || _dragStart != null ? null : _send,
           sending: _sending,
           error: _error,
           leading: Text('Results go to ${AppState.remixCollection}', style: const TextStyle(fontSize: 12, color: Palette.faint)),
@@ -529,6 +625,95 @@ extension on _BreedPanelState {
       key: const ValueKey<String>('breed-why-no-stars'),
       padding: const EdgeInsets.only(bottom: 8),
       child: body,
+    );
+  }
+}
+
+/// One parent in the Breed panel's row: its picture in its colour, dragged
+/// left or right to reorder. The first is marked as the one new pictures
+/// are made on. Dragging is horizontal, so the panel still scrolls under a
+/// finger moving up or down.
+class _ParentSlot extends StatelessWidget {
+  const _ParentSlot({
+    required this.state,
+    required this.item,
+    required this.index,
+    required this.size,
+    required this.onHover,
+    required this.onDragStarted,
+    required this.onDragEnd,
+  });
+  final AppState state;
+  final MediaItem item;
+  final int index;
+  final double size;
+
+  /// Another parent dragged over this one: it takes this one's place.
+  final ValueChanged<MediaItem> onHover;
+  final VoidCallback onDragStarted;
+  final VoidCallback onDragEnd;
+
+  Widget _thumb({bool lifted = false, Key? key}) {
+    final color = parentColors[index % parentColors.length];
+    return Container(
+      key: key,
+      decoration: BoxDecoration(
+        border: Border.all(color: color, width: 2),
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: lifted ? const [BoxShadow(color: Color(0x99000000), blurRadius: 14, offset: Offset(0, 6))] : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ColoredBox(color: Palette.tile, child: ThumbImage(cache: state.thumbs, item: item, tier: 0, fit: BoxFit.cover)),
+              Positioned(
+                left: 3,
+                top: 3,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(color: const Color(0xCC000000), borderRadius: BorderRadius.circular(4)),
+                  child: Text(
+                    index == 0 ? '1 · base' : '${index + 1}',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: index == 0 ? color : Palette.text),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<MediaItem>(
+      onWillAcceptWithDetails: (details) {
+        if (!identical(details.data, item)) onHover(details.data);
+        return true;
+      },
+      builder: (context, candidates, rejected) => Tooltip(
+        message: index == 0 ? 'New pictures are made on this one. Drag to reorder.' : 'Drag left or right to reorder',
+        waitDuration: const Duration(milliseconds: 600),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.grab,
+          child: Draggable<MediaItem>(
+            data: item,
+            affinity: Axis.horizontal,
+            axis: Axis.horizontal,
+            onDragStarted: onDragStarted,
+            onDragEnd: (_) => onDragEnd(),
+            feedback: Material(color: Colors.transparent, child: Transform.scale(scale: 1.08, child: _thumb(lifted: true))),
+            childWhenDragging: Opacity(opacity: 0.25, child: _thumb()),
+            child: _thumb(key: ValueKey<String>('breed-parent-$index')),
+          ),
+        ),
+      ),
     );
   }
 }
