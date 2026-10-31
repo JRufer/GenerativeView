@@ -47,16 +47,6 @@ Future<void> showImageMenu(
     const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
     if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
     const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
-    MenuEntry(
-      'keep',
-      item.flag == Flag.keep ? 'Clear the keep flag (P)' : 'Keep (P)',
-      Icons.check_circle_outline,
-    ),
-    MenuEntry(
-      'reject',
-      item.flag == Flag.reject ? 'Clear the reject flag (X)' : 'Reject (X)',
-      Icons.cancel_outlined,
-    ),
     if (shownCollection != null)
       MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
     MenuEntry('delete', item.isVideo ? 'Delete video…' : 'Delete image…', Icons.delete_outline),
@@ -71,10 +61,6 @@ Future<void> showImageMenu(
       await openUpscale(context, state, item);
     case 'collection':
       await showCollectionPicker(context, state, [item]);
-    case 'keep':
-      await state.changeNotes(targets: [item], flag: item.flag == Flag.keep ? Flag.none : Flag.keep);
-    case 'reject':
-      await state.changeNotes(targets: [item], flag: item.flag == Flag.reject ? Flag.none : Flag.reject);
     case 'file':
       await copyImage(context, item);
     case 'prompt':
@@ -100,8 +86,6 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   final shownCollection = _shownCollection(state);
   final images = targets.where((t) => !t.isVideo).length;
   final things = targets.every((t) => t.isVideo) ? 'videos' : (images == n ? 'images' : 'files');
-  final allKeep = targets.every((t) => t.flag == Flag.keep);
-  final allReject = targets.every((t) => t.flag == Flag.reject);
   final canCompare = images >= compareMin && images <= compareMax;
   final choice = await showContextMenu<String>(context, position, [
     if (canCompare) MenuEntry('compare', 'Compare $images side by side (V)', Icons.compare),
@@ -110,8 +94,6 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
     MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
     if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
     const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
-    MenuEntry('keep', allKeep ? 'Clear the keep flag (P)' : 'Keep all (P)', Icons.check_circle_outline),
-    MenuEntry('reject', allReject ? 'Clear the reject flag (X)' : 'Reject all (X)', Icons.cancel_outlined),
     const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
     if (shownCollection != null)
       MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
@@ -141,10 +123,6 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
         const MenuEntry(0, 'No stars (0)', Icons.star_outline_rounded),
       ]);
       if (stars != null) await state.rate(targets, stars);
-    case 'keep':
-      await state.setFlag(targets, Flag.keep);
-    case 'reject':
-      await state.setFlag(targets, Flag.reject);
     case 'collection':
       await showCollectionPicker(context, state, targets);
     case 'uncollect':
