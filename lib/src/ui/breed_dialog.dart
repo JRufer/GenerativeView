@@ -9,7 +9,7 @@ import '../core/models.dart';
 import '../theme.dart';
 import 'kit.dart';
 import 'meta_panel.dart' show toast;
-import 'remix_dialog.dart' show cfgText, openBackendSettings, remixTwoColumns, snapSize;
+import 'remix_dialog.dart' show SizeField, SizeSlider, cfgText, openBackendSettings, remixTwoColumns, snapSize;
 import 'sheet.dart';
 
 /// The colours that tie each phrase of a bred prompt to its parent.
@@ -73,6 +73,20 @@ class _BreedPanelState extends State<BreedPanel> {
 
   String? _backend;
   bool _sending = false;
+
+  /// The size every new picture is made at: the first parent's to start,
+  /// set as in Remix, with the same box, lock and slider.
+  late final (int, int) _original = recipeSize(widget.infos.first);
+  late final TextEditingController _width = TextEditingController(text: '${snapSize(_original.$1 > 0 ? _original.$1 : 1024)}');
+  late final TextEditingController _height = TextEditingController(text: '${snapSize(_original.$2 > 0 ? _original.$2 : 1024)}');
+  late final double _aspect = _original.$1 > 0 && _original.$2 > 0 ? _original.$1 / _original.$2 : 1;
+
+  @override
+  void dispose() {
+    _width.dispose();
+    _height.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -143,13 +157,18 @@ class _BreedPanelState extends State<BreedPanel> {
       _sending = true;
       _error = null;
     });
+    // Every server takes multiples of 16: a size typed otherwise is
+    // rounded, and shown rounded.
+    final width = snapSize(int.tryParse(_width.text) ?? 1024);
+    final height = snapSize(int.tryParse(_height.text) ?? 1024);
+    _width.text = '$width';
+    _height.text = '$height';
     var sent = 0;
     try {
       for (final i in _ticked.toList()..sort()) {
         final child = children[i];
         final base = widget.parents[child.base];
         final info = widget.infos[child.base];
-        final (w, h) = recipeSize(info);
         // The base's LoRA tags stay in the prompt (Forge reads them there);
         // their weights follow the child's.
         final tags = RegExp(r'<lora:[^>]+>', caseSensitive: false).allMatches(info.prompt).map((m) => m.group(0)!).join(' ');
@@ -167,8 +186,8 @@ class _BreedPanelState extends State<BreedPanel> {
             seed: 0,
             randomSeed: true,
             count: 1,
-            width: snapSize(w > 0 ? w : 1024),
-            height: snapSize(h > 0 ? h : 1024),
+            width: width,
+            height: height,
             steps: child.steps,
             cfg: child.cfg,
             loras: loras.isEmpty ? null : loras,
@@ -265,6 +284,13 @@ class _BreedPanelState extends State<BreedPanel> {
             Text('Adventurous', style: TextStyle(fontSize: 11, color: Palette.faint)),
           ],
         ),
+      ),
+      const PanelHeading('Size'),
+      SizeField(key: const ValueKey<String>('breed-size'), width: _width, height: _height, aspect: _aspect, expand: true),
+      SizeSlider(key: const ValueKey<String>('breed-size-slider'), width: _width, height: _height, original: _original),
+      const Padding(
+        padding: EdgeInsets.only(top: 4),
+        child: Text('Every picture rendered is made at this size.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
       ),
     ];
     final children = _children;
