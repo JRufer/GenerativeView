@@ -1032,6 +1032,7 @@ class AppState extends ChangeNotifier {
     _noticeArrivals(list);
     items = list;
     loaded = true;
+    unawaited(_loadDuplicateGroups());
     final id = _selectedId;
     if (id != null) {
       var index = list.indexOfId(id);
@@ -1319,6 +1320,136 @@ class AppState extends ChangeNotifier {
   Future<PromptCheck?> checkPrompt(MediaItem item, String prompt, {bool look = false}) async {
     final json = await core.call('check_prompt', {'path': item.path, 'prompt': prompt, 'make': look});
     return json is Map<String, dynamic> ? PromptCheck.fromJson(json) : null;
+  }
+
+  // ========================================================= artist tools
+
+  /// [item], which has no prompt of its own, described in groups of
+  /// phrases, from what content search's model sees in it and the user's
+  /// own prompt phrases.
+  Future<Description> describe(MediaItem item) async {
+    final json = await core.call('describe_groups', {'path': item.path});
+    return Description.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// What the current folder's rated pictures say works: phrases and
+  /// settings common among liked ones and among disliked ones; only those
+  /// made with [model] (its index key) when given.
+  Future<WorksStats> whatWorks({String model = ''}) async {
+    final dir = folder;
+    final json = await core.call('what_works', {'dir': dir ?? '', 'recursive': dir == null || recursive, 'model': model});
+    return WorksStats.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// Prompt Doctor: what to change in [prompt], the prompt of [item] (made
+  /// with [model]), from prompt check and the user's ratings.
+  Future<Advice> advise(MediaItem item, String prompt, String model) async {
+    final json = await core.call('prompt_doctor', {'path': item.path, 'prompt': prompt, 'model': model});
+    return Advice.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// Where in the picture at [path] [phrase] fits.
+  Future<HeatMap> heat(String path, String phrase) async {
+    final json = await core.call('phrase_heat', {'path': path, 'phrase': phrase});
+    return HeatMap.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// New recipes mixed from [parents] (two to four), the likeliest liked
+  /// first. [change] is 0 (close to the parents) to 1 (adventurous).
+  Future<(List<BredChild>, bool)> breed(
+    List<MediaItem> parents, {
+    required bool phrases,
+    required bool loras,
+    required bool settings,
+    required bool model,
+    required double change,
+    int count = 6,
+    int seed = 1,
+  }) async {
+    final json = await core.call('breed', {
+      'paths': [for (final p in parents) p.path],
+      'mix': {'phrases': phrases, 'loras': loras, 'settings': settings, 'model': model},
+      'change': change,
+      'count': count,
+      'seed': seed,
+    }) as Map<String, dynamic>;
+    return (
+      [
+        for (final c in (json['children'] as List? ?? const []))
+          if (c is Map<String, dynamic>) BredChild.fromJson(c),
+      ],
+      json['rated'] == true,
+    );
+  }
+
+  /// Whether the grid is showing near-duplicates, grouped.
+  bool get showingDuplicates => RegExp(r'(^|\s)(is|type|kind|media):dup', caseSensitive: false).hasMatch(query);
+
+  /// The groups of near-duplicates showing, with the one to keep in each;
+  /// empty unless [showingDuplicates].
+  List<DuplicateGroup> duplicateGroups = const [];
+  int _groupsTicket = 0;
+
+  Future<void> _loadDuplicateGroups() async {
+    final ticket = ++_groupsTicket;
+    final dir = folder;
+    if (!showingDuplicates || dir == null) {
+      if (duplicateGroups.isNotEmpty) {
+        duplicateGroups = const [];
+        notifyListeners();
+      }
+      return;
+    }
+    try {
+      final json = await core.call('duplicate_groups', {'dir': dir, 'recursive': recursive, 'text': query});
+      if (ticket != _groupsTicket || _disposed) return;
+      duplicateGroups = [
+        for (final g in (json as List? ?? const []))
+          if (g is Map<String, dynamic>) DuplicateGroup.fromJson(g),
+      ];
+      notifyListeners();
+    } catch (_) {
+      // Without groups the pictures still show, side by side.
+    }
+  }
+
+  /// Tick every picture of [groups] but the best of each, so they can be
+  /// rejected or deleted together. Answers how many were ticked.
+  int tickAllButBest([List<DuplicateGroup>? groups]) {
+    final keep = {for (final g in groups ?? duplicateGroups) g.bestPath};
+    final all = {for (final g in groups ?? duplicateGroups) ...g.paths};
+    var n = 0;
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      if (all.contains(item.path) && !keep.contains(item.path)) {
+        if (!_checked.contains(item.id)) _checked.add(item.id);
+        n++;
+      } else if (keep.contains(item.path)) {
+        _checked.remove(item.id);
+      }
+    }
+    notifyListeners();
+    return n;
+  }
+
+  /// Of the ticked pictures, untick the one most worth keeping among them
+  /// and keep the rest ticked (see [tickAllButBest]).
+  Future<int> keepBestOfTicked() async {
+    final ticked = checkedItems;
+    if (ticked.length < 2) return 0;
+    final paths = {for (final t in ticked) t.path};
+    final json = await core.call('duplicate_groups', {'dir': folder ?? '', 'recursive': recursive, 'only': paths.toList()});
+    final groups = [
+      for (final g in (json as List? ?? const []))
+        if (g is Map<String, dynamic>) DuplicateGroup.fromJson(g),
+    ];
+    final best = groups.isNotEmpty && groups.first.paths.length == ticked.length ? groups.first.bestPath : null;
+    if (best == null) return 0;
+    for (final t in ticked) {
+      if (t.path == best) _checked.remove(t.id);
+    }
+    notifyListeners();
+    return ticked.length - 1;
   }
 
   Future<GenInfo> metadata(MediaItem item) async {

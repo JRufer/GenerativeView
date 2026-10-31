@@ -7,6 +7,7 @@ import '../app_state.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'notes_widgets.dart' show starColor;
+import 'kit.dart';
 import 'thumb_image.dart';
 
 /// Open the usage page over the grid.
@@ -26,6 +27,8 @@ void openStats(BuildContext context, AppState state) {
     ),
   );
 }
+
+enum _View { used, rated, works }
 
 /// How many values a card lists before "Show all".
 const int _shortList = 10;
@@ -55,8 +58,8 @@ class _StatsPageState extends State<StatsPage> {
   UsageStats? _stats;
   Object? _error;
 
-  /// Most used, or best rated first.
-  bool _rated = false;
+  /// Most used, best rated, or what works.
+  _View _view = _View.used;
 
   @override
   void initState() {
@@ -83,6 +86,18 @@ class _StatsPageState extends State<StatsPage> {
   Widget build(BuildContext context) {
     final folder = widget.state.folder ?? '';
     final name = folder == '/' ? '/' : folder.split('/').last;
+    final narrow = MediaQuery.sizeOf(context).width < 640;
+    final tabs = PanelTabs<_View>(
+      key: const ValueKey<String>('usage-mode'),
+      expand: narrow,
+      selected: _view,
+      onChanged: (v) => setState(() => _view = v),
+      choices: const [
+        TabChoice(_View.used, 'Most used', Icons.bar_chart),
+        TabChoice(_View.rated, 'Best rated', Icons.star_outline_rounded),
+        TabChoice(_View.works, 'What works', Icons.insights_outlined),
+      ],
+    );
     return CallbackShortcuts(
       bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
       child: Focus(
@@ -139,22 +154,18 @@ class _StatsPageState extends State<StatsPage> {
                           ),
                         ),
                       ),
-                      SegmentedButton<bool>(
-                        key: const ValueKey<String>('usage-mode'),
-                        showSelectedIcon: false,
-                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                        segments: const [
-                          ButtonSegment(value: false, label: Text('Most used'), icon: Icon(Icons.bar_chart, size: 16)),
-                          ButtonSegment(value: true, label: Text('Best rated'), icon: Icon(Icons.star_outline_rounded, size: 16)),
-                        ],
-                        selected: {_rated},
-                        onSelectionChanged: (s) => setState(() => _rated = s.first),
-                      ),
-                      const SizedBox(width: 4),
+                      if (!narrow) ...[tabs, const SizedBox(width: 4)],
                     ],
                   ),
                 ),
-                Expanded(child: _body()),
+                // A phone's width: the tabs get a row of their own.
+                if (narrow)
+                  Container(
+                    color: Palette.panel,
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                    child: tabs,
+                  ),
+                Expanded(child: _view == _View.works ? WorksView(state: widget.state, onShow: _show) : _body()),
               ],
             ),
           ),
@@ -172,7 +183,7 @@ class _StatsPageState extends State<StatsPage> {
     if (stats.total == 0) {
       return const _Message('There are no images in this folder to count.');
     }
-    if (_rated) return _Leaderboard(state: widget.state, stats: stats, onShow: _show);
+    if (_view == _View.rated) return _Leaderboard(state: widget.state, stats: stats, onShow: _show);
     final groups = [
       for (final group in stats.groups)
         if (group.items.isNotEmpty) group,
@@ -764,6 +775,206 @@ class _RankedRow extends StatelessWidget {
                   ),
                 ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ------------------------------------------------------------ what works
+
+/// What the user's own ratings say works, for the current folder: the
+/// phrases common among liked pictures, those common among disliked ones,
+/// and the settings that set them apart, narrowed to one model if picked.
+/// Tapping a row shows its pictures in the grid.
+class WorksView extends StatefulWidget {
+  const WorksView({super.key, required this.state, required this.onShow});
+  final AppState state;
+  final ValueChanged<String> onShow;
+
+  @override
+  State<WorksView> createState() => _WorksViewState();
+}
+
+class _WorksViewState extends State<WorksView> {
+  WorksStats? _stats;
+  Object? _error;
+  String _model = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final stats = await widget.state.whatWorks(model: _model);
+      if (mounted) setState(() => _stats = stats);
+    } catch (e) {
+      if (mounted) setState(() => _error = e);
+    }
+  }
+
+  void _pick(String model) {
+    setState(() {
+      _model = model;
+      _stats = null;
+    });
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) return _Message('Could not count this folder.\n$_error');
+    final stats = _stats;
+    if (stats == null) return const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)));
+    final scope = PopupMenuButton<String>(
+      key: const ValueKey<String>('works-model'),
+      tooltip: 'Narrow it to one model',
+      onSelected: _pick,
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: '', child: Text('All models')),
+        for (final (key, label, n) in stats.models) PopupMenuItem(value: key, child: Text('$label  ·  $n rated')),
+      ],
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(17), border: Border.all(color: Palette.line)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.expand_more, size: 16, color: Palette.muted),
+            const SizedBox(width: 4),
+            Text(
+              _model.isEmpty ? 'All models' : stats.models.where((m) => m.$1 == _model).map((m) => m.$2).firstOrNull ?? _model,
+              style: const TextStyle(fontSize: 12.5, color: Palette.text),
+            ),
+          ],
+        ),
+      ),
+    );
+    final judged = stats.liked + stats.disliked;
+    final note = Text(
+      judged == 0
+          ? 'Rate or flag pictures that have prompts, a few you like (4 or 5 stars, or keep) and a few you do not (1 or 2 stars, or reject), and this shows what sets them apart.'
+          : 'From $judged rated pictures with prompts: ${stats.liked} liked (4–5 stars or kept), ${stats.disliked} not (1–2 stars or rejected). Tap a row to see its pictures.',
+      style: const TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.4),
+    );
+    return LayoutBuilder(
+      builder: (context, box) {
+        final thumbs = box.maxWidth >= 600;
+        Widget card(String title, List<WorksItem> items, String empty) => Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+          decoration: BoxDecoration(color: Palette.panel, borderRadius: BorderRadius.circular(8), border: Border.all(color: Palette.line)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(title.toUpperCase(), style: _heading),
+              const SizedBox(height: 6),
+              if (items.isEmpty)
+                Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(empty, style: const TextStyle(fontSize: 12, color: Palette.faint)))
+              else
+                for (var i = 0; i < items.length; i++)
+                  _WorksRow(state: widget.state, rank: i + 1, item: items[i], thumbs: thumbs, onTap: () => widget.onShow(items[i].query)),
+            ],
+          ),
+        );
+        final keep = card('Phrases in your keepers', stats.keep, 'Nothing stands out yet.');
+        final reject = card('Phrases in your rejects', stats.reject, 'Nothing stands out yet.');
+        final settings = card('Settings', stats.settings, 'No setting sets them apart.');
+        final cards = box.maxWidth >= 900
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: Column(children: [keep, const SizedBox(height: 14), reject])),
+                  const SizedBox(width: 14),
+                  Expanded(child: settings),
+                ],
+              )
+            : Column(children: [keep, const SizedBox(height: 14), reject, const SizedBox(height: 14), settings]);
+        return ListView(
+          key: const ValueKey<String>('works'),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: note),
+                const SizedBox(width: 12),
+                scope,
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (judged > 0) cards,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _WorksRow extends StatelessWidget {
+  const _WorksRow({required this.state, required this.rank, required this.item, required this.thumbs, required this.onTap});
+  final AppState state;
+  final int rank;
+  final WorksItem item;
+  final bool thumbs;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    String pct(double v) => '${(v * 100).round()}%';
+    return Opacity(
+      opacity: item.few ? 0.6 : 1,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          key: ValueKey<String>('works-row-${item.label}'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          hoverColor: Palette.hover,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+            child: Row(
+              children: [
+                SizedBox(width: 22, child: Text('$rank', style: const TextStyle(fontSize: 12.5, color: Palette.faint))),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Palette.text)),
+                      const SizedBox(height: 5),
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 10,
+                        runSpacing: 4,
+                        children: [
+                          SizedBox(width: 120, child: LiftBars(keep: item.keep, reject: item.reject)),
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(text: pct(item.keep), style: const TextStyle(color: keepGreen, fontWeight: FontWeight.w600)),
+                                const TextSpan(text: ' of keepers · '),
+                                TextSpan(text: pct(item.reject), style: const TextStyle(color: Palette.danger, fontWeight: FontWeight.w600)),
+                                TextSpan(text: ' of rejects · ${item.judged} pictures${item.few ? ' · too few to trust' : ''}'),
+                              ],
+                            ),
+                            style: const TextStyle(fontSize: 11.5, color: Palette.faint),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                if (thumbs && item.samples.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  ThumbStrip(state: state, items: [for (final s in item.samples) s.item], size: 42),
+                ],
+              ],
+            ),
           ),
         ),
       ),

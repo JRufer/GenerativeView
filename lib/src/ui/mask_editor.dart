@@ -6,8 +6,11 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_state.dart';
 import '../core/backends.dart' show ImageInput;
+import '../core/models.dart' show HeatMap;
 import '../theme.dart';
+import 'kit.dart';
 
 // ---------------------------------------------------------------- the mask
 
@@ -261,6 +264,100 @@ class _MaskPainter extends CustomPainter {
   bool shouldRepaint(_MaskPainter old) => true;
 }
 
+// ---------------------------------------------------------------- find
+
+/// How finely a heat map is smoothed before it is drawn or made a mask.
+const int heatSmooth = 48;
+
+/// [heat] smoothed to [n] × [n] (bilinear), row by row from the top.
+List<double> smoothHeat(HeatMap heat, [int n = heatSmooth]) {
+  final g = heat.grid;
+  if (g <= 0 || heat.values.length != g * g) return List<double>.filled(n * n, 0);
+  double sample(double x, double y) {
+    // Cell centres sit at (i + 0.5) / g.
+    final fx = (x * g - 0.5).clamp(0.0, g - 1.0).toDouble();
+    final fy = (y * g - 0.5).clamp(0.0, g - 1.0).toDouble();
+    final x0 = fx.floor(), y0 = fy.floor();
+    final x1 = math.min(x0 + 1, g - 1), y1 = math.min(y0 + 1, g - 1);
+    final tx = fx - x0, ty = fy - y0;
+    final top = heat.at(x0, y0) * (1 - tx) + heat.at(x1, y0) * tx;
+    final bottom = heat.at(x0, y1) * (1 - tx) + heat.at(x1, y1) * tx;
+    return top * (1 - ty) + bottom * ty;
+  }
+
+  return [
+    for (var y = 0; y < n; y++)
+      for (var x = 0; x < n; x++) sample((x + 0.5) / n, (y + 0.5) / n),
+  ];
+}
+
+/// The part of the picture where [heat] reaches [threshold] (0 to 1), as
+/// filled shapes for the mask: each row's runs of cells, one rectangle a
+/// run, after smoothing.
+List<MaskOp> heatToMask(HeatMap heat, double threshold, {bool erase = false}) {
+  const n = heatSmooth;
+  final smooth = smoothHeat(heat, n);
+  final out = <MaskOp>[];
+  for (var y = 0; y < n; y++) {
+    var x = 0;
+    while (x < n) {
+      if (smooth[y * n + x] < threshold) {
+        x++;
+        continue;
+      }
+      final from = x;
+      while (x < n && smooth[y * n + x] >= threshold) {
+        x++;
+      }
+      final l = from / n, r = x / n, t = y / n, b = (y + 1) / n;
+      out.add(MaskOp(MaskKind.trace, erase: erase, points: [Offset(l, t), Offset(r, t), Offset(r, b), Offset(l, b)]));
+    }
+  }
+  return out;
+}
+
+/// [heat] drawn warm where a phrase fits, clear where it does not; the
+/// part at or above [threshold] (what would go in the mask) outlined.
+class _HeatPainter extends CustomPainter {
+  _HeatPainter(this.heat, this.threshold);
+  final HeatMap heat;
+  final double threshold;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const n = heatSmooth;
+    final smooth = smoothHeat(heat, n);
+    final w = size.width / n, h = size.height / n;
+    // Cells meet edge to edge; anti-aliased, their shared edges would show.
+    final cell = Paint()..isAntiAlias = false;
+    for (var y = 0; y < n; y++) {
+      for (var x = 0; x < n; x++) {
+        final v = smooth[y * n + x];
+        if (v < 0.05) continue;
+        final color = Color.lerp(const Color(0xFFFFB04F), maskTint, v)!.withValues(alpha: 0.15 + 0.5 * v);
+        canvas.drawRect(Rect.fromLTRB((x * w).floorToDouble(), (y * h).floorToDouble(), ((x + 1) * w).floorToDouble(), ((y + 1) * h).floorToDouble()), cell..color = color);
+      }
+    }
+    final edge = Paint()
+      ..color = Colors.white.withValues(alpha: 0.85)
+      ..strokeWidth = 1.5;
+    bool on(int x, int y) => x >= 0 && y >= 0 && x < n && y < n && smooth[y * n + x] >= threshold;
+    for (var y = 0; y < n; y++) {
+      for (var x = 0; x < n; x++) {
+        if (!on(x, y)) continue;
+        final l = x * w, t = y * h;
+        if (!on(x - 1, y)) canvas.drawLine(Offset(l, t), Offset(l, t + h), edge);
+        if (!on(x + 1, y)) canvas.drawLine(Offset(l + w, t), Offset(l + w, t + h), edge);
+        if (!on(x, y - 1)) canvas.drawLine(Offset(l, t), Offset(l + w, t), edge);
+        if (!on(x, y + 1)) canvas.drawLine(Offset(l, t + h), Offset(l + w, t + h), edge);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HeatPainter old) => old.heat != heat || old.threshold != threshold;
+}
+
 // ---------------------------------------------------------------- editor
 
 /// Paint where a remix should redraw the picture at [path], over the
@@ -272,18 +369,21 @@ Future<List<MaskOp>?> editMask(
   required String name,
   required double aspect,
   required List<MaskOp> ops,
+  AppState? state,
+  List<String> phrases = const [],
+  String? find,
 }) {
   return Navigator.of(context).push<List<MaskOp>>(
     PageRouteBuilder<List<MaskOp>>(
       transitionDuration: const Duration(milliseconds: 140),
       reverseTransitionDuration: const Duration(milliseconds: 100),
-      pageBuilder: (_, _, _) => MaskEditor(path: path, name: name, aspect: aspect, ops: ops),
+      pageBuilder: (_, _, _) => MaskEditor(path: path, name: name, aspect: aspect, ops: ops, state: state, phrases: phrases, find: find),
       transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: animation, child: child),
     ),
   );
 }
 
-enum MaskTool { brush, trace }
+enum MaskTool { brush, trace, find }
 
 /// The picture, fitted, with the mask over it in pink. One finger, a pen
 /// or the mouse paints with the brush or traces round a shape (filled when
@@ -291,11 +391,30 @@ enum MaskTool { brush, trace }
 /// and move; so do the right and middle mouse buttons dragged. The tools
 /// sit under the picture, never over it.
 class MaskEditor extends StatefulWidget {
-  const MaskEditor({super.key, required this.path, required this.name, required this.aspect, required this.ops});
+  const MaskEditor({
+    super.key,
+    required this.path,
+    required this.name,
+    required this.aspect,
+    required this.ops,
+    this.state,
+    this.phrases = const [],
+    this.find,
+  });
   final String path;
   final String name;
   final double aspect;
   final List<MaskOp> ops;
+
+  /// For Find: what looks for a phrase in the picture. Without it there is
+  /// no Find tool.
+  final AppState? state;
+
+  /// The prompt's phrases, offered to Find.
+  final List<String> phrases;
+
+  /// A phrase to start on Find with.
+  final String? find;
 
   @override
   State<MaskEditor> createState() => _MaskEditorState();
@@ -303,7 +422,62 @@ class MaskEditor extends StatefulWidget {
 
 class _MaskEditorState extends State<MaskEditor> {
   late final List<MaskOp> _ops = [...widget.ops];
-  MaskTool _tool = MaskTool.brush;
+  late MaskTool _tool = widget.find != null && widget.state != null ? MaskTool.find : MaskTool.brush;
+
+  /// Find: the phrase looked for, where it fits, and how far out from the
+  /// best spot the mask spreads (0 to 1).
+  late String? _phrase = widget.find;
+  HeatMap? _heat;
+  String? _heatFor;
+  bool _finding = false;
+  String? _findError;
+  double _spread = 0.45;
+
+  double get _threshold => 1 - _spread;
+
+  bool get _canFind => widget.state != null && widget.phrases.isNotEmpty;
+
+  Future<void> _look(String phrase) async {
+    final state = widget.state;
+    if (state == null) return;
+    setState(() {
+      _phrase = phrase;
+      _finding = true;
+      _findError = null;
+    });
+    try {
+      final heat = await state.heat(widget.path, phrase);
+      if (!mounted || _phrase != phrase) return;
+      setState(() {
+        _heat = heat;
+        _heatFor = phrase;
+      });
+    } catch (e) {
+      if (mounted && _phrase == phrase) setState(() => _findError = '$e');
+    } finally {
+      if (mounted && _phrase == phrase) setState(() => _finding = false);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final find = widget.find;
+    if (find != null && widget.state != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _look(find);
+      });
+    }
+  }
+
+  void _useHeat() {
+    final heat = _heat;
+    if (heat == null) return;
+    final ops = heatToMask(heat, _threshold, erase: _erase);
+    if (ops.isEmpty) return;
+    _ops.addAll(ops);
+    _changed();
+  }
   bool _erase = false;
 
   /// The brush's radius on screen, in logical pixels.
@@ -457,7 +631,8 @@ class _MaskEditorState extends State<MaskEditor> {
       return;
     }
     if (_pointers.length == 1) {
-      _start(e.pointer, e.localPosition);
+      // Find marks by its button, not by drawing.
+      if (_tool != MaskTool.find) _start(e.pointer, e.localPosition);
     } else if (_pointers.length == 2) {
       // Two fingers: zoom and move, not paint.
       if (_drawing != null) _abandon();
@@ -540,6 +715,9 @@ class _MaskEditorState extends State<MaskEditor> {
         const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): _undo,
         const SingleActivator(LogicalKeyboardKey.keyB): () => setState(() => _tool = MaskTool.brush),
         const SingleActivator(LogicalKeyboardKey.keyT): () => setState(() => _tool = MaskTool.trace),
+        const SingleActivator(LogicalKeyboardKey.keyF): () {
+          if (_canFind) setState(() => _tool = MaskTool.find);
+        },
         const SingleActivator(LogicalKeyboardKey.keyE): () => setState(() => _erase = !_erase),
         const SingleActivator(LogicalKeyboardKey.keyI): _invert,
         const SingleActivator(LogicalKeyboardKey.bracketLeft): () => _resize(1 / 1.2),
@@ -592,7 +770,9 @@ class _MaskEditorState extends State<MaskEditor> {
               children: [
                 const Text('Paint where to redraw', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                 Text(
-                  painted ? 'Only the pink part is redrawn' : 'Nothing painted: all of it is redrawn',
+                  _tool == MaskTool.find && _phrase != null
+                      ? (_finding ? 'Finding “$_phrase”…' : (_findError ?? 'Found: where “$_phrase” fits best'))
+                      : (painted ? 'Only the pink part is redrawn' : 'Nothing painted: all of it is redrawn'),
                   key: const ValueKey<String>('mask-status'),
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 11.5, color: Palette.faint),
@@ -656,6 +836,11 @@ class _MaskEditorState extends State<MaskEditor> {
                       ),
                     ),
                   ),
+                  if (_tool == MaskTool.find && _heat != null && _heatFor == _phrase)
+                    Positioned.fromRect(
+                      rect: r,
+                      child: IgnorePointer(child: CustomPaint(painter: _HeatPainter(_heat!, _threshold))),
+                    ),
                   // Where the brush would paint, under the mouse.
                   if (hover != null && _tool == MaskTool.brush)
                     Positioned(
@@ -694,7 +879,12 @@ class _MaskEditorState extends State<MaskEditor> {
         border: Border(top: BorderSide(color: Palette.line)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      child: Wrap(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_tool == MaskTool.find) ...[_findRow(), const SizedBox(height: 8)],
+          Wrap(
         spacing: 10,
         runSpacing: 8,
         alignment: WrapAlignment.center,
@@ -703,12 +893,25 @@ class _MaskEditorState extends State<MaskEditor> {
           SegmentedButton<MaskTool>(
             key: const ValueKey<String>('mask-tool'),
             showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: MaskTool.brush, icon: Icon(Icons.brush, size: 17), label: Text('Brush'), tooltip: 'Paint with a round brush (B)'),
-              ButtonSegment(value: MaskTool.trace, icon: Icon(Icons.gesture, size: 17), label: Text('Trace'), tooltip: 'Trace round a shape; it fills when you let go (T)'),
+            segments: [
+              const ButtonSegment(value: MaskTool.brush, icon: Icon(Icons.brush, size: 17), label: Text('Brush'), tooltip: 'Paint with a round brush (B)'),
+              const ButtonSegment(value: MaskTool.trace, icon: Icon(Icons.gesture, size: 17), label: Text('Trace'), tooltip: 'Trace round a shape; it fills when you let go (T)'),
+              if (_canFind)
+                const ButtonSegment(
+                  value: MaskTool.find,
+                  icon: Icon(Icons.center_focus_strong_outlined, size: 17),
+                  label: Text('Find'),
+                  tooltip: 'Find where a phrase of the prompt is, or would fit (F)',
+                ),
             ],
             selected: {_tool},
-            onSelectionChanged: (s) => setState(() => _tool = s.first),
+            onSelectionChanged: (s) {
+              setState(() => _tool = s.first);
+              if (s.first == MaskTool.find && _heat == null && !_finding) {
+                final first = _phrase ?? (widget.phrases.isEmpty ? null : widget.phrases.first);
+                if (first != null) _look(first);
+              }
+            },
           ),
           SegmentedButton<bool>(
             key: const ValueKey<String>('mask-mode'),
@@ -753,7 +956,68 @@ class _MaskEditorState extends State<MaskEditor> {
           if (_zoom > 1.001)
             icon(key: const ValueKey<String>('mask-fit'), tooltip: 'Fit the picture again (0)', icon: Icons.fit_screen_outlined, onTap: _fit),
         ],
+          ),
+        ],
       ),
+    );
+  }
+
+  /// Find: the prompt's phrases to look for, how far the mask spreads from
+  /// the best spot, and the button that puts it in the mask.
+  Widget _findRow() {
+    final ready = _heat != null && _heatFor == _phrase && !_finding;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 34,
+          child: ListView(
+            key: const ValueKey<String>('mask-find-phrases'),
+            scrollDirection: Axis.horizontal,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(right: 8),
+                child: Center(child: Text('Find', style: TextStyle(fontSize: 12.5, color: Palette.muted))),
+              ),
+              for (final p in widget.phrases)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Center(
+                    child: PhraseChip(
+                      key: ValueKey<String>('mask-find-$p'),
+                      text: p,
+                      look: PhraseLook.seen,
+                      selected: p == _phrase,
+                      onTap: () => _look(p),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            const Text('Spread', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+            Expanded(
+              child: Slider(
+                key: const ValueKey<String>('mask-find-spread'),
+                value: _spread,
+                min: 0.05,
+                max: 0.95,
+                onChanged: (v) => setState(() => _spread = v),
+              ),
+            ),
+            if (_finding) const Padding(padding: EdgeInsets.only(right: 10), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+            OutlinedButton.icon(
+              key: const ValueKey<String>('mask-find-use'),
+              onPressed: ready ? _useHeat : null,
+              icon: Icon(_erase ? Icons.remove : Icons.add, size: 16),
+              label: Text(_erase ? 'Take from the mask' : 'Add to the mask'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

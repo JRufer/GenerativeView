@@ -15,3 +15,4 @@ pub mod sr;
 pub mod taste;
 pub mod thumbs;
 pub mod upscale;
+pub mod works;

@@ -103,8 +103,12 @@ class PromptEditor extends StatefulWidget {
     this.maxLines = 10,
     this.onAddWord,
     this.autofocus = false,
+    this.focusNode,
   });
   final PromptController controller;
+
+  /// Its focus, when the panel around it needs to move the caret into it.
+  final FocusNode? focusNode;
   final String? label;
   final String? hint;
   final int minLines;
@@ -125,7 +129,7 @@ const double _sliderWidth = 280;
 class _PromptEditorState extends State<PromptEditor> {
   final GlobalKey _fieldKey = GlobalKey();
   final OverlayPortalController _popup = OverlayPortalController();
-  final FocusNode _focus = FocusNode(debugLabel: 'prompt');
+  late final FocusNode _focus = widget.focusNode ?? FocusNode(debugLabel: 'prompt');
 
   /// Where the popup goes (global), and what it offers.
   Offset? _anchor;
@@ -155,7 +159,8 @@ class _PromptEditorState extends State<PromptEditor> {
   @override
   void dispose() {
     _c.removeListener(_onChange);
-    _focus.dispose();
+    _focus.removeListener(_onChange);
+    if (widget.focusNode == null) _focus.dispose();
     super.dispose();
   }
 

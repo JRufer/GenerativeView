@@ -9,20 +9,41 @@ import '../core/backends.dart';
 import '../core/civitai.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
+import '../core/prompt_edits.dart';
 import '../core/spelling.dart';
 import '../theme.dart';
 import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
 import 'prompt_editor.dart';
+import 'kit.dart';
 import 'sheet.dart';
 
 /// Open the remix panel for [item]: its prompt to edit (with spelling and
 /// weights), its seed, size and count, and a button that queues it on
 /// ComfyUI, InvokeAI or Forge.
-Future<void> openRemix(BuildContext context, AppState state, MediaItem item) async {
+/// How wide a remix panel has to be for its two columns: what to make on
+/// the left, how to make it on the right.
+const double remixTwoColumns = 820;
+
+/// [weightUp] opens it with that phrase weighted up and the suggestions
+/// open; [fixPhrase] opens it on image to image with the mask editor
+/// finding where that phrase should be.
+///
+/// [recipe] remixes with that recipe instead of the picture's own (a
+/// described prompt for a picture that has none), starting from the
+/// picture itself when [imageToImage].
+Future<void> openRemix(
+  BuildContext context,
+  AppState state,
+  MediaItem item, {
+  String? weightUp,
+  String? fixPhrase,
+  GenInfo? recipe,
+  bool imageToImage = false,
+}) async {
   final GenInfo info;
   try {
-    info = await state.metadata(item);
+    info = recipe ?? await state.metadata(item);
   } catch (e) {
     if (context.mounted) toast(context, 'Could not read this file');
     return;
@@ -36,8 +57,9 @@ Future<void> openRemix(BuildContext context, AppState state, MediaItem item) asy
     context,
     title: 'Remix ${item.name}',
     icon: Icons.auto_fix_high,
-    width: 760,
-    builder: (context) => RemixPanel(state: state, item: item, info: info),
+    // Room for two columns on a tablet or an open Fold.
+    width: MediaQuery.sizeOf(context).width >= 900 ? 1080 : 760,
+    builder: (context) => RemixPanel(state: state, item: item, info: info, weightUp: weightUp, fixPhrase: fixPhrase, imageToImage: imageToImage),
   );
 }
 
@@ -47,12 +69,25 @@ class RemixPanel extends StatefulWidget {
     required this.state,
     required this.item,
     required this.info,
+    this.weightUp,
+    this.fixPhrase,
+    this.imageToImage = false,
   });
   final AppState state;
 
   /// The picture being remixed: the new ones are saved beside it.
   final MediaItem item;
   final GenInfo info;
+
+  /// A phrase to weight up as it opens.
+  final String? weightUp;
+
+  /// A phrase whose place in the picture to redraw: opens on image to
+  /// image, with the mask editor finding it.
+  final String? fixPhrase;
+
+  /// Start on image to image.
+  final bool imageToImage;
 
   @override
   State<RemixPanel> createState() => _RemixPanelState();
@@ -78,7 +113,7 @@ class _RemixPanelState extends State<RemixPanel> {
 
   /// Start from the picture itself (image to image) rather than from noise.
   /// Only when the user picks it.
-  bool _imageToImage = false;
+  late bool _imageToImage = widget.imageToImage && !widget.item.isVideo;
 
   /// How much of the picture image to image redraws, 0 to 1.
   double _strength = 0.6;
@@ -88,6 +123,12 @@ class _RemixPanelState extends State<RemixPanel> {
   String? _backend;
   bool _sending = false;
   String? _error;
+
+  /// Prompt Doctor's suggestions, once loaded, and those applied.
+  Advice? _advice;
+  final Set<int> _applied = {};
+  late final bool _suggestionsOpen = widget.weightUp != null;
+  final FocusNode _promptFocus = FocusNode(debugLabel: 'remix prompt');
 
   GenInfo get info => widget.info;
 
@@ -120,6 +161,17 @@ class _RemixPanelState extends State<RemixPanel> {
     final pool = ready.isNotEmpty ? ready : usable;
     _backend = pool.contains(made) ? made : (pool.isEmpty ? null : pool.first);
     _loadSpelling();
+    _loadAdvice();
+    final up = widget.weightUp;
+    if (up != null) _prompt.value = weightPhrase(_prompt.value, up, 1.3);
+    final fix = widget.fixPhrase;
+    if (fix != null && !widget.item.isVideo) {
+      _imageToImage = true;
+      _prompt.value = weightPhrase(_prompt.value, fix, 1.2);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _editMask(find: fix);
+      });
+    }
   }
 
   Future<void> _loadSpelling() async {
@@ -133,6 +185,7 @@ class _RemixPanelState extends State<RemixPanel> {
 
   @override
   void dispose() {
+    _promptFocus.dispose();
     _prompt.dispose();
     _negative.dispose();
     _seed.dispose();
@@ -209,278 +262,390 @@ class _RemixPanelState extends State<RemixPanel> {
   }
 
   @override
-  Widget build(BuildContext context) {
+Widget build(BuildContext context) {
     final support = backendSupport(info);
     final urls = widget.state.backendUrls;
     final video = widget.item.isVideo;
-    final body = SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Text to image unless the user picks otherwise.
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SegmentedButton<bool>(
-              key: const ValueKey<String>('remix-mode'),
-              showSelectedIcon: false,
-              segments: [
-                const ButtonSegment(
-                  value: false,
-                  icon: Icon(Icons.text_fields, size: 17),
-                  label: Text('Text to image'),
-                  tooltip: 'Make new pictures from the prompt and settings',
-                ),
-                ButtonSegment(
-                  value: true,
-                  icon: const Icon(Icons.image_outlined, size: 17),
-                  label: const Text('Image to image'),
-                  tooltip: video ? 'Videos cannot be started from' : 'Start from this picture and redraw some or all of it',
-                  enabled: !video,
-                ),
-              ],
-              selected: {_imageToImage},
-              onSelectionChanged: (s) => setState(() => _imageToImage = s.first),
+    // What to make, on the left of a wide panel or first on a narrow one.
+    final what = <Widget>[
+      // Text to image unless the user picks otherwise.
+      Align(
+        alignment: Alignment.centerLeft,
+        child: SegmentedButton<bool>(
+          key: const ValueKey<String>('remix-mode'),
+          showSelectedIcon: false,
+          segments: [
+            const ButtonSegment(
+              value: false,
+              icon: Icon(Icons.text_fields, size: 17),
+              label: Text('Text to image'),
+              tooltip: 'Make new pictures from the prompt and settings',
             ),
-          ),
-          if (_imageToImage) _imageSection(),
-          const SizedBox(height: 14),
-          PromptEditor(
-            key: const ValueKey<String>('remix-prompt'),
-            controller: _prompt,
-            label: 'Prompt',
-            minLines: 4,
-            onAddWord: widget.state.addUserWord,
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Select words to weight them; the caret in an underlined word offers corrections.',
-            style: TextStyle(fontSize: 11.5, color: Palette.faint),
-          ),
-          const SizedBox(height: 12),
-          PromptEditor(
-            key: const ValueKey<String>('remix-negative'),
-            controller: _negative,
-            label: 'Negative prompt',
-            minLines: 2,
-            maxLines: 5,
-            onAddWord: widget.state.addUserWord,
-          ),
-          const PanelHeading('Seed, size and count'),
-          // Two columns at every width, so the tiles line up: the seed over
-          // the size on the left, and what goes with each on the right.
-          // Only the right column's width changes with the room there is.
-          LayoutBuilder(
-            builder: (context, box) {
-              final side = box.maxWidth < 420 ? 128.0 : (box.maxWidth < 560 ? 168.0 : 200.0);
-              Widget row(Widget main, Widget aside) => IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: main),
-                    const SizedBox(width: 10),
-                    SizedBox(width: side, child: aside),
-                  ],
-                ),
-              );
-              return Column(
-                children: [
-                  row(
-                    _Tile(
-                      child: TextField(
-                        key: const ValueKey<String>('remix-seed'),
-                        controller: _seed,
-                        enabled: !_random,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
-                        decoration: _box('Seed').copyWith(
-                          fillColor: Colors.transparent,
-                          suffixIcon: IconButton(
-                            tooltip: 'A new random seed',
-                            icon: const Icon(Icons.casino_outlined, size: 18),
-                            onPressed: _random ? null : () => _seed.text = '${math.Random().nextInt(1 << 32)}',
-                          ),
-                        ),
+            ButtonSegment(
+              value: true,
+              icon: const Icon(Icons.image_outlined, size: 17),
+              label: const Text('Image to image'),
+              tooltip: video ? 'Videos cannot be started from' : 'Start from this picture and redraw some or all of it',
+              enabled: !video,
+            ),
+          ],
+          selected: {_imageToImage},
+          onSelectionChanged: (s) => setState(() => _imageToImage = s.first),
+        ),
+      ),
+      if (_imageToImage) _imageSection(),
+      const SizedBox(height: 14),
+      PromptEditor(
+        key: const ValueKey<String>('remix-prompt'),
+        controller: _prompt,
+        focusNode: _promptFocus,
+        label: 'Prompt',
+        minLines: 4,
+        onAddWord: widget.state.addUserWord,
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Select words to weight them; the caret in an underlined word offers corrections.',
+        style: TextStyle(fontSize: 11.5, color: Palette.faint),
+      ),
+      _suggestions(),
+      const SizedBox(height: 12),
+      PromptEditor(
+        key: const ValueKey<String>('remix-negative'),
+        controller: _negative,
+        label: 'Negative prompt',
+        minLines: 2,
+        maxLines: 5,
+        onAddWord: widget.state.addUserWord,
+      ),
+    ];
+    // How to make it.
+    final how = <Widget>[
+      const PanelHeading('Seed, size and count'),
+      // Two columns at every width, so the tiles line up: the seed over
+      // the size on the left, and what goes with each on the right.
+      // Only the right column's width changes with the room there is.
+      LayoutBuilder(
+        builder: (context, box) {
+          final side = box.maxWidth < 420 ? 128.0 : (box.maxWidth < 560 ? 168.0 : 200.0);
+          Widget row(Widget main, Widget aside) => IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: main),
+                const SizedBox(width: 10),
+                SizedBox(width: side, child: aside),
+              ],
+            ),
+          );
+          return Column(
+            children: [
+              row(
+                _Tile(
+                  child: TextField(
+                    key: const ValueKey<String>('remix-seed'),
+                    controller: _seed,
+                    enabled: !_random,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
+                    decoration: _box('Seed').copyWith(
+                      fillColor: Colors.transparent,
+                      suffixIcon: IconButton(
+                        tooltip: 'A new random seed',
+                        icon: const Icon(Icons.casino_outlined, size: 18),
+                        onPressed: _random ? null : () => _seed.text = '${math.Random().nextInt(1 << 32)}',
                       ),
                     ),
-                    _ToggleTile(
-                      key: const ValueKey<String>('remix-random'),
-                      label: 'Random each time',
-                      value: _random,
-                      onChanged: (v) => setState(() => _random = v),
-                    ),
                   ),
-                  const SizedBox(height: 10),
-                  row(
-                    SizeField(width: _width, height: _height, aspect: _aspect, expand: true),
-                    _Stepper(
-                      value: _count,
-                      min: 1,
-                      max: 16,
-                      label: _count == 1 ? 'picture' : 'pictures',
-                      onChanged: (v) => setState(() => _count = v),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-          SizeSlider(
-            key: const ValueKey<String>('remix-size-slider'),
-            width: _width,
-            height: _height,
-            original: recipeSize(info),
-          ),
-          if (!_random && _count > 1)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
-            ),
-          SamplingSection(key: const ValueKey<String>('remix-sampling'), choice: _sampling),
-          if (_loras.isNotEmpty) LoraSection(loras: _loras, prompt: _prompt),
-          PanelHeading(
-            'Send to',
-            trailing: TextButton.icon(
-              onPressed: () async {
-                await openBackendSettings(context, widget.state);
-                if (mounted) setState(() {});
-              },
-              icon: const Icon(Icons.dns_outlined, size: 16),
-              label: const Text('Servers…'),
-            ),
-          ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final MapEntry(key: kind, value: name) in backendNames.entries)
-                ChoiceChipButton(
-                  label: name,
-                  selected: _backend == kind,
-                  icon: (urls[kind] ?? '').isEmpty ? Icons.link_off : Icons.dns_outlined,
-                  tooltip: support[kind] ?? urls[kind] ?? 'Not set up yet: you will be asked where it is',
-                  onTap: support[kind] == null ? () => setState(() => _backend = kind) : null,
                 ),
+                _ToggleTile(
+                  key: const ValueKey<String>('remix-random'),
+                  label: 'Random each time',
+                  value: _random,
+                  onChanged: (v) => setState(() => _random = v),
+                ),
+              ),
+              const SizedBox(height: 10),
+              row(
+                SizeField(width: _width, height: _height, aspect: _aspect, expand: true),
+                _Stepper(
+                  value: _count,
+                  min: 1,
+                  max: 16,
+                  label: _count == 1 ? 'picture' : 'pictures',
+                  onChanged: (v) => setState(() => _count = v),
+                ),
+              ),
             ],
-          ),
-          if (_backend != null && (urls[_backend] ?? '').isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(urls[_backend]!, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
-            ),
-          // Said in the panel, not only in a tooltip, so it reads on a tablet.
-          if (_imageToImage && _backend == 'invokeai' && !carriesGraph('invokeai', info))
-            const Padding(
-              key: ValueKey<String>('remix-built-graph'),
-              padding: EdgeInsets.only(top: 6),
-              child: Text(
-                'This picture was not made in InvokeAI, so it will get a standard graph built from its '
-                'settings that starts from the picture: the same model and LoRAs (by name), prompt, seed, '
-                'steps, CFG and sampler. That works for SD 1.x, SD 2.x, SDXL and Krea 2 models.',
-                style: TextStyle(fontSize: 11.5, color: Palette.muted),
-              ),
-            )
-          else if (_backend != null && _backend != 'forge' && !carriesGraph(_backend!, info))
-            Padding(
-              key: const ValueKey<String>('remix-built-graph'),
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                'This picture was not made in ${backendNames[_backend]}, so it will get a standard '
-                'text-to-image ${_backend == 'comfyui' ? 'workflow' : 'graph'} built from its settings: '
-                'the same model and LoRAs (by name), prompt, seed, steps, CFG, sampler and size.',
-                style: const TextStyle(fontSize: 11.5, color: Palette.muted),
-              ),
-            ),
-          if (_backend == 'forge')
-            const Padding(
-              key: ValueKey<String>('remix-forge-note'),
-              padding: EdgeInsets.only(top: 6),
-              child: Text(
-                'Forge hands the pictures back only to the app that asked, so keep the app open until they '
-                'arrive (on Android the screen can lock; it keeps waiting). If it is closed, Forge still saves '
-                'them in its own outputs folder. ComfyUI and InvokeAI remixes are picked up again when the app reopens.',
-                style: TextStyle(fontSize: 11.5, color: Palette.muted),
-              ),
-            ),
-          if (support.values.any((why) => why != null))
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                support.values.firstWhere((why) => why != null)!,
-                style: const TextStyle(fontSize: 11.5, color: Palette.faint),
-              ),
-            ),
-        ],
+          );
+        },
       ),
+      SizeSlider(
+        key: const ValueKey<String>('remix-size-slider'),
+        width: _width,
+        height: _height,
+        original: recipeSize(info),
+      ),
+      if (!_random && _count > 1)
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
+        ),
+      SamplingSection(key: const ValueKey<String>('remix-sampling'), choice: _sampling),
+      if (_loras.isNotEmpty) LoraSection(loras: _loras, prompt: _prompt),
+      if (_backend != null && (urls[_backend] ?? '').isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Text(
+            'Sends to ${backendNames[_backend]} at ${urls[_backend]}',
+            key: const ValueKey<String>('remix-server-url'),
+            style: const TextStyle(fontSize: 11.5, color: Palette.faint),
+          ),
+        ),
+      // Said in the panel, not only in a tooltip, so it reads on a tablet.
+      if (_imageToImage && _backend == 'invokeai' && !carriesGraph('invokeai', info))
+        const Padding(
+          key: ValueKey<String>('remix-built-graph'),
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'This picture was not made in InvokeAI, so it will get a standard graph built from its '
+            'settings that starts from the picture: the same model and LoRAs (by name), prompt, seed, '
+            'steps, CFG and sampler. That works for SD 1.x, SD 2.x, SDXL and Krea 2 models.',
+            style: TextStyle(fontSize: 11.5, color: Palette.muted),
+          ),
+        )
+      else if (_backend != null && _backend != 'forge' && !carriesGraph(_backend!, info))
+        Padding(
+          key: const ValueKey<String>('remix-built-graph'),
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'This picture was not made in ${backendNames[_backend]}, so it will get a standard '
+            'text-to-image ${_backend == 'comfyui' ? 'workflow' : 'graph'} built from its settings: '
+            'the same model and LoRAs (by name), prompt, seed, steps, CFG, sampler and size.',
+            style: const TextStyle(fontSize: 11.5, color: Palette.muted),
+          ),
+        ),
+      if (_backend == 'forge')
+        const Padding(
+          key: ValueKey<String>('remix-forge-note'),
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'Forge hands the pictures back only to the app that asked, so keep the app open until they '
+            'arrive (on Android the screen can lock; it keeps waiting). If it is closed, Forge still saves '
+            'them in its own outputs folder. ComfyUI and InvokeAI remixes are picked up again when the app reopens.',
+            style: TextStyle(fontSize: 11.5, color: Palette.muted),
+          ),
+        ),
+      if (support.values.any((why) => why != null))
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            support.values.firstWhere((why) => why != null)!,
+            style: const TextStyle(fontSize: 11.5, color: Palette.faint),
+          ),
+        ),
+    ];
+    final body = LayoutBuilder(
+      builder: (context, box) {
+        // Side by side when there is room (a tablet, an open Fold).
+        final wide = box.maxWidth >= remixTwoColumns;
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
+          child: wide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 5, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: what)),
+                    const SizedBox(width: 24),
+                    Expanded(flex: 4, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: how)),
+                  ],
+                )
+              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...what, ...how]),
+        );
+      },
     );
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Flexible(child: body),
-        _footer(context),
+        ServerSendBar(
+          state: widget.state,
+          backend: _backend,
+          support: support,
+          onBackend: (kind) => setState(() => _backend = kind),
+          onServersChanged: () {
+            if (mounted) setState(() {});
+          },
+          chipKey: (kind) => ValueKey<String>('remix-server-$kind'),
+          action: _backend == null ? 'No server can take this' : 'Send to ${backendNames[_backend]}',
+          actionKey: const ValueKey<String>('remix-send'),
+          onSend: _backend == null ? null : _send,
+          sending: _sending,
+          error: _error,
+          leading: TextButton.icon(
+            onPressed: () => copyText(context, _prompt.text, 'prompt'),
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Copy prompt'),
+          ),
+        ),
       ],
     );
   }
 
-  /// Copy and Send, kept at the bottom of the panel whatever is scrolled
-  /// to, with any error from the last send just above them where it is
-  /// seen.
-  Widget _footer(BuildContext context) {
-    // A sheet runs down to the gesture bar; a dialog sits clear of it.
-    final sheet = ModalRoute.of(context) is ModalBottomSheetRoute;
-    final bottom = sheet ? MediaQuery.paddingOf(context).bottom : 0.0;
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Palette.panel,
-        border: Border(top: BorderSide(color: Palette.line)),
-      ),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(18, 10, 18, 12 + bottom),
+  // ---------------------------------------------------------- Prompt Doctor
+
+  /// Suggestions for the prompt: phrases the picture does not show, phrases
+  /// that make no difference to the user's ratings, and phrases common in
+  /// the pictures they like. Folded away unless opened from a phrase.
+  Widget _suggestions() {
+    final advice = _advice;
+    if (advice == null || advice.suggestions.isEmpty) return const SizedBox.shrink();
+    final open = [for (var i = 0; i < advice.suggestions.length; i++) if (!_applied.contains(i)) i];
+    final scope = advice.modelLabel.isEmpty ? 'your' : 'your ${advice.modelLabel}';
+    String pct(double v) => '${(v * 100).round()}%';
+    final rows = <Widget>[];
+    for (var i = 0; i < advice.suggestions.length; i++) {
+      final s = advice.suggestions[i];
+      final words = s.phrases.join(', ');
+      final bold = TextSpan(text: words, style: const TextStyle(fontWeight: FontWeight.w600));
+      final (icon, color, title, why, action) = switch (s.kind) {
+        'missed' => (
+          Icons.visibility_off_outlined,
+          Palette.danger,
+          TextSpan(children: [bold, const TextSpan(text: ' is not seen in the picture')]),
+          'Weight it up to ${s.weight?.toStringAsFixed(1) ?? '1.2'}${_imageToImage ? '' : ', or fix that spot in image to image'}',
+          'Weight up',
+        ),
+        'remove' when s.reason == 'no_difference' => (
+          Icons.remove,
+          Palette.muted,
+          TextSpan(children: [bold, TextSpan(text: s.phrases.length == 1 ? ' makes no difference' : ' make no difference')]),
+          '${scope[0].toUpperCase()}${scope.substring(1)} pictures rate the same with and without ${s.phrases.length == 1 ? 'it' : 'them'}',
+          'Remove',
+        ),
+        'remove' => (
+          Icons.remove,
+          Palette.muted,
+          TextSpan(children: [bold, const TextSpan(text: ' is common in your rejects')]),
+          'In ${pct(s.reject)} of $scope rejects, ${pct(s.keep)} of keepers',
+          'Remove',
+        ),
+        _ => (
+          Icons.add,
+          Palette.accent,
+          TextSpan(children: [const TextSpan(text: 'Add '), bold]),
+          'In ${pct(s.keep)} of $scope keepers, ${pct(s.reject)} of rejects',
+          'Add',
+        ),
+      };
+      rows.add(
+        SuggestionRow(
+          key: ValueKey<String>('remix-suggestion-$i'),
+          icon: icon,
+          color: color,
+          title: title,
+          why: why,
+          action: action,
+          done: _applied.contains(i),
+          onAction: () => _apply(i),
+          onTitleTap: s.kind == 'add' ? null : () => _select(s.phrases.first),
+        ),
+      );
+    }
+    return FoldSection(
+      key: const ValueKey<String>('remix-suggestions'),
+      toggleKey: const ValueKey<String>('remix-suggestions-toggle'),
+      label: 'Suggestions',
+      count: open.length,
+      summary: 'from prompt check and your ratings',
+      initiallyOpen: _suggestionsOpen,
+      trailing: open.length > 1 ? TextButton(key: const ValueKey<String>('remix-suggestions-all'), onPressed: _applyAll, child: const Text('Apply all')) : null,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.fromLTRB(10, 2, 4, 6),
+        decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_error != null)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 96),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(_error!, style: const TextStyle(fontSize: 12.5, color: Palette.danger, height: 1.35)),
-                ),
+            ...rows,
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                'Tap a phrase to select it in the prompt and fine-tune its weight.',
+                style: TextStyle(fontSize: 11.5, color: Palette.faint),
               ),
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: () => copyText(context, _prompt.text, 'prompt'),
-                  icon: const Icon(Icons.copy, size: 16),
-                  label: const Text('Copy prompt'),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      key: const ValueKey<String>('remix-send'),
-                      onPressed: _backend == null || _sending ? null : _send,
-                      icon: _sending
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.send, size: 18),
-                      label: Text(
-                        _backend == null ? 'No server can take this' : 'Send to ${backendNames[_backend]}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _loadAdvice() async {
+    try {
+      final advice = await widget.state.advise(widget.item, info.prompt, info.model);
+      if (mounted) setState(() => _advice = advice);
+    } catch (_) {
+      // No suggestions is no loss: the panel works without them.
+    }
+  }
+
+  void _apply(int i) {
+    final s = _advice!.suggestions[i];
+    switch (s.kind) {
+      case 'missed':
+        _prompt.value = weightPhrase(_prompt.value, s.phrases.first, s.weight ?? 1.2);
+      case 'remove':
+        {
+          final text = removePhrases(_prompt.text, s.phrases);
+          _prompt.value = TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+        }
+      default:
+        {
+          final text = addPhrase(_prompt.text, s.phrases.first);
+          _prompt.value = TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+        }
+    }
+    setState(() => _applied.add(i));
+  }
+
+  void _applyAll() {
+    final advice = _advice;
+    if (advice == null) return;
+    for (var i = 0; i < advice.suggestions.length; i++) {
+      if (!_applied.contains(i)) _apply(i);
+    }
+  }
+
+  /// Select [phrase] in the prompt, so the weight slider comes up under it.
+  void _select(String phrase) {
+    _promptFocus.requestFocus();
+    _prompt.value = selectPhrase(_prompt.value, phrase);
+  }
+
+
+  /// Open the mask editor on the picture; with [find], on its Find tool
+  /// looking for that phrase.
+  Future<void> _editMask({String? find}) async {
+    final item = widget.item;
+    final aspect = item.width > 0 && item.height > 0
+        ? item.width / item.height
+        : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
+    final ops = await editMask(
+      context,
+      path: item.path,
+      name: item.name,
+      aspect: aspect,
+      ops: _mask,
+      state: widget.state,
+      phrases: promptPhrases(_prompt.text),
+      find: find,
+    );
+    if (ops != null && mounted) {
+      setState(() => _mask = ops);
+    }
   }
 
   /// The picture to start from, how much of it to redraw, and where.
@@ -490,12 +655,7 @@ class _RemixPanelState extends State<RemixPanel> {
         ? item.width / item.height
         : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
     final painted = maskPaints(_mask);
-    Future<void> edit() async {
-      final ops = await editMask(context, path: item.path, name: item.name, aspect: aspect, ops: _mask);
-      if (ops != null && mounted) {
-        setState(() => _mask = ops);
-      }
-    }
+    Future<void> edit() => _editMask();
 
     final strength = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -954,7 +1114,6 @@ class SamplingSection extends StatefulWidget {
 }
 
 class _SamplingSectionState extends State<SamplingSection> {
-  bool _open = false;
   late final TextEditingController _steps = TextEditingController(text: widget.choice.steps?.toString() ?? '');
   late final TextEditingController _cfg = TextEditingController(text: widget.choice.cfg == null ? '' : cfgText(widget.choice.cfg!));
 
@@ -979,15 +1138,12 @@ class _SamplingSectionState extends State<SamplingSection> {
 
   @override
   Widget build(BuildContext context) {
-    final still = MediaQuery.of(context).disableAnimations;
     final changed = c.stepsChanged || c.cfgChanged;
     final summary = [
       c.steps == null ? 'server\'s steps' : '${c.steps} steps',
       c.cfg == null ? 'server\'s CFG' : 'CFG ${cfgText(c.cfg!)}',
     ].join(' · ');
-    final rows = !_open
-        ? const SizedBox(width: double.infinity)
-        : Container(
+    final rows = Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
             decoration: BoxDecoration(color: Palette.raised, borderRadius: BorderRadius.circular(6)),
@@ -1042,51 +1198,13 @@ class _SamplingSectionState extends State<SamplingSection> {
               ],
             ),
           );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        InkWell(
-          key: const ValueKey<String>('remix-sampling-toggle'),
-          borderRadius: BorderRadius.circular(6),
-          onTap: () => setState(() => _open = !_open),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                AnimatedRotation(
-                  turns: _open ? 0.25 : 0,
-                  duration: still ? Duration.zero : const Duration(milliseconds: 180),
-                  child: const Icon(Icons.chevron_right, size: 18, color: Palette.faint),
-                ),
-                const SizedBox(width: 4),
-                const Text(
-                  'STEPS & CFG',
-                  style: TextStyle(fontSize: 10.5, letterSpacing: 0.9, fontWeight: FontWeight.w600, color: Palette.faint),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    summary,
-                    key: const ValueKey<String>('remix-sampling-summary'),
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11.5, color: changed ? Palette.accent : Palette.faint),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (still)
-          rows
-        else
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: rows,
-          ),
-      ],
+    return FoldSection(
+      toggleKey: const ValueKey<String>('remix-sampling-toggle'),
+      label: 'Steps & CFG',
+      summary: summary,
+      summaryKey: const ValueKey<String>('remix-sampling-summary'),
+      highlight: changed,
+      child: rows,
     );
   }
 
@@ -1202,7 +1320,6 @@ class _Triggers {
 }
 
 class _LoraSectionState extends State<LoraSection> {
-  bool _open = false;
   late final List<_Triggers> _triggers = [
     for (final l in widget.loras) _cached(l.original),
   ];
@@ -1275,7 +1392,6 @@ class _LoraSectionState extends State<LoraSection> {
 
   @override
   Widget build(BuildContext context) {
-    final still = MediaQuery.of(context).disableAnimations;
     final loras = widget.loras;
     final changed = loras.where((l) => l.changed).length;
     final off = loras.where((l) => !l.enabled).length;
@@ -1286,9 +1402,7 @@ class _LoraSectionState extends State<LoraSection> {
       if (changed - off > 0) '${changed - off} changed',
     ].join(' · ');
     final unchecked = widget.prompt != null && _triggers.any((t) => !t.found);
-    final rows = !_open
-        ? const SizedBox(width: double.infinity)
-        : Column(
+    final rows = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (unchecked || _looking)
@@ -1327,63 +1441,30 @@ class _LoraSectionState extends State<LoraSection> {
                 ),
             ],
           );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        InkWell(
-          key: const ValueKey<String>('remix-loras'),
-          borderRadius: BorderRadius.circular(6),
-          onTap: () => setState(() => _open = !_open),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
+    return FoldSection(
+      toggleKey: const ValueKey<String>('remix-loras'),
+      label: 'LoRAs',
+      summary: summary,
+      summaryKey: const ValueKey<String>('remix-loras-summary'),
+      highlight: changed > 0,
+      extra: missing == 0
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                AnimatedRotation(
-                  turns: _open ? 0.25 : 0,
-                  duration: still ? Duration.zero : const Duration(milliseconds: 180),
-                  child: const Icon(Icons.chevron_right, size: 18, color: Palette.faint),
-                ),
+                const Icon(Icons.warning_amber_rounded, size: 15, color: _warn),
                 const SizedBox(width: 4),
-                const Text(
-                  'LORAS',
-                  style: TextStyle(fontSize: 10.5, letterSpacing: 0.9, fontWeight: FontWeight.w600, color: Palette.faint),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  summary,
-                  key: const ValueKey<String>('remix-loras-summary'),
-                  style: TextStyle(fontSize: 11.5, color: changed > 0 ? Palette.accent : Palette.faint),
-                ),
-                if (missing > 0) ...[
-                  const SizedBox(width: 10),
-                  const Icon(Icons.warning_amber_rounded, size: 15, color: _warn),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      missing == 1 ? '1 without its trigger words' : '$missing without their trigger words',
-                      key: const ValueKey<String>('remix-loras-missing'),
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5, color: _warn),
-                    ),
+                Flexible(
+                  child: Text(
+                    missing == 1 ? '1 without its trigger words' : '$missing without their trigger words',
+                    key: const ValueKey<String>('remix-loras-missing'),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11.5, color: _warn),
                   ),
-                ],
+                ),
               ],
             ),
-          ),
-        ),
-        // AnimatedSize cannot take a zero duration, so with motion turned
-        // down the list simply appears.
-        if (still)
-          rows
-        else
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: rows,
-          ),
-      ],
+      child: rows,
     );
   }
 }

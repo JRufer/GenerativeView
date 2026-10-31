@@ -10,6 +10,8 @@ import '../core/models.dart';
 import '../core/thumb_cache.dart';
 import '../platform.dart';
 import '../theme.dart';
+import 'kit.dart';
+import 'breed_dialog.dart';
 import 'compare_view.dart';
 import 'image_menu.dart';
 import 'notes_widgets.dart';
@@ -120,11 +122,88 @@ class _MediaGridState extends State<MediaGrid> {
     }
   }
 
+  /// The near-duplicate groups as runs of the list: (first index, how many,
+  /// the group). Empty unless the grid shows groups.
+  List<(int, int, DuplicateGroup)> _runs = const [];
+
+  /// How tall a group's header is.
+  static const double _headerExtent = 44;
+
+  /// Where item [index]'s row starts, scrolled to the top.
+  double _rowTop(int index) {
+    if (_runs.isEmpty) return (index ~/ _columns) * _rowExtent;
+    var top = 0.0;
+    for (final (start, count, _) in _runs) {
+      final rows = (count + _columns - 1) ~/ _columns;
+      if (index < start + count && index >= start) {
+        return top + _headerExtent + ((index - start) ~/ _columns) * _rowExtent;
+      }
+      top += _headerExtent + rows * _rowExtent;
+    }
+    return top + ((index - (_runs.last.$1 + _runs.last.$2)) ~/ _columns) * _rowExtent;
+  }
+
+  /// The groups [state.duplicateGroups] as runs of the items showing, when
+  /// they line up with them (the list is listed group by group).
+  List<(int, int, DuplicateGroup)> _groupRuns() {
+    final groups = state.duplicateGroups;
+    if (!state.showingDuplicates || groups.isEmpty) return const [];
+    final items = state.items;
+    final out = <(int, int, DuplicateGroup)>[];
+    var i = 0;
+    for (final g in groups) {
+      if (i >= items.length || items[i].path != g.paths.first) return const [];
+      var n = 0;
+      while (i + n < items.length && n < g.paths.length && items[i + n].path == g.paths[n]) {
+        n++;
+      }
+      out.add((i, n, g));
+      i += n;
+    }
+    return out;
+  }
+
+  /// The grid in groups of near-duplicates, each under a header saying
+  /// which one to keep and why, with a button that ticks the rest.
+  Widget _grouped(int columns, Widget Function(int index) tileAt) {
+    final runs = _runs;
+    final last = runs.last.$1 + runs.last.$2;
+    SliverGrid tiles(int start, int count) => SliverGrid(
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: columns, mainAxisSpacing: _gap, crossAxisSpacing: _gap),
+      delegate: SliverChildBuilderDelegate((context, i) => tileAt(start + i), childCount: count, addAutomaticKeepAlives: false),
+    );
+    return CustomScrollView(
+      controller: _scroll,
+      physics: _ctrl ? const NeverScrollableScrollPhysics() : null,
+      scrollCacheExtent: const ScrollCacheExtent.viewport(0.75),
+      slivers: [
+        for (final (start, count, group) in runs) ...[
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: _headerExtent,
+              child: GroupHeader(
+                key: ValueKey<String>('group-${group.paths.first}'),
+                title: '$count alike',
+                why: group.why,
+                action: 'Tick the rest',
+                onAction: () => state.tickAllButBest([group]),
+              ),
+            ),
+          ),
+          SliverPadding(padding: const EdgeInsets.symmetric(horizontal: _gap), sliver: tiles(start, count)),
+        ],
+        if (last < state.items.length)
+          SliverPadding(padding: const EdgeInsets.all(_gap), sliver: tiles(last, state.items.length - last)),
+        const SliverToBoxAdapter(child: SizedBox(height: _gap)),
+      ],
+    );
+  }
+
   /// Whether any of the selected tile is on screen.
   bool _selectionInView() {
     final index = state.selectedIndex;
     if (index < 0 || !_scroll.hasClients) return false;
-    final top = (index ~/ _columns) * _rowExtent;
+    final top = _rowTop(index);
     final offset = _scroll.offset;
     return top + _rowExtent > offset && top < offset + _viewport;
   }
@@ -132,7 +211,7 @@ class _MediaGridState extends State<MediaGrid> {
   /// Scroll just far enough that item [index] is fully visible.
   void _reveal(int index) {
     if (!mounted || index < 0 || !_scroll.hasClients) return;
-    final top = (index ~/ _columns) * _rowExtent;
+    final top = _rowTop(index);
     final bottom = top + _rowExtent + _gap;
     final offset = _scroll.offset;
     double? target;
@@ -358,6 +437,29 @@ class _MediaGridState extends State<MediaGrid> {
         final dpr = MediaQuery.devicePixelRatioOf(context);
         final tier = ThumbCache.tierFor(tile * dpr);
 
+        _runs = _groupRuns();
+        Widget tileAt(int index) {
+          if (index >= items.length) return const SizedBox.shrink();
+          final item = items[index];
+          return _Tile(
+            key: ValueKey<int>(item.id),
+            item: item,
+            fresh: state.fresh.contains(item.id),
+            highlight: state.highlightIds.contains(item.id) ? state.highlightTick : 0,
+            compact: tile < 130,
+            tier: tier,
+            cache: state.thumbs,
+            fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
+            selected: index == state.selectedIndex,
+            checked: state.isChecked(item.id),
+            best: _runs.isNotEmpty && _runs.any((r) => index >= r.$1 && index < r.$1 + r.$2 && item.path == r.$3.bestPath),
+            onTap: () => _tap(index, item),
+            onCheck: () => _check(index, item),
+            onMenu: (position) => _menu(index, item, position),
+            onDragOut: canDragFilesOut ? () => _dragOut(item) : null,
+          );
+        }
+
         final grid = Listener(
           onPointerDown: _pointerDown,
           onPointerMove: _pointerMove,
@@ -366,7 +468,9 @@ class _MediaGridState extends State<MediaGrid> {
           onPointerSignal: _pointerSignal,
           child: Scrollbar(
             controller: _scroll,
-            child: GridView.builder(
+            child: _runs.isNotEmpty
+                ? _grouped(columns, tileAt)
+                : GridView.builder(
               controller: _scroll,
               // With Ctrl held the wheel resizes tiles instead of scrolling.
               physics: _ctrl ? const NeverScrollableScrollPhysics() : null,
@@ -379,26 +483,7 @@ class _MediaGridState extends State<MediaGrid> {
                 crossAxisSpacing: _gap,
               ),
               itemCount: items.length,
-              itemBuilder: (context, index) {
-                if (index >= items.length) return const SizedBox.shrink();
-                final item = items[index];
-                return _Tile(
-                  key: ValueKey<int>(item.id),
-                  item: item,
-                  fresh: state.fresh.contains(item.id),
-                  highlight: state.highlightIds.contains(item.id) ? state.highlightTick : 0,
-                  compact: tile < 130,
-                  tier: tier,
-                  cache: state.thumbs,
-                  fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
-                  selected: index == state.selectedIndex,
-                  checked: state.isChecked(item.id),
-                  onTap: () => _tap(index, item),
-                  onCheck: () => _check(index, item),
-                  onMenu: (position) => _menu(index, item, position),
-                  onDragOut: canDragFilesOut ? () => _dragOut(item) : null,
-                );
-              },
+              itemBuilder: (context, index) => tileAt(index),
             ),
           ),
         );
@@ -489,6 +574,13 @@ class SelectionBar extends StatelessWidget {
                 tooltip: 'Compare them side by side (V)',
                 icon: Icons.compare,
                 onTap: (context) => openCompare(context, state, state.checkedItems),
+              ),
+            if (n >= 2 && n <= 4)
+              button(
+                key: const ValueKey<String>('selection-breed'),
+                tooltip: 'Breed new pictures from them (G)',
+                icon: Icons.hub_outlined,
+                onTap: (context) => openBreed(context, state, state.checkedItems),
               ),
             button(
               key: const ValueKey<String>('selection-menu'),
@@ -582,9 +674,13 @@ class _Tile extends StatelessWidget {
     required this.onCheck,
     required this.onMenu,
     this.onDragOut,
+    this.best = false,
   });
 
   final MediaItem item;
+
+  /// The one of its near-duplicate group to keep.
+  final bool best;
   final int tier;
   final ThumbCache cache;
 
@@ -689,7 +785,12 @@ class _Tile extends StatelessWidget {
                     alignment: Alignment.topRight,
                     child: _CheckBox(key: ValueKey<String>('tile-check-${item.id}'), checked: checked, onTap: onCheck),
                   ),
-                  if (fresh)
+                  if (best)
+                    Align(
+                      alignment: Alignment.topLeft,
+                      child: Padding(padding: const EdgeInsets.all(5), child: BestBadge(compact: compact)),
+                    ),
+                  if (fresh && !best)
                     const Align(
                       alignment: Alignment.topLeft,
                       child: Padding(
@@ -871,6 +972,34 @@ class _Hint extends StatelessWidget {
                   ),
                 ),
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The mark on the one of a near-duplicate group to keep.
+class BestBadge extends StatelessWidget {
+  const BestBadge({super.key, this.compact = false});
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'The one of these to keep',
+      child: Container(
+        height: 22,
+        padding: EdgeInsets.fromLTRB(4, 0, compact ? 4 : 8, 0),
+        decoration: BoxDecoration(color: Palette.accent, borderRadius: BorderRadius.circular(11)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.workspace_premium, size: 15, color: Color(0xFF0B1020)),
+            if (!compact) ...[
+              const SizedBox(width: 3),
+              const Text('Best', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0B1020))),
             ],
           ],
         ),

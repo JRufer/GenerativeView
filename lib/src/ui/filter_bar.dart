@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import 'meta_panel.dart' show toast;
 import 'filter_sheet.dart';
 import 'notes_widgets.dart' show starColor;
 import 'smart_editor.dart';
@@ -102,6 +103,17 @@ class FilterBar extends StatelessWidget {
               style: const TextStyle(fontSize: 12.5, color: Palette.muted),
             ),
           ),
+          if (filters.duplicates && state.duplicateGroups.isNotEmpty)
+            TextButton.icon(
+              key: const ValueKey<String>('filter-bar-best'),
+              onPressed: () {
+                final n = state.tickAllButBest();
+                toast(context, '$n ticked; the best of each group is left unticked');
+              },
+              style: TextButton.styleFrom(minimumSize: const Size(0, 34)),
+              icon: const Icon(Icons.workspace_premium_outlined, size: 16),
+              label: const Text('Tick all but the best'),
+            ),
           if (smart == null)
             OutlinedButton.icon(
               key: const ValueKey<String>('filter-bar-save'),

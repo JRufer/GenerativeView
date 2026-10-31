@@ -9,6 +9,7 @@ import '../theme.dart';
 import 'mask_editor.dart' show prepareImageInput;
 import 'meta_panel.dart' show toast;
 import 'remix_dialog.dart' show openBackendSettings, snapSize;
+import 'kit.dart';
 import 'sheet.dart';
 
 /// Open the upscale panel for [item]: which model, how much bigger, and
@@ -156,7 +157,8 @@ class _UpscalePanelState extends State<UpscalePanel> {
     final refine = _refine && _server != null;
     final (w, h) = refine ? hiresSize(item.width, item.height, _hiresScale) : (item.width * _factor, item.height * _factor);
     final ext = item.name.contains('.') ? item.name.split('.').last.toLowerCase() : 'png';
-    return SingleChildScrollView(
+    final servers = _servers;
+    final body = SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -299,25 +301,41 @@ class _UpscalePanelState extends State<UpscalePanel> {
               );
             },
           ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              key: const ValueKey<String>('upscale-start'),
-              onPressed: _busy || _chosen == null ? null : _start,
-              icon: const Icon(Icons.photo_size_select_large, size: 18),
-              label: Text(
-                _chosen?.installed == false
-                    ? (refine ? 'Download, upscale and refine' : 'Download and upscale')
-                    : refine
-                    ? (many ? 'Upscale and refine ${widget.items.length}' : 'Upscale and refine')
-                    : many
-                    ? 'Upscale ${widget.items.length}'
-                    : 'Upscale',
-              ),
-            ),
-          ),
         ],
       ),
+    );
+    // The server (for a hires fix) and the button, kept at the bottom: the
+    // same bar as Remix and Breed.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(child: body),
+        ServerSendBar(
+          state: widget.state,
+          backend: _server,
+          servers: servers,
+          showServers: _refine && servers.isNotEmpty,
+          chipKey: (k) => ValueKey<String>('hires-server-$k'),
+          onBackend: (k) => setState(() {
+            _server = k;
+            _serverChosen = true;
+          }),
+          onServersChanged: () {
+            if (mounted) setState(() {});
+          },
+          actionKey: const ValueKey<String>('upscale-start'),
+          icon: Icons.photo_size_select_large,
+          onSend: _busy || _chosen == null ? null : _start,
+          action: _chosen?.installed == false
+              ? (refine ? 'Download, upscale and refine' : 'Download and upscale')
+              : refine
+              ? (many ? 'Upscale and refine ${widget.items.length}' : 'Upscale and refine')
+              : many
+              ? 'Upscale ${widget.items.length}'
+              : 'Upscale',
+        ),
+      ],
     );
   }
 
@@ -357,26 +375,10 @@ class _UpscalePanelState extends State<UpscalePanel> {
             ],
           ),
         if (_refine && servers.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              for (final k in servers)
-                ChoiceChipButton(
-                  key: ValueKey<String>('hires-server-$k'),
-                  label: backendNames[k]!,
-                  selected: _server == k,
-                  onTap: _busy
-                      ? null
-                      : () => setState(() {
-                          _server = k;
-                          _serverChosen = true;
-                        }),
-                ),
-            ],
+          const Padding(
+            padding: EdgeInsets.only(top: 2, bottom: 6),
+            child: Text('Pick the server beside the Upscale button.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
           ),
-          const SizedBox(height: 10),
           Row(
             children: [
               const Text('Denoising strength', style: TextStyle(fontSize: 13)),
