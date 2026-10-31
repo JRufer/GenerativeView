@@ -35,7 +35,7 @@ void main() {
 
   test('the native libraries, models and word list are credited', () async {
     final packages = packagesOf(await read('assets/licenses/other.txt.gz'));
-    for (final name in ['mpv (libmpv)', 'FFmpeg', 'dav1d', 'SQLite', 'Real-ESRGAN (upscale models)', 'TinyCLIP (content-search model)']) {
+    for (final name in ['mpv (libmpv)', 'FFmpeg', 'dav1d', 'SQLite', 'Real-ESRGAN (upscale models)', 'DataComp CLIP ViT-B/32 (content-search model)']) {
       expect(packages, contains(name));
     }
   });

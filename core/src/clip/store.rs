@@ -122,6 +122,21 @@ impl Vectors {
         self.conn.lock().query_row("SELECT 1 FROM skipped WHERE key = ?1", [key.as_slice()], |_| Ok(())).is_ok()
     }
 
+    /// Forget every picture's vector and every file given up on, and the
+    /// text vectors of any model but `model`: what a model used before
+    /// made. (Picture keys are hashes, so they cannot be told apart by
+    /// model; this is for when no picture has been embedded by `model` yet.)
+    pub fn forget_all_but(&self, model: &str) -> Result<(), String> {
+        let fail = |e: rusqlite::Error| format!("cannot clear old embeddings: {e}");
+        {
+            let conn = self.conn.lock();
+            conn.execute_batch("DELETE FROM vectors; DELETE FROM skipped;").map_err(fail)?;
+            conn.execute("DELETE FROM texts WHERE substr(name, 1, ?2) != ?1", params![format!("{model}/"), model.len() as i64 + 1]).map_err(fail)?;
+        }
+        self.cache.lock().clear();
+        Ok(())
+    }
+
     pub fn put(&self, vectors: &[(Key, Vec<f32>)], skipped: &[Key]) -> Result<(), String> {
         let fail = |e: rusqlite::Error| format!("cannot save embeddings: {e}");
         let packed: Vec<(Key, Packed)> = vectors.iter().map(|(key, vector)| (*key, pack(vector))).collect();
@@ -148,6 +163,24 @@ impl Vectors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_models_vectors_are_forgotten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Vectors::open(tmp.path()).unwrap();
+        let (a, b) = (key("old", "/a.png", 1, 2), key("old", "/b.mp4", 1, 2));
+        store.put(&[(a, vec![1.0, 0.0])], &[b]).unwrap();
+        store.put_texts("old/styles/1", &[1.0]).unwrap();
+        store.put_texts("new/styles/1", &[2.0]).unwrap();
+        // A name that only starts like the model's is another model's.
+        store.put_texts("newer/styles/1", &[3.0]).unwrap();
+        assert!(store.done(&a) && store.done(&b));
+        store.forget_all_but("new").unwrap();
+        assert!(store.get(&a).is_none());
+        assert!(!store.done(&a) && !store.done(&b));
+        assert_eq!(store.texts("new/styles/1"), Some(vec![2.0]));
+        assert!(store.texts("old/styles/1").is_none() && store.texts("newer/styles/1").is_none());
+    }
 
     #[test]
     fn round_trip() {

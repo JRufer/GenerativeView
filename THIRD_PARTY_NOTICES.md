@@ -39,8 +39,8 @@ their GPL-only parts, and may be replaced with your own builds.
 ## Downloaded on request, not shipped
 
 - **Real-ESRGAN** upscale models — BSD-3-Clause, © 2021 Xintao Wang.
-- **TinyCLIP ViT-40M/32** content-search model — MIT, © Microsoft
-  Corporation.
+- **DataComp CLIP ViT-B/32** content-search model, trained by LAION with
+  OpenCLIP — MIT.
 
 ## Built with
 

@@ -331,8 +331,17 @@ fn content_search_embeds_and_ranks() {
     let refused = h.engine.call("content_query_json", &json!({ "dir": dir, "recursive": true, "text": "a fox" }));
     assert!(refused.unwrap_err().contains("not installed"));
 
+    // Nothing downloaded: nothing to prepare.
+    assert_eq!(h.call("content_prepare", json!({}))["installed"], false);
+
     // ---- with it: every readable picture gets a vector ---------------------
+    // The model used before is still on disk; once this one is ready it goes.
+    let old = h._dirs.path().join("data/models/tinyclip-vit-40m-32-text-19m");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("model.safetensors"), b"old").unwrap();
     install_mini_model(&h);
+    assert_eq!(h.call("content_prepare", json!({}))["installed"], true);
+    assert!(!old.exists(), "the old model is removed");
     assert_eq!(h.call("content_status", scope.clone())["installed"], true);
     h.call("content_index", scope.clone());
     let done = content_done(&h);

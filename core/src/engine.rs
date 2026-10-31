@@ -683,6 +683,7 @@ impl Engine {
             }
             "query" | "query_json" => Ok(serde_json::to_string(&self.search(args)?).unwrap_or_default()),
             "content_status" => Ok(self.content.status(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive")).to_string()),
+            "content_prepare" => Ok(json!({ "installed": self.content.prepare()? }).to_string()),
             "content_index" => {
                 self.content.index(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive"));
                 Ok("null".into())
