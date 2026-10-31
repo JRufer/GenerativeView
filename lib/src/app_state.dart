@@ -2134,7 +2134,7 @@ class AppState extends ChangeNotifier {
   Future<void> startUpscales(
     List<MediaItem> targets, {
     required String model,
-    required int factor,
+    required double factor,
     required bool keepMetadata,
     UpscaleThen? then,
     String? thenLabel,
@@ -2182,7 +2182,7 @@ class AppState extends ChangeNotifier {
   Future<void> startUpscale(
     MediaItem item, {
     required String model,
-    required int factor,
+    required double factor,
     required bool keepMetadata,
     UpscaleThen? then,
     String? thenLabel,
@@ -2246,6 +2246,17 @@ class AppState extends ChangeNotifier {
     }
     upscales.value = list;
     if (list.isEmpty && _upscaleQueue.isNotEmpty) unawaited(_nextUpscale());
+  }
+
+  /// Run [then] on each of [targets] as it is, with no upscale here first:
+  /// a hires fix at the picture's own size, sent straight to the server.
+  /// One after another, shown beside the round button as an upscale's
+  /// second half is.
+  Future<void> startWithoutUpscale(List<MediaItem> targets, UpscaleThen then, {String? label}) async {
+    for (final item in targets) {
+      if (_disposed) return;
+      if (!item.isVideo) await _runUpscaleThen(item, item.path, then, label);
+    }
   }
 
   Future<void> _runUpscaleThen(MediaItem original, String upscaled, UpscaleThen then, String? label) async {
@@ -2385,7 +2396,7 @@ class _QueuedUpscale {
   const _QueuedUpscale(this.item, this.model, this.factor, this.keepMetadata, this.then, this.thenLabel);
   final MediaItem item;
   final String model;
-  final int factor;
+  final double factor;
   final bool keepMetadata;
   final UpscaleThen? then;
   final String? thenLabel;
@@ -2403,7 +2414,7 @@ class UpscaleJob {
 
   /// The original's file name.
   final String name;
-  final int factor;
+  final double factor;
 
   /// What happens once it is saved, to show beside it: "then refined on
   /// InvokeAI". Null for a plain upscale.
@@ -2437,14 +2448,31 @@ class UpscaleModel {
 }
 
 class UpscaleModels {
-  const UpscaleModels(this.dir, this.source, this.models);
+  const UpscaleModels(
+    this.dir,
+    this.source,
+    this.models, {
+    this.maxSide = 8192,
+    this.maxPixels = 40000000,
+    this.maxFactor = 16,
+  });
   final String dir;
   final String source;
   final List<UpscaleModel> models;
 
+  /// How large an upscale here may be: its longest side, its pixels in all,
+  /// and how many times larger than the original. The core says; these are
+  /// what it says now.
+  final int maxSide;
+  final int maxPixels;
+  final double maxFactor;
+
   factory UpscaleModels.fromJson(Map<String, dynamic> j) => UpscaleModels(
     j['dir'] as String? ?? '',
     j['source'] as String? ?? '',
+    maxSide: (j['max_side'] as num?)?.toInt() ?? 8192,
+    maxPixels: (j['max_pixels'] as num?)?.toInt() ?? 40000000,
+    maxFactor: (j['max_factor'] as num?)?.toDouble() ?? 16,
     [
       for (final m in (j['models'] as List? ?? const []))
         if (m is Map)

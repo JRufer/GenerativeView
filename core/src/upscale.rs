@@ -87,7 +87,9 @@ fn destination(source: &Path, from_width: u32, to_width: u32, format: Format) ->
     } else if (factor - factor.round()).abs() < 0.05 {
         format!("up{}x", factor.round() as u32)
     } else {
-        format!("up{:.1}x", factor)
+        // 1.5, 1.25, 3.4: as few places as the factor needs.
+        let text = format!("{factor:.2}");
+        format!("up{}x", text.trim_end_matches('0').trim_end_matches('.'))
     };
     let dir = source.parent().unwrap_or(Path::new("."));
     let mut n = 1;

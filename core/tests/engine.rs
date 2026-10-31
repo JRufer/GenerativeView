@@ -550,6 +550,19 @@ fn upscale_runs_and_reports() {
     let e = h.wait("upscale end", |e| e["t"] == "upscale" && e["state"] != "running");
     assert_eq!((e["job"].clone(), e["state"].as_str()), (job, Some("error")));
     assert!(h.engine.call("upscale", &json!({ "path": "x", "model": "nope" })).is_err());
+    // The limits are given to the panel, and a size past them is refused at
+    // once rather than after the model has run; any factor within them is
+    // taken, not only 2 and 4.
+    assert_eq!(models["max_side"], 8192);
+    assert_eq!(models["max_pixels"], 40_000_000);
+    assert_eq!(models["max_factor"], 16.0);
+    let a = root.join("a.png").to_str().unwrap().to_string();
+    assert!(h.engine.call("upscale", &json!({ "path": a, "model": "general", "factor": 1.0 })).is_err());
+    assert!(h.engine.call("upscale", &json!({ "path": a, "model": "general", "factor": 20.0 })).is_err());
+    let job = h.call("upscale", json!({ "path": a, "model": "general", "factor": 2.5, "metadata": "copy" }))["job"].clone();
+    let e = h.wait("upscale end", |e| e["t"] == "upscale" && e["state"] != "running" && e["job"] == job);
+    // Taken, then an error only for want of the model.
+    assert_eq!(e["state"], "error");
 }
 
 #[test]

@@ -4,10 +4,10 @@
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
-        eprintln!("usage: upscale_check MODEL.pth IN OUT [2|4]");
+        eprintln!("usage: upscale_check MODEL.pth IN OUT [FACTOR]");
         std::process::exit(2);
     }
-    let factor = args.get(4).and_then(|f| f.parse().ok()).unwrap_or(4);
+    let factor = args.get(4).and_then(|f| f.parse().ok()).unwrap_or(4.0);
     let t = std::time::Instant::now();
     let model = gvcore::sr::Upscaler::load(std::path::Path::new(&args[1])).expect("model");
     println!("model loaded in {:.0?}: ×{}", t.elapsed(), model.scale);

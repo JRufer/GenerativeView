@@ -232,9 +232,25 @@ impl Upscaler {
     /// Upscale a whole picture by the model's own factor. `progress` hears
     /// (tiles done, tiles in all) and returns false to stop.
     pub fn upscale(&self, picture: &RgbImage, progress: &mut dyn FnMut(usize, usize) -> bool) -> Result<RgbImage, String> {
+        let s = self.scale as u32;
+        self.upscale_to(picture, picture.width() * s, picture.height() * s, progress)
+    }
+
+    /// Upscale a picture to `width` × `height`, which is at least its own
+    /// size and at most the model's factor larger: one run of the model.
+    /// Each tile is brought down to the asked-for size as soon as the model
+    /// has drawn it, so what is held is the result, never the model's full
+    /// size, and a 1.5× of a large picture costs no more memory than its
+    /// output.
+    pub fn upscale_to(&self, picture: &RgbImage, width: u32, height: u32, progress: &mut dyn FnMut(usize, usize) -> bool) -> Result<RgbImage, String> {
         let (w, h) = (picture.width() as usize, picture.height() as usize);
         let s = self.scale;
-        let mut out = RgbImage::new((w * s) as u32, (h * s) as u32);
+        let (ow, oh) = (width as usize, height as usize);
+        if w == 0 || h == 0 || ow < w || oh < h || ow > w * s || oh > h * s {
+            return Err(format!("cannot upscale {w} × {h} to {ow} × {oh} in one pass"));
+        }
+        let (fx, fy) = (ow as f64 / w as f64, oh as f64 / h as f64);
+        let mut out = RgbImage::new(width, height);
         let across = w.div_ceil(TILE);
         let down = h.div_ceil(TILE);
         let total = across * down;
@@ -262,10 +278,27 @@ impl Upscaler {
                 }
                 let big = self.run(&input, th, tw);
                 let (bw, bh) = (tw * s, th * s);
-                for y in (y0 - my0) * s..(y1 - my0) * s {
-                    for x in (x0 - mx0) * s..(x1 - mx0) * s {
-                        let px = |c: usize| (big[c * bw * bh + y * bw + x].clamp(0.0, 1.0) * 255.0).round() as u8;
-                        out.put_pixel((mx0 * s + x) as u32, (my0 * s + y) as u32, image::Rgb([px(0), px(1), px(2)]));
+                // The output pixels whose centres fall in this tile, and for
+                // each, the model's pixels it is made from.
+                let cols = taps(x0, x1, mx0, bw, fx, s, ow);
+                let rows = taps(y0, y1, my0, bh, fy, s, oh);
+                let (ox0, oy0) = (first_out(x0, fx), first_out(y0, fy));
+                for c in 0..3 {
+                    let plane = &big[c * bw * bh..(c + 1) * bw * bh];
+                    // Across first, every row of the model's tile, then down.
+                    let mut wide = vec![0.0f32; bh * cols.len()];
+                    for by in 0..bh {
+                        let row = &plane[by * bw..(by + 1) * bw];
+                        for (i, tap) in cols.iter().enumerate() {
+                            wide[by * cols.len() + i] = tap.iter().map(|&(k, wt)| row[k] * wt).sum();
+                        }
+                    }
+                    for (j, tap) in rows.iter().enumerate() {
+                        for i in 0..cols.len() {
+                            let v: f32 = tap.iter().map(|&(k, wt)| wide[k * cols.len() + i] * wt).sum();
+                            let px = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                            out.get_pixel_mut((ox0 + i) as u32, (oy0 + j) as u32).0[c] = px;
+                        }
                     }
                 }
                 done += 1;
@@ -276,18 +309,102 @@ impl Upscaler {
     }
 }
 
-/// Upscale `picture` by `factor` (2 or 4) with `model`. The models enlarge
-/// four times; a 2× result is the 4× one brought down, which keeps the
-/// detail the model added. Transparency is enlarged plainly alongside.
-pub fn upscale_picture(model: &Upscaler, picture: &DynamicImage, factor: u32, progress: &mut dyn FnMut(usize, usize) -> bool) -> Result<DynamicImage, String> {
-    let rgb = picture.to_rgb8();
-    let big = model.upscale(&rgb, progress)?;
-    let (tw, th) = (picture.width() * factor, picture.height() * factor);
-    let big = if big.width() != tw || big.height() != th {
-        image::imageops::resize(&big, tw, th, image::imageops::FilterType::Lanczos3)
-    } else {
-        big
-    };
+/// The first output pixel whose centre lies at or past input column `x`, at
+/// `f` output pixels per input pixel. Consecutive tiles share none and miss
+/// none.
+fn first_out(x: usize, f: f64) -> usize {
+    (x as f64 * f - 0.5).ceil().max(0.0) as usize
+}
+
+/// For each output pixel along one side of the tile from `a` to `b` (input
+/// pixels; its margin starts at `m`), the model's pixels (indexes into the
+/// tile's `n` pixels at the model's factor `s`) that make it and their
+/// weights. A tent as wide as one output pixel averages what the model drew
+/// under it, so bringing 4× down to 1.5× keeps its detail and does not
+/// shimmer; at the model's own factor it is each pixel as it is.
+fn taps(a: usize, b: usize, m: usize, n: usize, f: f64, s: usize, size: usize) -> Vec<Vec<(usize, f32)>> {
+    let r = s as f64 / f;
+    let end = if b == 0 { 0 } else { first_out(b, f).min(size) };
+    (first_out(a, f)..end)
+        .map(|o| {
+            // The output pixel's centre, in the tile's model pixels.
+            let g = (o as f64 + 0.5) / f * s as f64 - 0.5 - (m * s) as f64;
+            let lo = (g - r).floor().max(0.0) as usize;
+            let hi = ((g + r).ceil() as usize).min(n - 1);
+            let mut tap: Vec<(usize, f32)> = (lo..=hi)
+                .filter_map(|k| {
+                    let wt = 1.0 - (k as f64 - g).abs() / r;
+                    (wt > 0.0).then_some((k, wt as f32))
+                })
+                .collect();
+            if tap.is_empty() {
+                tap.push((g.round().clamp(0.0, (n - 1) as f64) as usize, 1.0));
+            }
+            let sum: f32 = tap.iter().map(|t| t.1).sum();
+            tap.iter_mut().for_each(|t| t.1 /= sum);
+            tap
+        })
+        .collect()
+}
+
+/// The longest side an upscale here may have, its pixels in all, and how
+/// many times larger it may make a picture. Past these, saving it (and on a
+/// phone, holding it) is more than it is worth.
+pub const MAX_SIDE: u32 = 8192;
+pub const MAX_PIXELS: u64 = 40_000_000;
+pub const MAX_FACTOR: f64 = 16.0;
+
+/// The size a `width` × `height` picture comes out at `factor` times as
+/// large, or why it may not be made.
+pub fn upscaled_size(width: u32, height: u32, factor: f64) -> Result<(u32, u32), String> {
+    if !(factor > 1.0 && factor <= MAX_FACTOR) {
+        return Err(format!("the factor is more than 1 and at most {MAX_FACTOR}"));
+    }
+    let (tw, th) = ((width as f64 * factor).round() as u32, (height as f64 * factor).round() as u32);
+    if tw.max(th) > MAX_SIDE || tw as u64 * th as u64 > MAX_PIXELS {
+        return Err(format!(
+            "{width} × {height} at {factor}× would be {tw} × {th}, past the largest upscale ({MAX_SIDE} on a side, {} megapixels)",
+            MAX_PIXELS / 1_000_000
+        ));
+    }
+    Ok((tw, th))
+}
+
+/// The sizes each run of the model makes on the way to `target` from
+/// `from`: one run for up to the model's factor, more past it, each but the
+/// last at its full factor where it can be.
+fn passes(from: (u32, u32), target: (u32, u32), s: u32) -> Vec<(u32, u32)> {
+    let mut chain = vec![target];
+    loop {
+        let &(tw, th) = chain.last().unwrap();
+        if tw <= from.0 * s && th <= from.1 * s {
+            break;
+        }
+        chain.push((tw.div_ceil(s).max(from.0), th.div_ceil(s).max(from.1)));
+    }
+    chain.reverse();
+    chain
+}
+
+/// Upscale `picture` by `factor` with `model`: any factor over 1 that
+/// [upscaled_size] allows. The models enlarge four times; less than that is
+/// the model's picture brought down tile by tile, which keeps the detail it
+/// added, and more is the model run again on its own result. Transparency is
+/// enlarged plainly alongside.
+pub fn upscale_picture(model: &Upscaler, picture: &DynamicImage, factor: f64, progress: &mut dyn FnMut(usize, usize) -> bool) -> Result<DynamicImage, String> {
+    let (tw, th) = upscaled_size(picture.width(), picture.height(), factor)?;
+    let mut big = picture.to_rgb8();
+    let steps = passes((big.width(), big.height()), (tw, th), model.scale as u32);
+    // Progress over every run of the model together.
+    let mut sizes = vec![(big.width(), big.height())];
+    sizes.extend(steps.iter().take(steps.len() - 1));
+    let tiles: Vec<usize> = sizes.iter().map(|&(w, h)| (w as usize).div_ceil(TILE) * (h as usize).div_ceil(TILE)).collect();
+    let all: usize = tiles.iter().sum();
+    let mut before = 0;
+    for (i, &(w, h)) in steps.iter().enumerate() {
+        big = model.upscale_to(&big, w, h, &mut |done, _| progress(before + done, all))?;
+        before += tiles[i];
+    }
     if picture.color().has_alpha() {
         let alpha = picture.to_rgba8();
         if alpha.pixels().any(|p| p.0[3] != 255) {
@@ -340,9 +457,57 @@ mod tests {
         for (x, y, p) in big.enumerate_pixels() {
             assert_eq!(*p, *picture.get_pixel(x / 4, y / 4), "{x},{y}");
         }
-        let half = upscale_picture(&model, &DynamicImage::ImageRgb8(picture.clone()), 2, &mut |_, _| true).unwrap();
+        let half = upscale_picture(&model, &DynamicImage::ImageRgb8(picture.clone()), 2.0, &mut |_, _| true).unwrap();
         assert_eq!((half.width(), half.height()), (picture.width() * 2, 100));
         assert!(model.upscale(&picture, &mut |_, _| false).is_err());
+    }
+
+    #[test]
+    fn any_factor_and_the_limits() {
+        let model = identity_model(4);
+        // A smooth ramp across several tiles: brought down from the model's
+        // 4× to 1.5×, 2.5× and 3× it stays a ramp, with no seam at a tile.
+        let picture = RgbImage::from_fn(TILE as u32 * 2 + 21, 40, |x, _| image::Rgb([(x * 3 / 4) as u8, 128, 200]));
+        let pic = DynamicImage::ImageRgb8(picture.clone());
+        for f in [1.5, 2.5, 3.0, 1.1] {
+            let big = upscale_picture(&model, &pic, f, &mut |_, _| true).unwrap().to_rgb8();
+            assert_eq!(big.width(), (picture.width() as f64 * f).round() as u32, "{f}");
+            assert_eq!(big.height(), (40.0 * f).round() as u32, "{f}");
+            for x in 0..big.width() {
+                // Where this column's centre falls in the original.
+                let at = ((x as f64 + 0.5) / (big.width() as f64 / picture.width() as f64) - 0.5).clamp(0.0, (picture.width() - 1) as f64);
+                let want = at * 0.75;
+                let have = big.get_pixel(x, 10).0[0] as f64;
+                assert!((have - want).abs() <= 1.5, "{f}× column {x}: {have} vs {want}");
+                assert_eq!(big.get_pixel(x, 0).0[1], 128);
+            }
+        }
+        // Past the model's 4×, it is run again: 6× and 10×.
+        let small = DynamicImage::ImageRgb8(RgbImage::from_fn(30, 20, |x, y| image::Rgb([(x * 8) as u8, (y * 12) as u8, 9])));
+        let mut seen = Vec::new();
+        let six = upscale_picture(&model, &small, 6.0, &mut |d, t| {
+            seen.push((d, t));
+            true
+        })
+        .unwrap();
+        assert_eq!((six.width(), six.height()), (180, 120));
+        // One tile at 30×20, then the 45×30 between, counted together.
+        assert_eq!(seen.last(), Some(&(2, 2)));
+        assert_eq!(passes((30, 20), (180, 120), 4), vec![(45, 30), (180, 120)]);
+        assert_eq!(passes((30, 20), (300, 200), 4), vec![(75, 50), (300, 200)]);
+        assert_eq!(passes((30, 20), (60, 40), 4), vec![(60, 40)]);
+        let ten = upscale_picture(&model, &small, 10.0, &mut |_, _| true).unwrap().to_rgb8();
+        assert_eq!((ten.width(), ten.height()), (300, 200));
+        assert_eq!(ten.get_pixel(150, 100).0[2], 9);
+        // The limits: by side, by pixels, and the factor itself.
+        assert!(upscaled_size(1024, 1024, 8.0).is_err()); // 67 megapixels
+        assert_eq!(upscaled_size(1024, 512, 8.0), Ok((8192, 4096)));
+        assert!(upscaled_size(2048, 1024, 4.0).is_ok());
+        assert!(upscaled_size(2049, 1024, 4.0).is_err());
+        assert!(upscaled_size(4000, 4000, 2.0).is_err());
+        assert!(upscaled_size(64, 64, 17.0).is_err());
+        assert!(upscaled_size(64, 64, 1.0).is_err());
+        assert_eq!(upscaled_size(832, 1216, 1.5), Ok((1248, 1824)));
     }
 
     #[test]
