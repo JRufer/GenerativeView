@@ -10,6 +10,7 @@ use crate::notes::{Change, Flag, Notes};
 use crate::thumbs::Thumbs;
 use serde_json::{json, Value};
 use std::path::Path;
+use rayon::prelude::*;
 use std::sync::Arc;
 
 /// A reply is JSON text, except where the UI wants raw bytes.
@@ -46,6 +47,19 @@ static NEXT_JOB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args.get(key).and_then(Value::as_str).ok_or_else(|| format!("missing argument: {key}"))
+}
+
+/// A model as the index keys it (see `GenInfo::facets_text`).
+fn model_key(name: &str) -> String {
+    meta::facet_value("model", name).to_lowercase()
+}
+
+fn join(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
 }
 
 fn bool_arg(args: &Value, key: &str) -> bool {
@@ -205,6 +219,148 @@ impl Engine {
             crate::taste::Verdict::Unsure => "unsure",
         };
         json!({ "stars": model.stars(score), "verdict": verdict, "useful": model.useful() })
+    }
+
+    /// Every indexed picture's recipe, across all folders: the user's
+    /// ratings are theirs wherever the pictures are.
+    fn all_recipes(&self) -> Vec<crate::works::Recipe> {
+        self.db.recipes("", true, "").unwrap_or_default()
+    }
+
+    /// The phrases of the user's prompts that turn up in at least two of
+    /// them, most used first.
+    fn own_phrases(recipes: &[crate::works::Recipe], top: usize) -> Vec<String> {
+        let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for r in recipes {
+            for p in crate::clip::prompt_phrases(&r.prompt) {
+                *counts.entry(p.to_lowercase()).or_insert(0) += 1;
+            }
+        }
+        let mut list: Vec<(String, u32)> = counts.into_iter().filter(|(p, n)| *n >= 2 && !crate::clip::is_quality_phrase(p)).collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        list.into_iter().take(top).map(|(p, _)| p).collect()
+    }
+
+    fn describe_groups(&self, path: &str) -> Result<String, String> {
+        let own = Self::own_phrases(&self.all_recipes(), 300);
+        Ok(self.content.describe_groups(&normalize(path), &own)?.to_string())
+    }
+
+    fn prompt_doctor(&self, args: &Value) -> Result<String, String> {
+        let path = normalize(str_arg(args, "path")?);
+        let prompt = str_arg(args, "prompt")?;
+        let check = if self.content.installed() { self.content.check_prompt(&path, prompt, false).unwrap_or(Value::Null) } else { Value::Null };
+        let model = model_key(args.get("model").and_then(Value::as_str).unwrap_or(""));
+        Ok(crate::works::doctor(prompt, &check, &self.all_recipes(), &model).to_string())
+    }
+
+    /// Every judged picture content search has looked at, as (its vector,
+    /// how liked 0 to 1).
+    fn judged_vectors(&self) -> Vec<(Vec<f32>, f32)> {
+        let all = self.db.query(&Query { dir: String::new(), recursive: true, ..Default::default() }).unwrap_or_default();
+        all.rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| {
+                let mark = all.marks.get(i).copied().unwrap_or(0);
+                let target = crate::taste::target(mark & 7, (mark >> 3) & 3)?;
+                Some((self.content.vector(&all.dirs[row.1 as usize], row)?, target))
+            })
+            .collect()
+    }
+
+    /// New recipes mixed from two to four pictures, the likeliest liked
+    /// first (see [`crate::works::breed`]).
+    fn breed(&self, args: &Value) -> Result<String, String> {
+        let paths: Vec<String> = args.get("paths").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(normalize).collect()).unwrap_or_default();
+        if paths.len() < 2 {
+            return Err("pick two to four pictures to breed".into());
+        }
+        let infos: Vec<meta::GenInfo> = paths.iter().map(|p| meta::extract(Path::new(p))).collect();
+        let parents: Vec<crate::works::Parent> = infos
+            .iter()
+            .map(|info| {
+                let param = |names: &[&str]| info.params.iter().find(|(k, _)| names.contains(&k.to_ascii_lowercase().as_str())).and_then(|(_, v)| v.trim().parse::<f64>().ok());
+                crate::works::Parent {
+                    phrases: crate::clip::prompt_phrases(&info.prompt),
+                    loras: info.loras.iter().filter_map(|l| l.weight.map(|w| (l.name.clone(), w))).collect(),
+                    steps: param(&["steps"]),
+                    cfg: param(&["cfg", "cfg scale"]),
+                }
+            })
+            .collect();
+        let mix = args.get("mix").cloned().unwrap_or(Value::Null);
+        let flag = |name: &str, default: bool| mix.get(name).and_then(Value::as_bool).unwrap_or(default);
+        let mix = crate::works::Mix { phrases: flag("phrases", true), loras: flag("loras", true), settings: flag("settings", true), model: flag("model", false) };
+        let change = args.get("change").and_then(Value::as_f64).unwrap_or(0.35) as f32;
+        let count = args.get("count").and_then(Value::as_u64).unwrap_or(6).clamp(1, 12) as usize;
+        let seed = args.get("seed").and_then(Value::as_u64).unwrap_or(1);
+        // New phrases come from what the user's liked pictures share.
+        let recipes = self.all_recipes();
+        let model = model_key(&infos[0].model);
+        let works = crate::works::what_works(&recipes, &model);
+        let mut fresh: Vec<String> = works["groups"][0]["items"].as_array().map(|a| a.iter().filter_map(|i| i["label"].as_str().map(str::to_string)).collect()).unwrap_or_default();
+        if fresh.len() < 6 {
+            let more: Vec<String> = Self::own_phrases(&recipes, 40).into_iter().filter(|p| !fresh.contains(p)).take(12).collect();
+            fresh.extend(more);
+        }
+        // Make more than asked for, and keep the likeliest liked.
+        let children = crate::works::breed(&parents, mix, change, &fresh, count * 2, seed);
+        let samples = if self.content.installed() { self.judged_vectors() } else { Vec::new() };
+        let likely: Vec<Option<f32>> = if samples.is_empty() {
+            vec![None; children.len()]
+        } else {
+            self.content.likely(&children.iter().map(|c| c.prompt()).collect::<Vec<_>>(), &samples).unwrap_or_else(|_| vec![None; children.len()])
+        };
+        let mut ranked: Vec<(Option<f32>, &crate::works::Child)> = likely.into_iter().zip(&children).collect();
+        ranked.sort_by(|a, b| b.0.unwrap_or(-1.0).total_cmp(&a.0.unwrap_or(-1.0)));
+        ranked.truncate(count);
+        Ok(json!({
+            "paths": paths,
+            "rated": !samples.is_empty(),
+            "children": ranked.iter().map(|(l, c)| c.to_json(*l)).collect::<Vec<_>>(),
+        })
+        .to_string())
+    }
+
+    /// The groups of near-duplicates a duplicates search shows, each with
+    /// the one to keep and why (see [`crate::works::best_of`]).
+    fn duplicate_groups(&self, args: &Value) -> Result<String, String> {
+        let found = self.search_plain(args)?;
+        let groups = self.dupes.groups(&self.thumbs, &found);
+        let taste = self.taste();
+        let installed = self.content.installed();
+        let out: Vec<Value> = groups
+            .iter()
+            .map(|group| {
+                let members: Vec<crate::works::Member> = group
+                    .par_iter()
+                    .map(|&i| {
+                        let row = &found.rows[i];
+                        let dir = &found.dirs[row.1 as usize];
+                        let path = join(dir, &row.2);
+                        let mark = found.marks.get(i).copied().unwrap_or(0);
+                        let likely = taste.model.as_ref().ok().and_then(|m| {
+                            let v = self.content.vector(dir, row)?;
+                            let s = m.score(&v);
+                            (!s.is_nan()).then(|| m.stars(s))
+                        });
+                        let seen = if installed {
+                            let prompt = meta::extract(Path::new(&path)).prompt;
+                            self.content.check_prompt(&path, &prompt, false).ok().filter(|c| !c.is_null()).and_then(|c| Some((c["seen"].as_u64()? as u32, c["checked"].as_u64()? as u32)))
+                        } else {
+                            None
+                        };
+                        let sharpness = self.thumbs.get(&path, row.6, row.7, 0).ok().and_then(|jpeg| image::load_from_memory(&jpeg).ok()).map(|img| crate::works::sharpness(&img));
+                        crate::works::Member { rating: Some(mark & 7), kept: (mark >> 3) & 3 == 1, rejected: (mark >> 3) & 3 == 2, likely, seen, sharpness }
+                    })
+                    .collect();
+                let (best, why) = crate::works::best_of(&members);
+                let paths: Vec<String> = group.iter().map(|&i| join(&found.dirs[found.rows[i].1 as usize], &found.rows[i].2)).collect();
+                json!({ "paths": paths, "best": best, "why": why })
+            })
+            .collect();
+        Ok(Value::Array(out).to_string())
     }
 
     fn search_plain(&self, args: &Value) -> Result<crate::db::QueryResult, String> {
@@ -485,6 +641,15 @@ impl Engine {
                 Ok(self.content.check_prompt(&normalize(str_arg(args, "path")?), str_arg(args, "prompt")?, make)?.to_string())
             }
             "taste_status" => Ok(self.taste_status().to_string()),
+            "describe_groups" => self.describe_groups(str_arg(args, "path")?),
+            "what_works" => {
+                let recipes = self.db.recipes(&normalize(args.get("dir").and_then(Value::as_str).unwrap_or("")), bool_arg(args, "recursive"), args.get("text").and_then(Value::as_str).unwrap_or("")).map_err(db_err)?;
+                Ok(crate::works::what_works(&recipes, &model_key(args.get("model").and_then(Value::as_str).unwrap_or(""))).to_string())
+            }
+            "prompt_doctor" => self.prompt_doctor(args),
+            "phrase_heat" => Ok(self.content.heat(&normalize(str_arg(args, "path")?), str_arg(args, "phrase")?)?.to_string()),
+            "breed" => self.breed(args),
+            "duplicate_groups" => self.duplicate_groups(args),
             "taste_score" => Ok(self.taste_score(str_arg(args, "path")?).to_string()),
             "upscale_models" => {
                 let dir = crate::sr::model_dir(&self.data_dir);

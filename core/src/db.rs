@@ -22,7 +22,7 @@ use std::path::Path;
 
 pub type DbResult<T> = Result<T, rusqlite::Error>;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 // `files` stays narrow so listing a folder touches few pages. The search
 // text lives beside it in `ftext`, lower-cased; it is only ever searched,
@@ -582,6 +582,7 @@ fn field_alias(s: &str) -> Option<&'static str> {
         "scheduler" => "scheduler",
         "steps" => "steps",
         "cfg" => "cfg",
+        "loraweight" | "loraw" => "loraw",
         "size" | "res" | "resolution" => "size",
         "date" => "date",
         "fullprompt" | "wholeprompt" => "fullprompt",
@@ -852,7 +853,7 @@ impl Term {
                 let kind = if field == "model" { "model" } else { "lora" };
                 any(self.alternatives().into_iter().map(|v| format!("gv_facet(t.facets, '{kind}', ?{}, 1)", bind(facet_value(kind, v).to_lowercase()))).collect())
             }
-            (Some(kind @ ("sampler" | "scheduler" | "size")), exact) => {
+            (Some(kind @ ("sampler" | "scheduler" | "size" | "loraw")), exact) => {
                 let parts = if exact { self.alternatives() } else { vec![self.text.as_str()] };
                 any(parts.into_iter().map(|v| format!("gv_facet(t.facets, '{kind}', ?{}, {})", bind(facet_value(kind, v).to_lowercase()), exact as u8)).collect())
             }
@@ -1378,6 +1379,37 @@ impl Db {
         usage.groups.push(ranked("collection", collections, USAGE_TOP));
         (usage.unit, usage.timeline) = timeline(&days);
         Ok(usage)
+    }
+
+    /// The pictures under `dir` that match `text`, with what they were made
+    /// with and what the user said about them: what What Works and Prompt
+    /// Doctor count. Newest first.
+    pub fn recipes(&self, dir: &str, recursive: bool, text: &str) -> DbResult<Vec<crate::works::Recipe>> {
+        let terms = parse_terms(text);
+        let (cond, args) = filter_sql(dir, recursive, &terms);
+        let conn = self.read.lock();
+        let sql = format!(
+            "SELECT f.dir, f.name, f.mtime, f.size, t.prompt, t.facets, coalesce(n.rating, 0), coalesce(n.flag, 0)
+             FROM files f JOIN ftext t ON t.id = f.id LEFT JOIN notes n ON n.dir = f.dir AND n.name = f.name
+             WHERE {cond} ORDER BY f.mtime DESC"
+        );
+        let mut stmt = conn.prepare_cached(&sql)?;
+        let mut rows = stmt.query(params_from_iter(args.iter()))?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            let rating = r.get::<_, i64>(6)?.clamp(0, 5) as u8;
+            let flag = r.get::<_, i64>(7)?.clamp(0, 3) as u8;
+            out.push(crate::works::Recipe {
+                path: join_path(r.get_ref(0)?.as_str()?, r.get_ref(1)?.as_str()?),
+                mtime: r.get(2)?,
+                size: r.get(3)?,
+                prompt: r.get(4)?,
+                facets: r.get(5)?,
+                rating,
+                target: crate::taste::target(rating, flag),
+            });
+        }
+        Ok(out)
     }
 
     /// The words of the prompts under `dir` that turn up in at least `min`

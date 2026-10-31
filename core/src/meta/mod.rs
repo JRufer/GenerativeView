@@ -191,6 +191,13 @@ impl GenInfo {
         for l in &self.loras {
             add("lora", &l.name, "");
         }
+        // Each LoRA at the strength it was used at, as `name@0.8`: what
+        // What Works counts, and `loraweight:` searches.
+        for l in &self.loras {
+            if let Some(w) = l.weight.filter(|w| w.is_finite()) {
+                add("loraw", &format!("{}@{}", l.name, (w * 100.0).round() / 100.0), "");
+            }
+        }
         for (key, value) in &self.params {
             let kind = match key.to_ascii_lowercase().as_str() {
                 "sampler" => "sampler",
@@ -393,6 +400,7 @@ mod tests {
             "\nmodel\tflux dev.safetensors\tFlux Dev.safetensors\t\n\
              aux\tae.safetensors\tae.safetensors\tvae\n\
              lora\tstyle/ink wash v2\tstyle/Ink Wash v2\t\n\
+             loraw\tstyle/ink wash v2@0.8\tstyle/Ink Wash v2@0.8\t\n\
              steps\t24\t24\t\n\
              cfg\t7\t7\t\n\
              sampler\teuler\teuler\t\n\

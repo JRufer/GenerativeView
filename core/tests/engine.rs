@@ -664,3 +664,100 @@ fn smart_collections_are_saved_beside_the_pictures() {
     assert_eq!(h.call("smart_list", json!({ "dir": dir, "recursive": true })), json!([]));
     assert_eq!(h.call("notes_get", json!({ "path": path("a.png") }))["rating"], 5);
 }
+
+#[test]
+fn artist_tools_learn_from_ratings() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    std::fs::create_dir(root.join("dupes")).unwrap();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+    // Ten liked pictures with rim lighting, ten disliked with 8k.
+    let mut liked = Vec::new();
+    let mut disliked = Vec::new();
+    for i in 0..10u32 {
+        let good = format!("good{i}.png");
+        let bad = format!("bad{i}.png");
+        write_png(&root.join(&good), i * 2 + 1, &[("prompt", &comfy_prompt(&format!("a red fox {i}, rim lighting, snow"), i as u64, "flux.safetensors"))]);
+        write_png(&root.join(&bad), i * 2 + 2, &[("prompt", &comfy_prompt(&format!("a red fox {i}, 8k, snow"), i as u64, "flux.safetensors"))]);
+        liked.push(path(&good));
+        disliked.push(path(&bad));
+    }
+    // Two near-duplicates, one rated better.
+    let disc = |lift: u8| {
+        let img = image::RgbImage::from_fn(320, 480, |x, y| {
+            let d = ((x as f32 - 100.0).powi(2) + (y as f32 - 200.0).powi(2)).sqrt();
+            let v = ((x + y) as f32 / 800.0 * 120.0 + if d < 60.0 { 110.0 } else { 0.0 }) as u8;
+            image::Rgb([v.saturating_add(lift), v, v])
+        });
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        png
+    };
+    std::fs::write(root.join("dupes/a.png"), disc(0)).unwrap();
+    std::fs::write(root.join("dupes/b.png"), disc(4)).unwrap();
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    h.call("notes_set", json!({ "paths": liked, "rating": 5 }));
+    h.call("notes_set", json!({ "paths": disliked, "rating": 1 }));
+    h.call("notes_set", json!({ "paths": [path("dupes/b.png")], "rating": 4 }));
+    h.expect_names(&root, true, "rating:5", &(0..10).map(|i| format!("good{i}.png")).collect::<Vec<_>>().iter().map(String::as_str).collect::<Vec<_>>());
+
+    // ---- What works -------------------------------------------------------
+    let works = h.call("what_works", json!({ "dir": dir, "recursive": true }));
+    // The rated picture with no prompt is not counted.
+    assert_eq!((works["liked"].as_u64(), works["disliked"].as_u64()), (Some(10), Some(10)), "{works}");
+    // In every picture alike: not listed.
+    assert_eq!(works["groups"][1]["items"].as_array().unwrap().len(), 1, "{works}");
+    assert!(works["groups"][2]["items"].as_array().unwrap().is_empty(), "{works}");
+    let keep = &works["groups"][0]["items"][0];
+    assert_eq!(keep["label"], "rim lighting");
+    assert_eq!(works["groups"][1]["items"][0]["label"], "8k");
+    // Its search shows its pictures.
+    assert_eq!(h.names(&root, true, keep["query"].as_str().unwrap()).len(), 10);
+    assert_eq!(works["models"][0]["label"], "flux");
+    let flux = h.call("what_works", json!({ "dir": dir, "recursive": true, "model": "flux.safetensors" }));
+    assert_eq!(flux["liked"], 10);
+
+    // ---- Prompt Doctor, before content search has a model ------------------
+    let doctor = h.call("prompt_doctor", json!({ "path": path("bad0.png"), "prompt": "a red fox, 8k, snow", "model": "flux.safetensors" }));
+    let kinds: Vec<(&str, &str)> = doctor["suggestions"].as_array().unwrap().iter().map(|s| (s["kind"].as_str().unwrap(), s["phrases"][0].as_str().unwrap())).collect();
+    assert_eq!(kinds, vec![("remove", "8k"), ("add", "rim lighting")], "{doctor}");
+    assert_eq!(doctor["checked"], false);
+
+    // ---- with the model: describe, heat, breed, best of group ---------------
+    install_mini_model(&h);
+    h.call("content_index", json!({ "dir": dir, "recursive": true }));
+    h.wait("content pass", |e| e["t"] == "content" && e["state"] == "done" && e["total"].as_u64().unwrap_or(0) > 0);
+    let described = h.call("describe_groups", json!({ "path": path("good0.png") }));
+    let names: Vec<&str> = described["groups"].as_array().unwrap().iter().map(|g| g["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["subject", "setting", "style", "light"]);
+    assert!(described["prompt"].is_string());
+    let heat = h.call("phrase_heat", json!({ "path": path("good0.png"), "phrase": "a red fox" }));
+    assert_eq!(heat["grid"], 16);
+    assert_eq!(heat["heat"].as_array().unwrap().len(), 256);
+    assert!(heat["heat"].as_array().unwrap().iter().all(|v| (0.0..=1.0).contains(&v.as_f64().unwrap())));
+
+    let bred = h.call("breed", json!({ "paths": [path("good0.png"), path("good1.png")], "count": 4, "seed": 5, "change": 0.5 }));
+    let children = bred["children"].as_array().unwrap();
+    assert!(!children.is_empty() && children.len() <= 4, "{bred}");
+    assert_eq!(bred["rated"], true);
+    for c in children {
+        assert!(c["prompt"].as_str().unwrap().starts_with("a red fox"), "{c}");
+        let stars = c["stars"].as_f64().unwrap();
+        assert!((1.0..=5.0).contains(&stars));
+        assert_eq!(c["cfg"].as_f64().map(|v| v >= 1.0), Some(true));
+    }
+    // Best first.
+    let stars: Vec<f64> = children.iter().map(|c| c["stars"].as_f64().unwrap()).collect();
+    assert!(stars.windows(2).all(|w| w[0] >= w[1]), "{stars:?}");
+    assert!(h.engine.call("breed", &json!({ "paths": [path("good0.png")] })).is_err());
+
+    let groups = h.call("duplicate_groups", json!({ "dir": root.join("dupes").to_str().unwrap(), "recursive": false, "text": "is:duplicate" }));
+    assert_eq!(groups.as_array().unwrap().len(), 1, "{groups}");
+    let group = &groups[0];
+    let best = group["best"].as_u64().unwrap() as usize;
+    assert!(group["paths"][best].as_str().unwrap().ends_with("b.png"), "{group}");
+    assert_eq!(group["why"]["rated"], 4);
+}

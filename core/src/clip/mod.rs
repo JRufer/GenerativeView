@@ -391,6 +391,248 @@ impl ContentSearch {
     }
 }
 
+/// What a picture can be described by, beyond the everyday things in it:
+/// where it is, what kind of picture it is, and its light. One to a line.
+const SETTINGS: &str = include_str!("vocab/setting.txt");
+const KINDS: &str = include_str!("vocab/style.txt");
+const LIGHTS: &str = include_str!("vocab/light.txt");
+
+/// Of the phrases a group offers, how many are put in the described prompt
+/// (those the model clearly sees) and how many more are offered switched
+/// off (those it half sees).
+const DESCRIBE_ON: usize = 3;
+const DESCRIBE_OFF: usize = 2;
+/// The level (see [`Fit::level`]) a phrase offered switched off has to reach.
+const DESCRIBE_MAYBE: f32 = 0.6;
+/// Most of the user's own prompt phrases weighed when describing a picture.
+const DESCRIBE_OWN: usize = 300;
+
+/// How finely a heat map divides a picture, each way.
+pub const HEAT_GRID: usize = 16;
+
+/// A part of a picture looked at on its own: its edges as fractions of the
+/// picture's width and height, and how well it fits what was asked for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Window {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    pub score: f32,
+}
+
+/// The parts of a picture a heat map looks at: the whole, then three by
+/// three windows of half its size, then five by five of a third, each row
+/// and column overlapping the next.
+pub fn heat_windows() -> Vec<(f32, f32, f32, f32)> {
+    let mut out = vec![(0.0, 0.0, 1.0, 1.0)];
+    for (size, steps) in [(0.5f32, 3usize), (0.34, 5)] {
+        for iy in 0..steps {
+            for ix in 0..steps {
+                let x0 = (1.0 - size) * ix as f32 / (steps - 1) as f32;
+                let y0 = (1.0 - size) * iy as f32 / (steps - 1) as f32;
+                out.push((x0, y0, x0 + size, y0 + size));
+            }
+        }
+    }
+    out
+}
+
+/// Spread the windows' scores over a `grid` × `grid` map, 0 where the
+/// picture fits least and 1 where it fits most. Each cell takes the windows
+/// that cover its middle, the smaller ones counting for more (they say more
+/// precisely where); a window's score counts as how much better it fits
+/// than the whole picture does. All zero when nothing stands out.
+pub fn heat_grid(windows: &[Window], grid: usize) -> Vec<f32> {
+    let whole = windows.iter().find(|w| w.x1 - w.x0 >= 0.999 && w.y1 - w.y0 >= 0.999).map_or(0.0, |w| w.score);
+    let mut cells = vec![0.0f32; grid * grid];
+    for (i, cell) in cells.iter_mut().enumerate() {
+        let (cx, cy) = (((i % grid) as f32 + 0.5) / grid as f32, ((i / grid) as f32 + 0.5) / grid as f32);
+        let (mut sum, mut weight) = (0.0, 0.0);
+        for w in windows {
+            if cx >= w.x0 && cx <= w.x1 && cy >= w.y0 && cy <= w.y1 {
+                let area = ((w.x1 - w.x0) * (w.y1 - w.y0)).max(1e-3);
+                sum += (w.score - whole) / area;
+                weight += 1.0 / area;
+            }
+        }
+        *cell = if weight > 0.0 { sum / weight } else { 0.0 };
+    }
+    let (lo, hi) = cells.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    if hi.is_nan() || lo.is_nan() || hi - lo <= 1e-4 {
+        return vec![0.0; grid * grid];
+    }
+    cells.iter().map(|v| (v - lo) / (hi - lo)).collect()
+}
+
+/// The phrases of one group that describe a picture best: up to `on` it
+/// clearly shows, then up to `off` it half shows, each with its level.
+fn pick_phrases(mut scored: Vec<(f32, String)>, on: usize, off: usize, taken: &mut Vec<String>) -> Vec<Value> {
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut out = Vec::new();
+    let (mut n_on, mut n_off) = (0, 0);
+    for (level, phrase) in scored {
+        let key = phrase.trim_start_matches("a ").trim_start_matches("an ").trim_start_matches("the ").to_string();
+        if taken.iter().any(|t| t == &key || t.contains(&key) || key.contains(t.as_str())) {
+            continue;
+        }
+        let clear = level >= 1.0;
+        if clear && n_on < on {
+            n_on += 1;
+        } else if level >= DESCRIBE_MAYBE && n_off < off {
+            n_off += 1;
+        } else {
+            continue;
+        }
+        taken.push(key);
+        out.push(json!({ "text": phrase, "level": (level * 100.0).round() / 100.0, "on": clear }));
+        if n_on == on && n_off == off {
+            break;
+        }
+    }
+    out
+}
+
+fn lines(text: &str) -> Vec<String> {
+    text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
+impl ContentSearch {
+    /// Describe a picture that carries no prompt of its own, as groups of
+    /// phrases (subject, setting, style, light), each phrase with how
+    /// clearly the model sees it and whether it belongs in the prompt.
+    /// Subjects come from the everyday list and from `own`, phrases of the
+    /// user's own prompts, so a description uses the user's words.
+    pub fn describe_groups(&self, path: &str, own: &[String]) -> Result<Value, String> {
+        let inner = &self.inner;
+        let picture = inner.picture_vector(path)?;
+        let reference = inner.reference()?;
+        let usual = usual(&reference, &picture);
+        let level = |v: &[f32]| usual.fit(store::score(v, &picture)).level();
+        let groups_text = [("setting", SETTINGS), ("style", KINDS), ("light", LIGHTS)];
+        let listed: Vec<String> = groups_text.iter().flat_map(|(_, t)| lines(t)).collect();
+        let own: Vec<String> = own
+            .iter()
+            .map(|p| p.to_lowercase())
+            .filter(|p| !is_quality_phrase(p) && p.split_whitespace().count() <= 6 && !listed.contains(p))
+            .take(DESCRIBE_OWN)
+            .collect();
+        let mut subjects: Vec<(f32, String)> = reference.vectors.chunks_exact(reference.dim).zip(everyday_lines()).map(|(v, l)| (level(v), l.to_string())).collect();
+        if !own.is_empty() {
+            let vectors = inner.phrase_vectors(&own)?;
+            // A phrase of the user's says more than an everyday word: it
+            // wins a near tie.
+            subjects.extend(vectors.iter().zip(&own).map(|(v, p)| (level(v) + 0.1, p.clone())));
+        }
+        let mut taken = Vec::new();
+        let mut groups = vec![json!({ "name": "subject", "phrases": pick_phrases(subjects, DESCRIBE_ON, DESCRIBE_OFF + 1, &mut taken) })];
+        for (name, text) in groups_text {
+            let list = lines(text);
+            let vectors = inner.list_vectors(name, text, &list)?;
+            let scored = vectors.chunks_exact(reference.dim).zip(&list).map(|(v, l)| (level(v), l.clone())).collect();
+            let (on, off) = if name == "light" { (2, DESCRIBE_OFF) } else { (DESCRIBE_ON, DESCRIBE_OFF) };
+            groups.push(json!({ "name": name, "phrases": pick_phrases(scored, on, off, &mut taken) }));
+        }
+        let prompt: Vec<String> = groups
+            .iter()
+            .flat_map(|g| g["phrases"].as_array().cloned().unwrap_or_default())
+            .filter(|p| p["on"].as_bool() == Some(true))
+            .filter_map(|p| p["text"].as_str().map(str::to_string))
+            .collect();
+        Ok(json!({ "groups": groups, "prompt": prompt.join(", ") }))
+    }
+
+    /// The vectors of `texts`, made by the text side of the model.
+    pub fn text_vectors(&self, texts: &[String]) -> Result<Vec<Arc<Vec<f32>>>, String> {
+        let lowered: Vec<String> = texts.iter().map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()).collect();
+        self.inner.phrase_vectors(&lowered)
+    }
+
+    /// Whether the model is installed.
+    pub fn installed(&self) -> bool {
+        self.inner.installed()
+    }
+
+    /// Where in the picture at `path` the model sees `phrase`, or where it
+    /// would fit best: a [`HEAT_GRID`]-square map of 0 to 1, row by row from
+    /// the top, with how clearly the whole picture shows the phrase.
+    pub fn heat(&self, path: &str, phrase: &str) -> Result<Value, String> {
+        let inner = &self.inner;
+        if !inner.installed() {
+            return Err("the content search model is not installed".into());
+        }
+        let md = std::fs::metadata(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+        let jpeg = match inner.thumbs.get(path, mtime, md.len() as i64, 1) {
+            Ok(jpeg) => jpeg,
+            Err(ThumbError::NeedHost) => return Err("this picture has not been shown yet; open it once and try again".into()),
+            Err(ThumbError::Failed(e)) => return Err(e),
+        };
+        let img = ::image::load_from_memory(&jpeg).map_err(|e| e.to_string())?;
+        let (w, h) = (img.width() as f32, img.height() as f32);
+        let encoder = model::Vision::load(&inner.model_dir)?;
+        let spots = heat_windows();
+        let prepared: Result<Vec<Vec<f32>>, String> = spots
+            .par_iter()
+            .map(|&(x0, y0, x1, y1)| {
+                let crop = img.crop_imm((x0 * w) as u32, (y0 * h) as u32, (((x1 - x0) * w) as u32).max(1), (((y1 - y0) * h) as u32).max(1));
+                image::prepare(&crop, encoder.image_size)
+            })
+            .collect();
+        let vectors = encoder.embed(&prepared?.concat());
+        let wanted = inner.phrase_vectors(&[phrase.to_lowercase()])?;
+        let wanted = wanted.first().ok_or("no vector for the phrase")?;
+        let windows: Vec<Window> = spots
+            .iter()
+            .zip(vectors.chunks_exact(encoder.dim))
+            .map(|(&(x0, y0, x1, y1), v)| Window { x0, y0, x1, y1, score: store::dot(v, wanted) })
+            .collect();
+        let level = inner
+            .picture_vector_if(path, false)
+            .ok()
+            .flatten()
+            .and_then(|picture| inner.reference().ok().map(|reference| usual(&reference, &picture).fit(store::score(wanted, &picture)).level()));
+        Ok(json!({
+            "grid": HEAT_GRID,
+            "heat": heat_grid(&windows, HEAT_GRID).iter().map(|v| (v * 1000.0).round() / 1000.0).collect::<Vec<f32>>(),
+            "level": level.map(|l| (l * 100.0).round() / 100.0),
+        }))
+    }
+
+    /// For each of `texts`, the judged pictures whose look it describes best
+    /// and how well: `samples` are (picture vector, how liked 0 to 1). The
+    /// answer is how liked, 0 to 1, weighted by fit over the closest
+    /// [`LIKELY_NEIGHBOURS`]; None when nothing was judged.
+    pub fn likely(&self, texts: &[String], samples: &[(Vec<f32>, f32)]) -> Result<Vec<Option<f32>>, String> {
+        let vectors = self.text_vectors(texts)?;
+        Ok(vectors.iter().map(|v| likely_liked(v, samples)).collect())
+    }
+}
+
+/// How many of the closest judged pictures a text's likely liking is
+/// taken from.
+pub const LIKELY_NEIGHBOURS: usize = 24;
+
+/// How liked (0 to 1) the judged pictures that `text` (a vector) describes
+/// best are, each counted by how well it fits, sharpened so the closest
+/// count most.
+pub fn likely_liked(text: &[f32], samples: &[(Vec<f32>, f32)]) -> Option<f32> {
+    let mut near: Vec<(f32, f32)> = samples.iter().filter(|(v, _)| v.len() == text.len()).map(|(v, t)| (store::dot(v, text), *t)).collect();
+    if near.is_empty() {
+        return None;
+    }
+    near.sort_by(|a, b| b.0.total_cmp(&a.0));
+    near.truncate(LIKELY_NEIGHBOURS);
+    let top = near[0].0;
+    let (mut sum, mut weight) = (0.0, 0.0);
+    for (score, target) in near {
+        let w = (-(top - score) * 40.0).exp();
+        sum += w * target;
+        weight += w;
+    }
+    (weight > 0.0).then(|| sum / weight)
+}
+
 /// Most phrases checked in one prompt; past these the rest are left out.
 const MOST_PHRASES: usize = 40;
 
@@ -684,6 +926,20 @@ impl Inner {
         Ok(made)
     }
 
+    /// The vectors of a fixed list of phrases, `list` being `text`'s lines,
+    /// end to end: from the store, or made once and stored.
+    fn list_vectors(&self, name: &str, text: &str, list: &[String]) -> Result<Vec<f32>, String> {
+        let key = format!("{MODEL}/{name}/{:016x}", xxhash_rust::xxh3::xxh3_64(text.as_bytes()));
+        if let Some(saved) = self.vectors.texts(&key).filter(|saved| !saved.is_empty() && saved.len() % list.len() == 0) {
+            return Ok(saved);
+        }
+        let side = self.text_side()?;
+        let made: Result<Vec<Vec<f32>>, String> = list.par_iter().map(|line| side.encoder.embed(&side.tokenizer.encode(line))).collect();
+        let made = made?.concat();
+        let _ = self.vectors.put_texts(&key, &made);
+        Ok(made)
+    }
+
     /// The everyday descriptions' vectors: from memory, from the store, or
     /// (once per model, a second or a few) from the model.
     fn reference(&self) -> Result<Arc<Reference>, String> {
@@ -846,6 +1102,71 @@ mod tests {
             assert!(!line.is_empty() && *line == line.trim() && *line == line.to_lowercase(), "{line:?}");
             assert!(seen.insert(line), "{line} is listed twice");
         }
+    }
+
+    #[test]
+    fn vocabularies() {
+        for text in [SETTINGS, KINDS, LIGHTS] {
+            let list = lines(text);
+            assert!(list.len() >= 25);
+            let mut seen = std::collections::HashSet::new();
+            for line in &list {
+                assert!(*line == line.to_lowercase() && seen.insert(line.clone()), "{line}");
+                assert!(!is_quality_phrase(line), "{line} would never be looked for");
+            }
+        }
+    }
+
+    #[test]
+    fn heat_falls_where_the_phrase_fits() {
+        // Windows that fit best in the top left corner.
+        let windows: Vec<Window> = heat_windows()
+            .into_iter()
+            .map(|(x0, y0, x1, y1)| {
+                let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+                Window { x0, y0, x1, y1, score: 0.3 - 0.1 * (cx * cx + cy * cy).sqrt() }
+            })
+            .collect();
+        assert_eq!(windows.len(), 1 + 9 + 25);
+        let heat = heat_grid(&windows, HEAT_GRID);
+        assert_eq!(heat.len(), HEAT_GRID * HEAT_GRID);
+        let at = |x: usize, y: usize| heat[y * HEAT_GRID + x];
+        assert!(heat.iter().all(|v| (0.0..=1.0).contains(v)));
+        assert!(at(0, 0) > 0.9, "{}", at(0, 0));
+        assert!(at(HEAT_GRID - 1, HEAT_GRID - 1) < 0.1);
+        assert!(at(2, 2) > at(10, 10));
+        // Every window the same: nothing stands out.
+        let flat: Vec<Window> = windows.iter().map(|w| Window { score: 0.2, ..*w }).collect();
+        assert!(heat_grid(&flat, 8).iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn describing_picks_clear_phrases_then_maybes() {
+        let scored = vec![
+            (2.0, "a red fox".to_string()),
+            (1.4, "fox".to_string()),
+            (1.2, "snow".to_string()),
+            (0.8, "a tree".to_string()),
+            (0.3, "a car".to_string()),
+        ];
+        let mut taken = vec!["snowy field".to_string()];
+        let picked = pick_phrases(scored, 2, 2, &mut taken);
+        let texts: Vec<&str> = picked.iter().map(|p| p["text"].as_str().unwrap()).collect();
+        // "fox" is part of "red fox", "snow" of "snowy field": said already.
+        assert_eq!(texts, vec!["a red fox", "a tree"]);
+        assert_eq!(picked[0]["on"], true);
+        assert_eq!(picked[1]["on"], false);
+    }
+
+    #[test]
+    fn likely_liking_follows_the_closest_pictures() {
+        let dim = 8;
+        let axis = |i: usize| (0..dim).map(|j| if j == i { 1.0 } else { 0.0 }).collect::<Vec<f32>>();
+        let samples = vec![(axis(0), 1.0), (axis(0), 0.9), (axis(1), 0.0), (axis(1), 0.1)];
+        let liked = likely_liked(&axis(0), &samples).unwrap();
+        let disliked = likely_liked(&axis(1), &samples).unwrap();
+        assert!(liked > 0.85 && disliked < 0.15, "{liked} {disliked}");
+        assert_eq!(likely_liked(&axis(0), &[]), None);
     }
 
     /// A unit vector along axis `axis`, tilted `tilt` of the way to `to`.

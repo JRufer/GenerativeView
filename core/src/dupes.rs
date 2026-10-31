@@ -191,6 +191,14 @@ impl Duplicates {
     /// The pictures of `result` that have a near-duplicate among it, each
     /// group together: groups in the order of their first picture, and the
     /// pictures of a group in the order they came.
+    /// The groups of near-duplicates among `result`, as indexes into it,
+    /// in the order [`Duplicates::only_duplicates`] lists them.
+    pub fn groups(&self, thumbs: &Thumbs, result: &QueryResult) -> Vec<Vec<usize>> {
+        let prints = self.prints(thumbs, result);
+        let shapes: Vec<f64> = result.rows.iter().map(|r| if r.5 > 0 { r.4 as f64 / r.5 as f64 } else { 0.0 }).collect();
+        group(&prints, &shapes)
+    }
+
     pub fn only_duplicates(&self, thumbs: &Thumbs, result: &QueryResult) -> QueryResult {
         let prints = self.prints(thumbs, result);
         let shapes: Vec<f64> = result.rows.iter().map(|r| if r.5 > 0 { r.4 as f64 / r.5 as f64 } else { 0.0 }).collect();
