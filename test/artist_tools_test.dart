@@ -255,8 +255,11 @@ void main() {
       final state = await launch(tester, size);
       state.select(indexOf(state, 'shared.png'));
       if (!state.rightOpen) state.toggleRight();
+      await tester.pump();
+      await pumpUntil(tester, () => find.byKey(const ValueKey('describe')).evaluate().isNotEmpty, what: 'the describe card (right panel open: ${state.rightOpen})');
       await screenshot(tester, boundary, 'artist-describe-before-$name');
-      await pumpUntil(tester, () => state.content.value.installed && find.byKey(const ValueKey('describe-start')).evaluate().isNotEmpty, what: 'the describe button');
+      await pumpUntil(tester, () => state.content.value.installed, what: 'the model to be known as installed');
+      await pumpUntil(tester, () => find.byKey(const ValueKey('describe-start')).evaluate().isNotEmpty, what: 'the describe button');
       await tester.ensureVisible(find.byKey(const ValueKey('describe-start')));
       await tester.tap(find.byKey(const ValueKey('describe-start')));
       await pumpUntil(tester, () => find.byKey(const ValueKey('describe-result')).evaluate().isNotEmpty, what: 'the description', timeout: const Duration(seconds: 60));
@@ -272,6 +275,8 @@ void main() {
       await tester.pump();
       openRemix(tester.element(find.byType(MediaGrid)), state, item(state, 'good_2.png'));
       await pumpUntil(tester, () => find.byKey(const ValueKey('remix-mode')).evaluate().isNotEmpty, what: 'the remix panel');
+      // A bottom sheet slides up; tap once it is in place.
+      await tester.pump(const Duration(milliseconds: 800));
       await tester.tap(find.text('Image to image'));
       await tester.pump();
       await screenshot(tester, boundary, 'artist-find-before-$name');

@@ -517,8 +517,13 @@ class ServerSendBar extends StatelessWidget {
                       Flexible(flex: 3, child: Wrap(spacing: 6, runSpacing: 6, children: chips)),
                       setUp,
                     ],
-                    if (leading != null) ...[const SizedBox(width: 6), Flexible(child: leading!)],
-                    const Spacer(),
+                    // What is beside the button takes the room left over,
+                    // so it wraps only when there truly is none.
+                    if (leading != null) ...[
+                      const SizedBox(width: 6),
+                      Expanded(child: Align(alignment: Alignment.centerLeft, child: leading!)),
+                    ] else
+                      const Spacer(),
                     const SizedBox(width: 10),
                     button,
                   ],
