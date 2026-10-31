@@ -96,6 +96,14 @@ void main() {
     );
     expect(b.aspect, closeTo(16 / 9, 1e-9));
 
+    // Neither row has generation data: the top bit of the kind is clear.
+    expect((a.generated, b.generated), (false, false));
+    final marked = ItemList.parse(
+      pack(['/out'], [(1, 0, 'made.png', 0x80, 64, 64, 1, 1, 0), (2, 0, 'clip.mp4', 0x81, 64, 64, 1, 1, 0)]),
+    );
+    expect((marked[0].generated, marked[0].isVideo), (true, false));
+    expect((marked[1].generated, marked[1].isVideo), (true, true));
+
     expect(ItemList.empty.length, 0);
     expect(() => ItemList.parse(Uint8List(16)), throwsFormatException);
   });

@@ -578,11 +578,24 @@ class SelectionBar extends StatelessWidget {
                 onTap: (context) => openCompare(context, state, state.checkedItems),
               ),
             if (n >= 2 && n <= 4)
-              button(
-                key: const ValueKey<String>('selection-breed'),
-                tooltip: 'Breed new pictures from them (G)',
-                icon: Icons.hub_outlined,
-                onTap: (context) => openBreed(context, state, state.checkedItems),
+              // Only when every one has a recipe to breed from, or can be
+              // described for one.
+              ValueListenableBuilder<ContentStatus>(
+                valueListenable: state.content,
+                builder: (context, _, _) {
+                  final ticked = state.checkedItems;
+                  // A picture with no generation data is bred from a prompt
+                  // described from it, if the picture model is here.
+                  if (ticked.any((t) => !t.generated)) state.knowContent();
+                  return state.canBreedNow(ticked)
+                    ? button(
+                        key: const ValueKey<String>('selection-breed'),
+                        tooltip: 'Breed new pictures from them (G)',
+                        icon: Icons.hub_outlined,
+                        onTap: (context) => openBreed(context, state, state.checkedItems),
+                      )
+                    : const SizedBox.shrink();
+                },
               ),
             button(
               key: const ValueKey<String>('selection-menu'),

@@ -98,9 +98,14 @@ class _UpscalePanelState extends State<UpscalePanel> {
   /// The program that made the (first) picture, once its metadata is read.
   String? _made;
 
+  /// Whether any of the pictures can be refined on a server: from its own
+  /// generation data, or a prompt described from it.
+  bool get _refinable => widget.items.any(widget.state.canRemakeNow);
+
   @override
   void initState() {
     super.initState();
+    if (widget.items.any((i) => !i.generated)) widget.state.knowContent();
     _server = _pickServer();
     widget.state.metadata(widget.items.first).then((info) {
       if (!mounted) return;
@@ -302,8 +307,17 @@ class _UpscalePanelState extends State<UpscalePanel> {
                 style: TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
               ),
             ),
-          const PanelHeading('Hires fix'),
-          _refineSection(context),
+          // Refining needs a prompt to redraw with: hidden when no picture
+          // has one or can be described for one.
+          ValueListenableBuilder<ContentStatus>(
+            valueListenable: widget.state.content,
+            builder: (context, _, _) => _refinable
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [const PanelHeading('Hires fix'), _refineSection(context)],
+                  )
+                : const SizedBox.shrink(),
+          ),
           const PanelHeading('Metadata'),
           Wrap(
             spacing: 8,
@@ -435,9 +449,10 @@ class _UpscalePanelState extends State<UpscalePanel> {
           dense: true,
           contentPadding: EdgeInsets.zero,
           title: const Text('Then refine on a server', style: TextStyle(fontSize: 13.5)),
-          subtitle: const Text(
+          subtitle: Text(
             'The upscale is sent as image to image with the picture\'s own prompt, settings and seed, '
-            'and redrawn lightly at the larger size, so the server adds real detail rather than sharpening.',
+            'and redrawn lightly at the larger size, so the server adds real detail rather than sharpening.'
+            '${widget.items.any((i) => !i.generated) ? ' A picture with no generation data is refined with a prompt described from it.' : ''}',
             style: TextStyle(fontSize: 12, color: Palette.muted, height: 1.35),
           ),
           onChanged: _busy ? null : (v) => setState(() => _refine = v),
@@ -649,7 +664,12 @@ Future<String?> refineUpscale(
   if (base.isEmpty) throw HiresNotSent('not refined: $name is no longer set up');
   final GenInfo info;
   try {
-    info = await state.metadata(original);
+    // Its own generation data or, with none, a prompt described from it.
+    final recipe = await state.remakeRecipe(original);
+    if (recipe == null) throw HiresNotSent('not refined: it has no generation data to refine with');
+    info = recipe;
+  } on HiresNotSent {
+    rethrow;
   } catch (_) {
     throw HiresNotSent('not refined: its generation data could not be read');
   }

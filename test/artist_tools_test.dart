@@ -301,6 +301,30 @@ void main() {
       await close(tester, state);
     });
 
+    testWidgets('a picture with no generation data breeds from a description, on the $name', (tester) async {
+      final state = await launch(tester, size);
+      final shared = item(state, 'shared.png');
+      // The index says which pictures carry generation data.
+      expect(shared.generated, isFalse);
+      expect(item(state, 'good_0.png').generated, isTrue);
+      state.knowContent();
+      await pumpUntil(tester, () => state.content.value.installed, what: 'the model to be known as installed');
+      // With the picture model here it can be described, so remade.
+      expect(state.canRemakeNow(shared), isTrue);
+      state.toggleChecked(shared);
+      state.toggleChecked(item(state, 'good_0.png'));
+      await pumpUntil(tester, () => find.byKey(const ValueKey('selection-breed')).evaluate().isNotEmpty, what: 'the breed button');
+      await tester.tap(find.byKey(const ValueKey('selection-breed')));
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('breed-child-0')).evaluate().isNotEmpty,
+        what: 'candidates from the described picture',
+        timeout: const Duration(seconds: 60),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await close(tester, state);
+    });
+
     testWidgets('fix this spot opens Find in the mask editor, on the $name', (tester) async {
       final state = await launch(tester, size);
       state.select(indexOf(state, 'good_2.png'));

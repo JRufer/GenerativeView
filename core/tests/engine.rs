@@ -836,6 +836,20 @@ fn artist_tools_learn_from_ratings() {
     let stars: Vec<f64> = children.iter().map(|c| c["stars"].as_f64().unwrap()).collect();
     assert!(stars.windows(2).all(|w| w[0] >= w[1]), "{stars:?}");
     assert!(h.engine.call("breed", &json!({ "paths": [path("good0.png")] })).is_err());
+    // Pictures with no generation data breed from prompts described from them.
+    let bred = h.call(
+        "breed",
+        json!({ "paths": [path("dupes/a.png"), path("dupes/b.png")], "prompts": ["a lighthouse at dusk, oil painting", "a stone harbour, fog"], "count": 4, "seed": 3 }),
+    );
+    let children = bred["children"].as_array().unwrap();
+    assert!(!children.is_empty(), "{bred}");
+    assert!(
+        children.iter().all(|c| ["lighthouse", "harbour"].iter().any(|w| c["prompt"].as_str().unwrap().contains(w))),
+        "{bred}"
+    );
+    // A described prompt never replaces a file's own.
+    let bred = h.call("breed", json!({ "paths": [path("good0.png"), path("good1.png")], "prompts": ["a lighthouse", "a harbour"], "count": 4, "seed": 5 }));
+    assert!(bred["children"].as_array().unwrap().iter().all(|c| c["prompt"].as_str().unwrap().starts_with("a red fox")), "{bred}");
 
     let groups = h.call("duplicate_groups", json!({ "dir": root.join("dupes").to_str().unwrap(), "recursive": false, "text": "is:duplicate" }));
     assert_eq!(groups.as_array().unwrap().len(), 1, "{groups}");

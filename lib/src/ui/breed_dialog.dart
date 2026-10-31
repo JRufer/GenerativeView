@@ -35,9 +35,25 @@ Future<void> openBreed(BuildContext context, AppState state, List<MediaItem> par
     return;
   }
   if (!context.mounted) return;
-  if (infos.any((i) => !i.hasGeneration)) {
-    toast(context, 'Every picture bred from needs its generation data');
-    return;
+  // Those with no generation data are bred from prompts described from the
+  // pictures, when the picture model is here to describe them.
+  final plain = [for (var i = 0; i < infos.length; i++) if (!infos[i].hasGeneration) i];
+  if (plain.isNotEmpty) {
+    if (!await state.canDescribe()) {
+      if (context.mounted) toast(context, 'Every picture bred from needs its generation data');
+      return;
+    }
+    if (!context.mounted) return;
+    toast(context, plain.length == 1 ? 'Describing the picture with no generation data…' : 'Describing the ${plain.length} pictures with no generation data…');
+    try {
+      for (final i in plain) {
+        infos[i] = await state.describedRecipe(pictures[i]);
+      }
+    } catch (e) {
+      if (context.mounted) toast(context, 'Could not describe the pictures: $e');
+      return;
+    }
+    if (!context.mounted) return;
   }
   await showPanel<void>(
     context,
@@ -133,6 +149,7 @@ class _BreedPanelState extends State<BreedPanel> {
         model: _model,
         change: _change,
         seed: _seed,
+        prompts: [for (final i in widget.infos) i.source == 'described' ? i.prompt : ''],
       );
       if (!mounted) return;
       setState(() {
