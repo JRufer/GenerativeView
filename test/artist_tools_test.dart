@@ -273,16 +273,20 @@ void main() {
       await screenshot(tester, boundary, 'artist-describe-before-$name');
       await pumpUntil(
         tester,
-        () => find.byKey(const ValueKey('describe')).evaluate().isNotEmpty,
+        // Built, if scrolled out of sight in a short panel.
+        () => find.byKey(const ValueKey('describe'), skipOffstage: false).evaluate().isNotEmpty,
         what: 'the describe card (panel open: ${state.rightOpen}, showing ${state.selected?.name}, narrow: ${state.narrowLayout}, portrait: ${state.portraitLayout})',
       );
       await pumpUntil(tester, () => state.content.value.installed, what: 'the model to be known as installed');
-      await pumpUntil(tester, () => find.byKey(const ValueKey('describe-start')).evaluate().isNotEmpty, what: 'the describe button');
-      await tester.ensureVisible(find.byKey(const ValueKey('describe-start')));
+      await pumpUntil(tester, () => find.byKey(const ValueKey('describe-start'), skipOffstage: false).evaluate().isNotEmpty, what: 'the describe button');
+      await tester.ensureVisible(find.byKey(const ValueKey('describe-start'), skipOffstage: false));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('describe-start')));
-      await pumpUntil(tester, () => find.byKey(const ValueKey('describe-result')).evaluate().isNotEmpty, what: 'the description', timeout: const Duration(seconds: 60));
-      expect(find.text('Subject'), findsOneWidget);
-      expect(find.byKey(const ValueKey('describe-remix')), findsOneWidget);
+      await pumpUntil(tester, () => find.byKey(const ValueKey('describe-result'), skipOffstage: false).evaluate().isNotEmpty, what: 'the description', timeout: const Duration(seconds: 60));
+      expect(find.text('Subject', skipOffstage: false), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const ValueKey('describe-result'), skipOffstage: false));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('describe-remix'), skipOffstage: false), findsOneWidget);
       await settle(tester);
       await screenshot(tester, boundary, 'artist-describe-$name');
       await close(tester, state);
