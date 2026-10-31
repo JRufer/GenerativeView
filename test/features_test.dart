@@ -1563,6 +1563,13 @@ void main() {
           'in sub ${File('$sub/fox_03.png').existsSync()}, at home ${File('${library.path}/fox_03.png').existsSync()}',
     );
     await pumpUntil(tester, () => indexOf(state, 'fox_03.png') >= 0 && item('fox_03.png').rating == 4, what: 'back with its stars');
+    // The grid shows it back home too, not where it was.
+    List<String> listed() => [for (var i = 0; i < state.items.length; i++) if (state.items[i].name == 'fox_03.png') normalizePath(state.items[i].path)];
+    for (var i = 0; i < 60 && !(listed().length == 1 && parentDir(listed().single) == home); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(listed(), ['$home/fox_03.png'], reason: 'listed after the undo');
 
     // The picker remembers where things went.
     await rightClick(tile('fox_03.png'));
