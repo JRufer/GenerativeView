@@ -814,6 +814,25 @@ String normalizePath(String raw) {
 
 /// A path in [dir] for a file called [name] that doesn't exist yet:
 /// `name.png`, then `name (2).png`, `name (3).png`, …
+/// The folder [path] is in: everything before its last separator.
+String parentDir(String path) {
+  final cut = path.lastIndexOf(RegExp(r'[/\\]'));
+  if (cut < 0) return '';
+  if (cut == 0) return path.substring(0, 1);
+  // Keep a drive's own slash: C:/
+  if (cut == 2 && path[1] == ':') return path.substring(0, 3);
+  return path.substring(0, cut);
+}
+
+/// What came of moving pictures into [dir]: each that went, as (where it
+/// was, where it is now), and why any did not.
+class MoveOutcome {
+  const MoveOutcome(this.dir, this.moved, this.failed);
+  final String dir;
+  final List<(String, String)> moved;
+  final List<String> failed;
+}
+
 String freeFileName(String dir, String name) {
   final sep = dir.contains('/') ? '/' : Platform.pathSeparator;
   final base = (dir.endsWith('/') || dir.endsWith(r'\')) ? dir : '$dir$sep';

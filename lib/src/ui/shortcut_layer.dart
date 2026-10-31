@@ -12,6 +12,7 @@ import 'compare_view.dart';
 import 'filter_sheet.dart';
 import 'image_menu.dart';
 import 'meta_panel.dart' show toast;
+import 'move_ui.dart';
 import 'notes_widgets.dart';
 import 'remix_dialog.dart';
 import 'shortcuts_overlay.dart';
@@ -225,11 +226,29 @@ class ShortcutLayer extends StatelessWidget {
       if (state.mode == ViewMode.grid && event is! KeyRepeatEvent) state.checkAll();
       return KeyEventResult.handled;
     }
+    if (ctrl && key == LogicalKeyboardKey.keyX) {
+      // Ctrl+X cuts the picture (or every ticked one), to be moved by the
+      // next paste into a folder.
+      final targets = state.keyTargets;
+      final panel = _panelContext;
+      if (targets.isNotEmpty && event is! KeyRepeatEvent) {
+        state.cutFiles(targets);
+        if (panel != null) toast(panel, targets.length == 1 ? 'Cut: paste into a folder to move it' : 'Cut ${targets.length}: paste into a folder to move them');
+      }
+      return KeyEventResult.handled;
+    }
     if (ctrl && key == LogicalKeyboardKey.keyV) {
-      // Ctrl+V pastes a copied picture into the folder being shown.
+      // Ctrl+V pastes a copied picture into the folder being shown, or
+      // moves the cut ones there.
       final panel = _panelContext;
       final dir = state.selected?.dir ?? state.folder;
-      if (panel != null && dir != null && event is! KeyRepeatEvent) pasteInto(panel, state, dir);
+      if (panel != null && dir != null && event is! KeyRepeatEvent) {
+        if (state.hasCut) {
+          moveWithUndo(panel, state, () => state.moveCutTo(dir));
+        } else {
+          pasteInto(panel, state, dir);
+        }
+      }
       return KeyEventResult.handled;
     }
     if (ctrl &&
@@ -323,6 +342,8 @@ class ShortcutLayer extends StatelessWidget {
         state.closeFocus();
       } else if (state.leftFloats) {
         state.closeOverlays();
+      } else if (state.hasCut) {
+        state.clearCut();
       } else if (state.checkedCount > 0) {
         state.clearChecked();
       } else {
@@ -361,6 +382,11 @@ class ShortcutLayer extends StatelessWidget {
     if (key == LogicalKeyboardKey.keyV) {
       // The ticked pictures side by side.
       if (panel != null) openCompare(panel, state, targets);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      // Move the picture (or every ticked one) to another folder.
+      if (panel != null && targets.isNotEmpty) openMoveTo(panel, state, targets);
       return true;
     }
     if (key == LogicalKeyboardKey.keyG && targets.length >= 2) {

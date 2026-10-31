@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../core/models.dart' show exactTerm, normalizePath;
 import '../theme.dart';
 import 'context_menu.dart';
+import 'folder_drag.dart';
+import 'image_menu.dart' show pasteInto;
+import 'move_ui.dart';
 import 'sheet.dart';
 import 'smart_editor.dart';
 
@@ -98,8 +103,50 @@ class _FolderPanelState extends State<FolderPanel> {
     });
   }
 
+  /// Scrolls the tree while a drag of pictures rests near its top or
+  /// bottom edge, so a folder further along can be reached.
+  Timer? _dragScroll;
+  final GlobalKey _treeKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    state.folderDrag.addListener(_dragMoved);
+  }
+
+  void _dragMoved() {
+    final dragging = state.folderDrag.value != null;
+    if (!dragging) {
+      _dragScroll?.cancel();
+      _dragScroll = null;
+    } else {
+      _dragScroll ??= Timer.periodic(const Duration(milliseconds: 40), (_) => _scrollTowardDrag());
+    }
+  }
+
+  void _scrollTowardDrag() {
+    final info = state.folderDrag.value;
+    final box = _treeKey.currentContext?.findRenderObject();
+    if (info == null || box is! RenderBox || !box.hasSize || !_scroll.hasClients) return;
+    final local = box.globalToLocal(info.position);
+    if (local.dx < 0 || local.dx > box.size.width) return;
+    const zone = 28.0;
+    final double step;
+    if (local.dy >= 0 && local.dy < zone) {
+      step = -(zone - local.dy) / 2;
+    } else if (local.dy > box.size.height - zone && local.dy <= box.size.height) {
+      step = (local.dy - (box.size.height - zone)) / 2;
+    } else {
+      return;
+    }
+    final position = _scroll.position;
+    _scroll.jumpTo((position.pixels + step).clamp(0.0, position.maxScrollExtent).toDouble());
+  }
+
   @override
   void dispose() {
+    state.folderDrag.removeListener(_dragMoved);
+    _dragScroll?.cancel();
     _scroll.dispose();
     _path.dispose();
     _pathFocus.dispose();
@@ -162,17 +209,37 @@ class _FolderPanelState extends State<FolderPanel> {
     _pathFocus.unfocus();
   }
 
-  /// The right-click / press-and-hold menu of a folder, wherever it is listed.
+  /// The right-click / press-and-hold menu of a folder, wherever it is
+  /// listed: pin it, paste into it, and move pictures into it (the cut
+  /// ones, or else the ticked ones).
   Future<void> _menu(String path, Offset position) async {
     final pinned = state.isFolderPinned(path);
+    final cut = state.cutCount;
+    final ticked = state.checkedCount;
     final choice = await showContextMenu<String>(context, position, [
+      if (cut > 0)
+        MenuEntry('move-cut', cut == 1 ? 'Move the cut file here' : 'Move the $cut cut files here', Icons.drive_file_move_outline)
+      else if (ticked > 0)
+        MenuEntry('move-ticked', ticked == 1 ? 'Move the ticked file here' : 'Move the $ticked ticked files here', Icons.drive_file_move_outline),
+      const MenuEntry('paste', 'Paste here', Icons.content_paste),
       MenuEntry(
         'pin',
         pinned ? 'Unpin this folder' : 'Pin this folder',
         pinned ? Icons.push_pin_outlined : Icons.push_pin,
       ),
     ]);
-    if (choice == 'pin') state.toggleFolderPin(path);
+    if (!mounted) return;
+    switch (choice) {
+      case 'pin':
+        state.toggleFolderPin(path);
+      case 'paste':
+        await pasteInto(context, state, path);
+      case 'move-cut':
+        await moveWithUndo(context, state, () => state.moveCutTo(path));
+      case 'move-ticked':
+        final targets = state.checkedItems;
+        await moveWithUndo(context, state, () => state.moveFiles(targets, path));
+    }
   }
 
   @override
@@ -229,6 +296,7 @@ class _FolderPanelState extends State<FolderPanel> {
                   ),
                 )
               : ExcludeFocus(
+                  key: _treeKey,
                   child: Scrollbar(
                     controller: _scroll,
                     child: ListView.builder(
@@ -239,15 +307,21 @@ class _FolderPanelState extends State<FolderPanel> {
                       itemBuilder: (context, index) {
                         final row = rows[index];
                         final rowNorm = normalizePath(row.path);
-                        return _FolderRow(
-                          row: row,
-                          current: rowNorm == normalizePath(state.folder ?? ''),
-                          pinned: state.isFolderPinned(row.path),
-                          expanded: state.expanded.contains(row.path) ||
-                              state.expanded.contains(rowNorm),
-                          onOpen: () => _pick(row.path),
-                          onToggle: () => state.toggleExpanded(row.path),
-                          onMenu: (position) => _menu(row.path, position),
+                        final expanded = state.expanded.contains(row.path) || state.expanded.contains(rowNorm);
+                        return FolderDropTarget(
+                          state: state,
+                          path: row.path,
+                          // Resting a drag on a closed folder opens it.
+                          onHoverOpen: row.expandable && !expanded ? () => state.toggleExpanded(row.path) : null,
+                          child: _FolderRow(
+                            row: row,
+                            current: rowNorm == normalizePath(state.folder ?? ''),
+                            pinned: state.isFolderPinned(row.path),
+                            expanded: expanded,
+                            onOpen: () => _pick(row.path),
+                            onToggle: () => state.toggleExpanded(row.path),
+                            onMenu: (position) => _menu(row.path, position),
+                          ),
                         );
                       },
                     ),
@@ -351,14 +425,18 @@ class _PinnedFolders extends StatelessWidget {
                   final path = pins[index];
                   final name = names[index];
                   final twin = names.where((n) => n == name).length > 1;
-                  return _FolderRow(
-                    row: _Row(name, path, 0, false, pinnedFolderIcon),
-                    detail: twin ? _baseName(_parentOf(path)) : null,
-                    current: path == state.folder,
-                    pinned: true,
-                    expanded: false,
-                    onOpen: () => onOpen(path),
-                    onMenu: (position) => onMenu(path, position),
+                  return FolderDropTarget(
+                    state: state,
+                    path: path,
+                    child: _FolderRow(
+                      row: _Row(name, path, 0, false, pinnedFolderIcon),
+                      detail: twin ? _baseName(_parentOf(path)) : null,
+                      current: path == state.folder,
+                      pinned: true,
+                      expanded: false,
+                      onOpen: () => onOpen(path),
+                      onMenu: (position) => onMenu(path, position),
+                    ),
                   );
                 },
               ),

@@ -17,6 +17,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -123,6 +124,10 @@ class MainActivity : FlutterActivity() {
                     "openUrl" -> result.success(openUrl(call.argument<String>("url")))
                     "trashFile" -> trashFile(call.argument<String>("path"), result)
                     "pasteSource" -> pasteSource(result)
+                    "scanFiles" -> {
+                        scanFiles(call.argument<List<String>>("paths") ?: emptyList())
+                        result.success(null)
+                    }
                     "remixWaiting" -> {
                         remixWaiting(call.argument<Int>("count") ?: 0)
                         result.success(null)
@@ -134,6 +139,13 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    // Files moved by the app: tell the media store, so gallery apps drop
+    // the old place and find the new one (a path that is gone is removed).
+    private fun scanFiles(paths: List<String>) {
+        if (paths.isEmpty()) return
+        MediaScannerConnection.scanFile(applicationContext, paths.toTypedArray(), null, null)
     }
 
     private fun videoFrame(call: MethodCall, result: MethodChannel.Result) {

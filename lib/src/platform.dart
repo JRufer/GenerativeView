@@ -289,6 +289,19 @@ Future<bool> shareFiles(List<String> paths) async {
   }
 }
 
+/// Tell the system's media store that files at [paths] appeared or went
+/// away (a move gives both), so gallery apps follow. Android only.
+Future<void> scanMediaFiles(List<String> paths) async {
+  if (!Platform.isAndroid || paths.isEmpty) return;
+  try {
+    await _media.invokeMethod<void>('scanFiles', {'paths': paths});
+  } on PlatformException {
+    // Gallery apps catch up on their own, later.
+  } on MissingPluginException {
+    // Nothing to tell.
+  }
+}
+
 /// Whether files can be dragged out of the window into other programs.
 bool get canDragFilesOut => Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
