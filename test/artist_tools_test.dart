@@ -137,6 +137,14 @@ void main() {
     return state;
   }
 
+  /// Let thumbnails load and buttons finish fading in, for a screenshot.
+  Future<void> settle(WidgetTester tester) async {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
+
   Future<void> close(WidgetTester tester, AppState state) async {
     await tester.pumpWidget(const SizedBox());
     state.dispose();
@@ -186,6 +194,7 @@ void main() {
       expect(find.byKey(const ValueKey('works-row-8k')), findsOneWidget);
       // The rim lighting and 8k foxes, and the twin rated four stars.
       expect(find.textContaining('From 17 rated pictures'), findsOneWidget);
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-works-$name');
       // A row shows its pictures.
       await tester.tap(find.byKey(const ValueKey('works-row-rim lighting')));
@@ -205,6 +214,7 @@ void main() {
       // 8k sinks; rim lighting lifts.
       expect(find.textContaining('is common in your rejects'), findsOneWidget);
       expect(find.textContaining('rim lighting'), findsWidgets);
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-doctor-$name');
       await tester.tap(find.byKey(const ValueKey('remix-suggestions-all')));
       await tester.pump();
@@ -225,6 +235,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('selection-breed')));
       await pumpUntil(tester, () => find.byKey(const ValueKey('breed-child-0')).evaluate().isNotEmpty, what: 'the candidates');
       expect(find.byKey(const ValueKey('breed-send')), findsOneWidget);
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-breed-$name');
       // Mixing less: the candidates are written again.
       await tester.tap(find.byKey(const ValueKey('breed-mix-settings')));
@@ -243,6 +254,7 @@ void main() {
       expect(group.bestPath, endsWith('twin_b.png'));
       expect(find.byType(GroupHeader), findsWidgets);
       expect(find.byType(BestBadge), findsWidgets);
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-dupes-$name');
       await tester.tap(find.byKey(const ValueKey('filter-bar-best')));
       await tester.pump();
@@ -257,6 +269,7 @@ void main() {
       if (!state.rightOpen) state.toggleRight();
       await tester.pump();
       await pumpUntil(tester, () => find.byKey(const ValueKey('describe')).evaluate().isNotEmpty, what: 'the describe card (right panel open: ${state.rightOpen})');
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-describe-before-$name');
       await pumpUntil(tester, () => state.content.value.installed, what: 'the model to be known as installed');
       await pumpUntil(tester, () => find.byKey(const ValueKey('describe-start')).evaluate().isNotEmpty, what: 'the describe button');
@@ -265,6 +278,7 @@ void main() {
       await pumpUntil(tester, () => find.byKey(const ValueKey('describe-result')).evaluate().isNotEmpty, what: 'the description', timeout: const Duration(seconds: 60));
       expect(find.text('Subject'), findsOneWidget);
       expect(find.byKey(const ValueKey('describe-remix')), findsOneWidget);
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-describe-$name');
       await close(tester, state);
     });
@@ -279,6 +293,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 800));
       await tester.tap(find.text('Image to image'));
       await tester.pump();
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-find-before-$name');
       await pumpUntil(tester, () => find.byKey(const ValueKey('remix-mask-edit')).evaluate().isNotEmpty, what: 'the image to image section');
       await tester.ensureVisible(find.byKey(const ValueKey('remix-mask-edit')));
@@ -291,6 +306,7 @@ void main() {
         what: 'the heat map',
         timeout: const Duration(seconds: 60),
       );
+      await settle(tester);
       await screenshot(tester, boundary, 'artist-find-$name');
       await tester.tap(find.byKey(const ValueKey('mask-find-use')));
       await tester.pump();

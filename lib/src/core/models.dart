@@ -1100,7 +1100,7 @@ class DuplicateGroup {
 
   /// Why the best one was picked, in a few words.
   String get why => [
-    if (rated != null) '★$rated rated' else if (likely != null) '★${likely!.toStringAsFixed(1)} likely',
+    if (rated != null) 'rated $rated ${rated == 1 ? 'star' : 'stars'}' else if (likely != null) 'likely ${likely!.toStringAsFixed(1)} stars',
     if (kept) 'kept',
     if (seen != null && checked != null && checked! > 0) '$seen of $checked phrases seen',
     if (sharpest) 'sharpest',

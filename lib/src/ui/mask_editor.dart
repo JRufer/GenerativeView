@@ -328,12 +328,14 @@ class _HeatPainter extends CustomPainter {
     const n = heatSmooth;
     final smooth = smoothHeat(heat, n);
     final w = size.width / n, h = size.height / n;
+    // Cells meet edge to edge; anti-aliased, their shared edges would show.
+    final cell = Paint()..isAntiAlias = false;
     for (var y = 0; y < n; y++) {
       for (var x = 0; x < n; x++) {
         final v = smooth[y * n + x];
         if (v < 0.05) continue;
         final color = Color.lerp(const Color(0xFFFFB04F), maskTint, v)!.withValues(alpha: 0.15 + 0.5 * v);
-        canvas.drawRect(Rect.fromLTWH(x * w, y * h, w + 0.5, h + 0.5), Paint()..color = color);
+        canvas.drawRect(Rect.fromLTRB((x * w).floorToDouble(), (y * h).floorToDouble(), ((x + 1) * w).floorToDouble(), ((y + 1) * h).floorToDouble()), cell..color = color);
       }
     }
     final edge = Paint()
