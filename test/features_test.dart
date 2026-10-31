@@ -1496,6 +1496,125 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('pictures move to another folder with their notes: from the menu, by cut and paste, and by dragging', (tester) async {
+    final sub = normalizePath('${library.path}/sub');
+    final home = normalizePath(library.path);
+    // Whatever happens, fox_03 goes home again for the tests after.
+    addTearDown(() {
+      final strayed = File('$sub/fox_03.png');
+      if (strayed.existsSync()) strayed.renameSync('${library.path}/fox_03.png');
+    });
+    final state = await launch(tester);
+    if (!state.leftOpen) state.toggleLeft();
+    await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
+    MediaItem item(String name) => state.items[indexOf(state, name)];
+    Finder tile(String name) => find.byKey(ValueKey<int>(item(name).id));
+    bool inSub() => File('$sub/fox_03.png').existsSync() && !File('${library.path}/fox_03.png').existsSync();
+    bool atHome() => File('${library.path}/fox_03.png').existsSync() && !File('$sub/fox_03.png').existsSync();
+    Future<void> rightClick(Finder target) async {
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+      await mouse.down(tester.getCenter(target));
+      await mouse.up();
+      await mouse.removePointer();
+      await settle(tester);
+    }
+
+    // Stars and a collection to carry along.
+    await tester.runAsync(() => state.changeNotes(targets: [item('fox_03.png')], rating: 4, add: ['Movers']));
+    await pumpUntil(tester, () => item('fox_03.png').rating == 4, what: 'four stars');
+
+    // From the menu: Move to… opens a picker at the picture's folder.
+    state.select(indexOf(state, 'fox_03.png'));
+    await tester.pump();
+    await rightClick(tile('fox_03.png'));
+    expect(find.text('Keep (P)'), findsNothing);
+    await tester.tap(find.text('Move to… (M)'));
+    await settle(tester);
+    await pumpUntil(tester, () => find.byKey(const ValueKey<String>('move-browse-sub')).evaluate().isNotEmpty, what: 'the folders to pick from');
+    expect(find.text('Already here'), findsOneWidget, reason: 'the folder it is in is not a choice');
+    await screenshot(tester, boundary, '60-move-picker');
+    await tester.tap(find.byKey(const ValueKey<String>('move-browse-sub')));
+    await pumpUntil(tester, () => find.text('Move to sub').evaluate().isNotEmpty, what: 'the sub folder open');
+    await tester.tap(find.byKey(const ValueKey<String>('move-here')));
+    await pumpUntil(tester, inSub, what: 'the move');
+    final subNotes = (notesFile(sub)['images'] as Map)['fox_03.png'] as Map;
+    expect(subNotes['rating'], 4);
+    expect(subNotes['collections'], ['Movers']);
+    final homeImages = (File('$home/.generativeview.json').existsSync() ? notesFile(home)['images'] as Map? : null) ?? const {};
+    expect(homeImages.containsKey('fox_03.png'), isFalse, reason: 'nothing left behind');
+    // (The folder as the core lists it, which may be the real path behind a link.)
+    expect(state.moveTargets.first, endsWith('/sub'));
+    // Undo puts it back, notes and all.
+    await pumpUntil(tester, () => find.byKey(const ValueKey<String>('undo-move')).evaluate().isNotEmpty, what: 'the Undo');
+    await tester.tap(find.byKey(const ValueKey<String>('undo-move')));
+    await pumpUntil(tester, atHome, what: 'the undo');
+    await pumpUntil(tester, () => indexOf(state, 'fox_03.png') >= 0 && item('fox_03.png').rating == 4, what: 'back with its stars');
+
+    // The picker remembers where things went.
+    await rightClick(tile('fox_03.png'));
+    await tester.tap(find.text('Move to… (M)'));
+    await settle(tester);
+    expect(find.byKey(ValueKey<String>('move-recent-${state.moveTargets.first}')), findsOneWidget);
+    await tester.tapAt(const Offset(5, 5));
+    await settle(tester);
+
+    // Cut, then a folder's menu moves it there.
+    state.toggleFolderPin(sub);
+    await tester.pump();
+    final pinnedSub = find.descendant(of: find.byKey(const ValueKey<String>('pinned-folders')), matching: find.text('sub'));
+    expect(pinnedSub, findsOneWidget);
+    state.select(indexOf(state, 'fox_03.png'));
+    await tester.pump();
+    await tester.sendKeyDownEvent(primaryModifier);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyX);
+    await tester.sendKeyUpEvent(primaryModifier);
+    await tester.pump();
+    expect(state.cutCount, 1);
+    expect(find.byKey(const ValueKey<String>('tile-cut')), findsOneWidget);
+    // Esc lets go of it.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(state.hasCut, isFalse);
+    await tester.sendKeyDownEvent(primaryModifier);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyX);
+    await tester.sendKeyUpEvent(primaryModifier);
+    await tester.pump();
+    await rightClick(pinnedSub);
+    expect(find.text('Paste here'), findsOneWidget);
+    await screenshot(tester, boundary, '61-folder-menu-move');
+    await tester.tap(find.text('Move the cut file here'));
+    await pumpUntil(tester, inSub, what: 'the cut file to move');
+    expect(state.hasCut, isFalse);
+    await tester.runAsync(() => state.movePaths(['$sub/fox_03.png'], home, remember: false));
+    await pumpUntil(tester, () => atHome() && indexOf(state, 'fox_03.png') >= 0, what: 'back home');
+    await settle(tester);
+
+    // Dragged with the mouse onto the pinned folder.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.down(tester.getCenter(tile('fox_03.png')));
+    await mouse.moveBy(const Offset(20, 20));
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('drag-feedback')), findsOneWidget);
+    await mouse.moveTo(tester.getCenter(pinnedSub));
+    await tester.pump();
+    expect(state.folderDrag.value?.folder, sub);
+    expect(find.text('Move to sub'), findsOneWidget);
+    await screenshot(tester, boundary, '62-drag-to-folder');
+    await mouse.up();
+    await mouse.removePointer();
+    await pumpUntil(tester, inSub, what: 'the drop');
+    expect(state.folderDrag.value, isNull);
+    expect(find.byKey(const ValueKey<String>('drag-feedback')), findsNothing);
+    expect(((notesFile(sub)['images'] as Map)['fox_03.png'] as Map)['rating'], 4);
+
+    // Tidy up for the tests after.
+    await tester.runAsync(() => state.movePaths(['$sub/fox_03.png'], home, remember: false));
+    await pumpUntil(tester, () => atHome() && indexOf(state, 'fox_03.png') >= 0, what: 'home again');
+    await tester.runAsync(() => state.changeNotes(targets: [item('fox_03.png')], rating: 0, remove: ['Movers']));
+    state.toggleFolderPin(sub);
+    await close(tester, state);
+  });
+
   testWidgets('near-duplicates only: the pictures with a twin, each pair together', (tester) async {
     // Pictures with something in them: a bright disc on a ramp, placed by
     // (cx, cy). Two pairs of all-but-identical ones, and one alone.

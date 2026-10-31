@@ -10,6 +10,7 @@ import 'compare_view.dart';
 import 'context_menu.dart';
 import 'filter_sheet.dart' show FilterSet;
 import 'meta_panel.dart';
+import 'move_ui.dart';
 import 'notes_widgets.dart';
 import 'remix_dialog.dart';
 import 'sheet.dart';
@@ -53,6 +54,7 @@ Future<void> showImageMenu(
     if (remakeable) const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
     if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
     const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+    const MenuEntry('move', 'Move to… (M)', Icons.drive_file_move_outline),
     if (shownCollection != null)
       MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
     MenuEntry('delete', item.isVideo ? 'Delete video…' : 'Delete image…', Icons.delete_outline),
@@ -67,6 +69,8 @@ Future<void> showImageMenu(
       await openUpscale(context, state, item);
     case 'collection':
       await showCollectionPicker(context, state, [item]);
+    case 'move':
+      await openMoveTo(context, state, [item]);
     case 'file':
       await copyImage(context, item);
     case 'prompt':
@@ -103,6 +107,7 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
     if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
     const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
     const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+    MenuEntry('move', 'Move $n $things to… (M)', Icons.drive_file_move_outline),
     if (shownCollection != null)
       MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
     if (images > 0)
@@ -133,6 +138,8 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
       if (stars != null) await state.rate(targets, stars);
     case 'collection':
       await showCollectionPicker(context, state, targets);
+    case 'move':
+      await openMoveTo(context, state, targets);
     case 'uncollect':
       await state.changeNotes(targets: targets, remove: [shownCollection!]);
       if (context.mounted) toast(context, 'Removed $n from "$shownCollection"');

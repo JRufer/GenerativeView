@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
@@ -14,7 +15,7 @@ import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/taste.dart';
 import 'core/thumb_cache.dart';
-import 'platform.dart' show PasteSource, sharedFiles;
+import 'platform.dart' show PasteSource, scanMediaFiles, sharedFiles;
 
 enum ViewMode { grid, focus }
 
@@ -102,6 +103,19 @@ class DownloadProgress {
   const DownloadProgress(this.received, this.total);
   final int received;
   final int total;
+}
+
+/// A drag of pictures with the mouse, inside the window: what is being
+/// carried, where the pointer is, and the folder under it, if any.
+@immutable
+class FolderDragInfo {
+  const FolderDragInfo(this.items, this.position, this.folder, {this.copy = false});
+  final List<MediaItem> items;
+  final Offset position;
+  final String? folder;
+
+  /// Ctrl (or ⌘) held: the drop copies instead of moving.
+  final bool copy;
 }
 
 class DirNode {
@@ -253,6 +267,9 @@ class AppState extends ChangeNotifier {
   /// them reads them again.
   final ValueNotifier<int> notesTick = ValueNotifier(0);
 
+  /// Pictures being dragged onto a folder, while they are.
+  final ValueNotifier<FolderDragInfo?> folderDrag = ValueNotifier(null);
+
   // ---------------------------------------------------------------- generation
 
   /// Where the user's generation servers are: comfyui, invokeai, forge.
@@ -338,6 +355,10 @@ class AppState extends ChangeNotifier {
   /// Searches and folders the user has pinned, in the order they pinned them.
   List<PinnedSearch> pinnedSearches = const [];
   List<String> pinnedFolders = const [];
+
+  /// Folders pictures were last moved to, most recent first: offered first
+  /// when moving again.
+  List<String> moveTargets = const [];
 
   /// Whether the folder panel's "Pinned" section is showing its contents.
   bool pinsOpen = true;
@@ -469,6 +490,10 @@ class AppState extends ChangeNotifier {
       for (final entry in _savedList(saved['pinned_folders']))
         if (entry is String && entry.isNotEmpty) normalizePath(entry),
     ];
+    moveTargets = [
+      for (final entry in _savedList(saved['move_targets']))
+        if (entry is String && entry.isNotEmpty) normalizePath(entry),
+    ];
     followNew = flag('follow_new', followNew);
     backendUrls = {
       for (final kind in backendKinds)
@@ -580,6 +605,9 @@ class AppState extends ChangeNotifier {
     }
     if (!_disposed) notifyListeners();
   }
+
+  /// The folders in [path], for picking where to move pictures.
+  Future<List<DirNode>> listFolders(String path) => _list(normalizePath(path));
 
   Future<List<DirNode>> _list(String path) async {
     try {
@@ -1819,6 +1847,115 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ================================================================ moving
+
+  /// Pictures cut (Ctrl X) to be moved into the next folder they are
+  /// pasted into, by path. They stay where they are until then.
+  final Set<String> _cut = {};
+
+  bool get hasCut => _cut.isNotEmpty;
+  int get cutCount => _cut.length;
+  bool isCut(MediaItem item) => _cut.contains(item.path);
+
+  /// Mark [targets] to be moved by the next paste, in place of whatever
+  /// was cut before.
+  void cutFiles(List<MediaItem> targets) {
+    _cut
+      ..clear()
+      ..addAll([for (final t in targets) t.path]);
+    notifyListeners();
+  }
+
+  void clearCut() {
+    if (_cut.isEmpty) return;
+    _cut.clear();
+    notifyListeners();
+  }
+
+  /// Move what was cut into [dir]. Pictures deleted since, or already in
+  /// [dir], are left out.
+  Future<MoveOutcome> moveCutTo(String dir) async {
+    final paths = [
+      for (final p in _cut)
+        if (File(p).existsSync()) p,
+    ];
+    _cut.clear();
+    notifyListeners();
+    return movePaths(paths, dir);
+  }
+
+  /// Move [targets] into [dir], with their stars, flags and collections.
+  Future<MoveOutcome> moveFiles(List<MediaItem> targets, String dir) => movePaths([for (final t in targets) t.path], dir);
+
+  /// Move the files at [paths] into [dir]: see [moveFiles].
+  Future<MoveOutcome> movePaths(List<String> paths, String dir, {bool remember = true}) async {
+    final to = normalizePath(dir);
+    final todo = [
+      for (final p in paths)
+        if (normalizePath(parentDir(p)) != to) p,
+    ];
+    if (todo.isEmpty) return MoveOutcome(to, const [], const []);
+    final wasSelected = selected?.path;
+    final at = selectedIndex;
+    final moved = <(String, String)>[];
+    final failed = <String>[];
+    try {
+      final raw = await core.call('move', {'paths': todo, 'to': to});
+      for (final r in raw as List) {
+        final m = (r as Map).cast<String, Object?>();
+        final dest = m['to'] as String?;
+        if (dest != null) {
+          moved.add((m['from'] as String, dest));
+        } else {
+          failed.add(m['error'] as String? ?? 'could not move ${m['from']}');
+        }
+      }
+    } catch (e) {
+      failed.add('$e');
+    }
+    if (moved.isNotEmpty) {
+      final gone = {for (final (from, _) in moved) normalizePath(from)};
+      _checked.removeWhere((id) {
+        final i = items.indexOfId(id);
+        return i >= 0 && gone.contains(normalizePath(items[i].path));
+      });
+      _cut.removeAll([for (final (from, _) in moved) from]);
+      if (remember) _rememberMoveTarget(to);
+      await scanMediaFiles([for (final (from, dest) in moved) ...[from, dest]]);
+      notesTick.value++;
+      await _reload();
+      if (wasSelected != null && gone.contains(normalizePath(wasSelected)) && selectedIndex < 0 && items.isNotEmpty) {
+        select(at.clamp(0, items.length - 1).toInt());
+      }
+    }
+    return MoveOutcome(to, moved, failed);
+  }
+
+  /// Put back what [outcome] moved, each into the folder it came from.
+  Future<MoveOutcome> undoMove(MoveOutcome outcome) async {
+    final byDir = <String, List<String>>{};
+    for (final (from, dest) in outcome.moved) {
+      byDir.putIfAbsent(parentDir(from), () => []).add(dest);
+    }
+    final moved = <(String, String)>[];
+    final failed = <String>[];
+    for (final MapEntry(key: dir, value: paths) in byDir.entries) {
+      final back = await movePaths(paths, dir, remember: false);
+      moved.addAll(back.moved);
+      failed.addAll(back.failed);
+    }
+    return MoveOutcome(outcome.moved.isEmpty ? '' : parentDir(outcome.moved.first.$1), moved, failed);
+  }
+
+  void _rememberMoveTarget(String dir) {
+    moveTargets = [
+      dir,
+      for (final d in moveTargets)
+        if (d != dir) d,
+    ].take(8).toList();
+    _save('move_targets', jsonEncode(moveTargets));
+  }
+
   /// Save what is on the clipboard into [dir] under a name that is free
   /// there, and return its path. A file is copied byte for byte, so its
   /// generation data comes along.
@@ -2534,6 +2671,7 @@ class AppState extends ChangeNotifier {
     remixes.dispose();
     _highlightTimer?.cancel();
     notesTick.dispose();
+    folderDrag.dispose();
     _notices.close();
     _zoomSteps.close();
     for (final t in _saveTimers.values) {

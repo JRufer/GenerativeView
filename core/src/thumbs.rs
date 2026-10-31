@@ -151,6 +151,22 @@ impl Thumbs {
         self.dir.join(format!("{tier}")).join(&hex[..2]).join(format!("{}.jpg", &hex[2..]))
     }
 
+    /// A file was moved: file its cached thumbnails under the new place,
+    /// so they are not made again.
+    pub fn moved(&self, from: &str, mtime: i64, size: i64, to: &str, new_mtime: i64, new_size: i64) {
+        for tier in 0..TIERS.len() as u8 {
+            let old = self.cache_path(from, mtime, size, tier);
+            if !old.exists() {
+                continue;
+            }
+            let new = self.cache_path(to, new_mtime, new_size, tier);
+            if let Some(parent) = new.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::rename(&old, &new);
+        }
+    }
+
     /// Cached thumbnail bytes, generating them if needed.
     pub fn get(&self, path: &str, mtime: i64, size: i64, tier: u8) -> ThumbResult {
         let tier = tier.min(TIERS.len() as u8 - 1);

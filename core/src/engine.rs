@@ -575,6 +575,49 @@ impl Engine {
         Ok("null".into())
     }
 
+    /// Move pictures into the folder `to`, each with what the app keeps
+    /// about it: its stars, flag and collections (from its folder's notes
+    /// file to the target's), its place in the index, its thumbnails and
+    /// what content search made of it. A name already taken there gets a
+    /// number, as a paste does. One result per path, in order: where it
+    /// went, or why it did not.
+    fn move_files(&self, args: &Value) -> Result<String, String> {
+        let to_dir = normalize(str_arg(args, "to")?);
+        let paths: Vec<&str> = args.get("paths").and_then(Value::as_array).ok_or("missing argument: paths")?.iter().filter_map(Value::as_str).collect();
+        if !Path::new(&to_dir).is_dir() {
+            return Err(format!("{to_dir} is not a folder"));
+        }
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            out.push(match self.move_one(path, &to_dir) {
+                Ok(to) => json!({ "from": path, "to": to }),
+                Err(e) => json!({ "from": path, "error": e }),
+            });
+        }
+        Ok(Value::Array(out).to_string())
+    }
+
+    fn move_one(&self, path: &str, to_dir: &str) -> Result<String, String> {
+        let (from_dir, name) = split_path(path)?;
+        let from = join_path(&from_dir, &name);
+        if from_dir == to_dir {
+            return Ok(from);
+        }
+        let (mtime, size) = file_stamp(Path::new(path)).ok_or_else(|| format!("{name} is no longer there"))?;
+        let to_name = free_name(to_dir, &name);
+        let to = join_path(to_dir, &to_name);
+        move_file(Path::new(path), Path::new(&to))?;
+        let (new_mtime, new_size) = file_stamp(Path::new(&to)).unwrap_or((mtime, size));
+        // The file has moved; from here on nothing undoes that, so what
+        // follows only keeps the app's records in step, as best it can.
+        let _ = self.db.move_path(&from_dir, &name, to_dir, &to_name, new_mtime, new_size);
+        self.notes.transfer(&self.db, &from_dir, &name, to_dir, &to_name)?;
+        self.thumbs.moved(&from, mtime, size, &to, new_mtime, new_size);
+        self.dupes.moved(&from, mtime, size, &to, new_mtime, new_size);
+        self.content.moved(&from, mtime, size, &to, new_mtime, new_size);
+        Ok(to)
+    }
+
     /// Take every picture out of the collection `name`, which then no
     /// longer exists. The pictures themselves are left alone. Returns how
     /// many were in it.
@@ -723,6 +766,7 @@ impl Engine {
                 Ok(json!({ "count": found.rows.len() }).to_string())
             }
             "forget" => self.forget(str_arg(args, "path")?),
+            "move" => self.move_files(args),
             "collection_delete" => self.delete_collection(str_arg(args, "name")?),
             "describe" => Ok(self.content.describe(str_arg(args, "path")?)?.to_string()),
             "check_prompt" => {
@@ -814,6 +858,64 @@ impl Engine {
 }
 
 /// A file's folder and name.
+/// `dir` and `name` joined as the index writes paths.
+fn join_path(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+/// A file's modified time (in ms) and size, as the index keeps them.
+fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+    let md = std::fs::metadata(path).ok()?;
+    let mtime = md.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64;
+    Some((mtime, md.len() as i64))
+}
+
+/// `name`, or the first of "stem (2).ext", "stem (3).ext", … that is free
+/// in `dir`: the same naming a paste uses.
+fn free_name(dir: &str, name: &str) -> String {
+    let taken = |n: &str| Path::new(dir).join(n).symlink_metadata().is_ok();
+    if !taken(name) {
+        return name.to_string();
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),
+        _ => (name, ""),
+    };
+    (2..).map(|n| format!("{stem} ({n}){ext}")).find(|n| !taken(n)).unwrap_or_else(|| name.to_string())
+}
+
+/// Move a file. Within one drive that is a rename; across drives it is a
+/// copy (keeping the modified time), then the original is removed, and
+/// if that fails the copy is removed again so the file is in one place.
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match std::fs::rename(from, to) {
+        Ok(()) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {}
+        Err(e) => return Err(format!("cannot move {name}: {e}")),
+    }
+    let copy = || -> std::io::Result<()> {
+        std::fs::copy(from, to)?;
+        let modified = std::fs::metadata(from)?.modified()?;
+        let file = std::fs::OpenOptions::new().write(true).open(to)?;
+        file.set_modified(modified)?;
+        file.sync_all()
+    };
+    if let Err(e) = copy() {
+        let _ = std::fs::remove_file(to);
+        return Err(format!("cannot move {name}: {e}"));
+    }
+    if let Err(e) = std::fs::remove_file(from) {
+        let _ = std::fs::remove_file(to);
+        return Err(format!("cannot move {name}: {e}"));
+    }
+    Ok(())
+}
+
 fn split_path(path: &str) -> Result<(String, String), String> {
     let path = Path::new(path);
     let name = path.file_name().and_then(|n| n.to_str()).ok_or("not a file path")?;

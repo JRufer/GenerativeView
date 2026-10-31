@@ -11,10 +11,13 @@ import '../core/thumb_cache.dart';
 import '../platform.dart';
 import '../theme.dart';
 import 'kit.dart';
+import 'meta_panel.dart' show toast;
 import 'audience_widgets.dart' show AudienceBadge;
 import 'breed_dialog.dart';
 import 'compare_view.dart';
+import 'folder_drag.dart';
 import 'image_menu.dart';
+import 'move_ui.dart';
 import 'notes_widgets.dart';
 import 'remix_status.dart' show HighlightPulse;
 import 'thumb_image.dart';
@@ -274,10 +277,25 @@ class _MediaGridState extends State<MediaGrid> {
     state.select(index);
   }
 
-  /// A tile dragged out of the window: its file, or every ticked one if it
-  /// is ticked.
-  void _dragOut(MediaItem item) {
-    dragFilesOut([for (final t in state.targetsFor(item)) t.path]);
+  /// Pictures dragged onto a folder in the left panel: moved there, or
+  /// copied with Ctrl held.
+  Future<void> _dropOnFolder(List<MediaItem> items, String dir, bool copy) async {
+    if (!copy) {
+      await moveWithUndo(context, state, () => state.moveFiles(items, dir));
+      return;
+    }
+    var copied = 0;
+    Object? error;
+    for (final item in items) {
+      try {
+        await state.pasteInto(dir, PasteSource(path: item.path));
+        copied++;
+      } catch (e) {
+        error ??= e;
+      }
+    }
+    if (!mounted) return;
+    toast(context, error == null ? 'Copied ${copied == 1 ? '1 file' : '$copied files'} to ${folderName(dir)}' : 'Copied $copied of ${items.length}: $error');
   }
 
   void _menu(int index, MediaItem item, Offset position) {
@@ -454,11 +472,18 @@ class _MediaGridState extends State<MediaGrid> {
             selected: index == state.selectedIndex,
             checked: state.isChecked(item.id),
             audience: state.audienceBadges,
+            cut: state.hasCut && state.isCut(item),
             best: _runs.isNotEmpty && _runs.any((r) => index >= r.$1 && index < r.$1 + r.$2 && item.path == r.$3.bestPath),
             onTap: () => _tap(index, item),
             onCheck: () => _check(index, item),
             onMenu: (position) => _menu(index, item, position),
-            onDragOut: canDragFilesOut ? () => _dragOut(item) : null,
+            drag: (child) => PictureDrag(
+              state: state,
+              targets: () => state.targetsFor(item),
+              onDrop: _dropOnFolder,
+              onDragOut: canDragFilesOut ? (items) => dragFilesOut([for (final t in items) t.path]) : null,
+              child: child,
+            ),
           );
         }
 
@@ -688,12 +713,16 @@ class _Tile extends StatelessWidget {
     required this.onTap,
     required this.onCheck,
     required this.onMenu,
-    this.onDragOut,
+    this.drag,
     this.best = false,
     this.audience = false,
+    this.cut = false,
   });
 
   final MediaItem item;
+
+  /// Cut (Ctrl X), waiting to be moved by a paste: shown faded.
+  final bool cut;
 
   /// Show the picture's audience level in its bottom right corner.
   final bool audience;
@@ -727,9 +756,9 @@ class _Tile extends StatelessWidget {
   /// Called with where the pointer was on a right click or a long press.
   final ValueChanged<Offset> onMenu;
 
-  /// Dragged with the mouse: carry the file out of the window. Null where
-  /// that cannot be done.
-  final VoidCallback? onDragOut;
+  /// Wraps the tile so the mouse can drag it onto a folder or out of the
+  /// window (see [PictureDrag]).
+  final Widget Function(Widget tile)? drag;
 
   @override
   Widget build(BuildContext context) {
@@ -791,11 +820,15 @@ class _Tile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Rejected pictures fade back, so the keepers stand out.
+                  // Rejected pictures fade back, as do cut ones, waiting to move.
                   Opacity(
-                    opacity: item.flag == Flag.reject ? 0.4 : 1,
+                    opacity: cut ? 0.35 : (item.flag == Flag.reject ? 0.4 : 1),
                     child: _picture(),
                   ),
+                  if (cut)
+                    const Center(
+                      child: Icon(Icons.content_cut, key: ValueKey<String>('tile-cut'), size: 22, color: Color(0xCCFFFFFF)),
+                    ),
                   if (checked) const ColoredBox(color: Color(0x2E7AA2F7)),
                   if (item.isVideo) _VideoBadge(durationMs: item.durationMs),
                   if (audience && item.audience > 0)
@@ -833,9 +866,8 @@ class _Tile extends StatelessWidget {
         ),
       ),
     );
-    final drag = onDragOut;
-    if (drag == null) return tile;
-    return _DragOut(onDragOut: drag, child: tile);
+    final wrap = drag;
+    return wrap == null ? tile : wrap(tile);
   }
 }
 
@@ -874,41 +906,6 @@ class _CheckBox extends StatelessWidget {
           child: checked ? const Icon(Icons.check, size: 15, color: Color(0xFF0B1020)) : null,
         ),
       ),
-    );
-  }
-}
-
-/// Starts a drag of files out of the window when the mouse is pressed on
-/// [child] and moved a little way with the button held. Touch and pens
-/// are left to scroll and press as usual.
-class _DragOut extends StatefulWidget {
-  const _DragOut({required this.onDragOut, required this.child});
-  final VoidCallback onDragOut;
-  final Widget child;
-
-  @override
-  State<_DragOut> createState() => _DragOutState();
-}
-
-class _DragOutState extends State<_DragOut> {
-  Offset? _down;
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      onPointerDown: (e) {
-        _down = e.kind == PointerDeviceKind.mouse && e.buttons == kPrimaryMouseButton ? e.position : null;
-      },
-      onPointerMove: (e) {
-        final down = _down;
-        if (down == null || e.buttons != kPrimaryMouseButton) return;
-        if ((e.position - down).distance < 12) return;
-        _down = null;
-        widget.onDragOut();
-      },
-      onPointerUp: (_) => _down = null,
-      onPointerCancel: (_) => _down = null,
-      child: widget.child,
     );
   }
 }
