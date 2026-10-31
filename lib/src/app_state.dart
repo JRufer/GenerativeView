@@ -1915,8 +1915,22 @@ class AppState extends ChangeNotifier {
       remixes.value = list;
     }
 
+    // Renders still to come back: one fewer as each picture lands or a run
+    // fails, shown as the count on the round button.
+    var left = ticket.count < 1 ? 1 : ticket.count;
+    void oneLess() {
+      if (left > 0) left--;
+      if (_disposed) return;
+      final list = [...remixes.value];
+      final at = list.indexWhere((j) => j.id == id);
+      if (at < 0 || !list[at].running) return;
+      list[at] = list[at].withRemaining(left);
+      remixes.value = list;
+    }
+
     sub = results.listen(
       (image) {
+        oneLess();
         // One at a time, so two pictures never take the same name.
         saving = saving.then((_) async {
           final path = await _saveRemix(dir, stem, image, label: label);
@@ -1925,12 +1939,13 @@ class AppState extends ChangeNotifier {
       },
       onError: (Object e) {
         failed = true;
+        oneLess();
         _remixProblem('$what of $originalName', '$e');
       },
       onDone: () => saving.whenComplete(finish),
     );
     _remixSubs.add(sub);
-    remixes.value = [...remixes.value, RemixJob(id, originalName)];
+    remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left)];
   }
 
   /// Say that a remix went wrong, and keep it on the round button (in
@@ -2488,8 +2503,11 @@ class _PendingRemix {
 /// A remix sent to a server: waiting, or back with [saved] pictures.
 @immutable
 class RemixJob {
-  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true});
+  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true, this.remaining = 1});
   final int id;
+
+  /// Renders asked for that have not come back yet (none once finished).
+  final int remaining;
 
   /// The name of the picture remixed.
   final String name;
@@ -2498,7 +2516,9 @@ class RemixJob {
   final List<String> saved;
   final bool running;
 
-  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false);
+  RemixJob withRemaining(int remaining) => RemixJob(id, name, saved: saved, running: running, remaining: remaining);
+
+  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false, remaining: 0);
 }
 
 /// An upscale waiting for the one before it to finish.
