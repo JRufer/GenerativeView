@@ -267,10 +267,13 @@ void main() {
       final state = await launch(tester, size);
       state.select(indexOf(state, 'shared.png'));
       if (!state.rightOpen) state.toggleRight();
-      await tester.pump();
-      await pumpUntil(tester, () => find.byKey(const ValueKey('describe')).evaluate().isNotEmpty, what: 'the describe card (right panel open: ${state.rightOpen})');
       await settle(tester);
       await screenshot(tester, boundary, 'artist-describe-before-$name');
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('describe')).evaluate().isNotEmpty,
+        what: 'the describe card (panel open: ${state.rightOpen}, showing ${state.selected?.name}, narrow: ${state.narrowLayout}, portrait: ${state.portraitLayout})',
+      );
       await pumpUntil(tester, () => state.content.value.installed, what: 'the model to be known as installed');
       await pumpUntil(tester, () => find.byKey(const ValueKey('describe-start')).evaluate().isNotEmpty, what: 'the describe button');
       await tester.ensureVisible(find.byKey(const ValueKey('describe-start')));
