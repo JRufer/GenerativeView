@@ -1608,7 +1608,7 @@ void main() {
     expect(
       inSub(),
       isTrue,
-      reason: 'cut move: fox_03 was cut $cutPath; hit $menuHits; menu still open ${moveHere.evaluate().isNotEmpty}; cut now ${state.cutCount}; '
+      reason: 'cut move: listed as ${[for (var i = 0; i < state.items.length; i++) if (state.items[i].name == 'fox_03.png') state.items[i].path]}; fox_03 was cut $cutPath; hit $menuHits; menu still open ${moveHere.evaluate().isNotEmpty}; cut now ${state.cutCount}; '
           'showing ${[for (final t in tester.widgetList<Text>(find.descendant(of: find.byType(SnackBar), matching: find.byType(Text)))) t.data]}; '
           'in sub ${File('$sub/fox_03.png').existsSync()}, at home ${File('${library.path}/fox_03.png').existsSync()}, sub has ${Directory(sub).listSync().map((e) => e.path.split('/').last).toList()}',
     );

@@ -386,7 +386,7 @@ impl Worker {
             if cancelled() {
                 return;
             }
-            let records = self.parse(chunk);
+            let (records, _) = self.still_there(self.parse(chunk));
             if self.db.upsert(&records).is_ok() {
                 done += chunk.len();
                 self.emit(json!({ "t": "scan", "root": s.root, "state": "progress", "done": done, "total": total }));
@@ -397,6 +397,25 @@ impl Worker {
             "t": "scan", "root": s.root, "state": "done", "done": done, "total": total,
             "files": files, "removed": gone.len(), "ms": started.elapsed().as_millis() as u64,
         }));
+    }
+
+    /// Of files just read, those still there: one moved, renamed or
+    /// deleted while it was being read (by the app or anything else) is
+    /// left out, and any row for it dropped, so the index never lists a
+    /// file at a place it has already left. Returns how many were dropped.
+    fn still_there(&self, records: Vec<FileRecord>) -> (Vec<FileRecord>, usize) {
+        let mut gone = 0;
+        let kept = records
+            .into_iter()
+            .filter(|r| {
+                let here = Path::new(&join(&r.dir, &r.name)).exists();
+                if !here {
+                    gone += self.db.delete_path(&r.dir, &r.name).unwrap_or(0);
+                }
+                here
+            })
+            .collect();
+        (kept, gone)
     }
 
     fn parse(&self, entries: &[Entry]) -> Vec<FileRecord> {
@@ -477,7 +496,8 @@ impl Worker {
 
         let mut dirty = removed > 0;
         for chunk in upserts.chunks(CHUNK) {
-            let records = self.parse(chunk);
+            let (records, gone) = self.still_there(self.parse(chunk));
+            dirty |= gone > 0;
             dirty |= self.db.upsert(&records).is_ok();
         }
         // We have accounted for these directories; do not let the poll

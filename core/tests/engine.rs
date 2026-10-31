@@ -924,4 +924,29 @@ fn moved_pictures_keep_their_notes() {
     let moved_mtime = moved_md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
     h.engine.thumbs.get(&path("keepers/a.png"), moved_mtime, moved_md.len() as i64, 0).unwrap();
     assert_eq!(walk_count(&cache), thumbs_before, "the moved thumbnail is used, not a new one");
+
+    // Moved back and forth faster than the folder watcher keeps up: the
+    // index ends with the one picture, where it really is, never a ghost
+    // left at a place it has gone from.
+    for _ in 0..6 {
+        h.call("move", json!({ "paths": [path("keepers/a.png")], "to": dir }));
+        h.call("move", json!({ "paths": [path("a.png")], "to": path("keepers") }));
+    }
+    h.call("move", json!({ "paths": [path("keepers/a.png")], "to": dir }));
+    assert!(root.join("a.png").exists());
+    std::thread::sleep(Duration::from_millis(600));
+    h.expect_names(&root, true, "name:=a.png", &["a.png"]);
+    // And at a person's pace, with the folder also re-read now and then
+    // (as the app does): moved, a moment, moved back.
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 40 }));
+    h.wait_scan_done();
+    for _ in 0..2 {
+        h.call("move", json!({ "paths": [path("a.png")], "to": path("keepers") }));
+        std::thread::sleep(Duration::from_millis(700));
+        h.call("move", json!({ "paths": [path("keepers/a.png")], "to": dir }));
+        std::thread::sleep(Duration::from_millis(700));
+    }
+    h.expect_names(&root, true, "name:=a.png", &["a.png"]);
+    h.expect_names(&root, false, "name:=a.png", &["a.png"]);
+    assert_eq!(h.call("notes_get", json!({ "path": path("a.png") }))["rating"], 5);
 }

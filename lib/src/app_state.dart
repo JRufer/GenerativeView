@@ -1872,13 +1872,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Move what was cut into [dir]. Pictures deleted since, or already in
-  /// [dir], are left out.
+  /// Move what was cut into [dir]. Pictures already in [dir] are left
+  /// out; any deleted since are reported as no longer there.
   Future<MoveOutcome> moveCutTo(String dir) async {
-    final paths = [
-      for (final p in _cut)
-        if (File(p).existsSync()) p,
-    ];
+    final paths = _cut.toList();
     _cut.clear();
     notifyListeners();
     return movePaths(paths, dir);
