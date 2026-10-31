@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/backends.dart' show ImageInput;
+import '../core/media_image.dart';
 import '../core/models.dart' show HeatMap;
 import '../theme.dart';
 import 'kit.dart';
@@ -197,8 +198,12 @@ Future<ImageInput> prepareImageInput({
 
 /// The picture with [ops] over it, small: what the remix will start from.
 class MaskPreview extends StatelessWidget {
-  const MaskPreview({super.key, required this.path, required this.ops, required this.aspect});
+  const MaskPreview({super.key, required this.path, required this.ops, required this.aspect, this.version});
   final String path;
+
+  /// The picture's `MediaItem.version`, when known; read from the file
+  /// otherwise. Keeps a new file of the same name from showing the old one.
+  final String? version;
   final List<MaskOp> ops;
 
   /// The picture's width over its height.
@@ -213,7 +218,15 @@ class MaskPreview extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(path), fit: BoxFit.fill, cacheWidth: 480, gaplessPlayback: true),
+            Image(
+              image: ResizeImage.resizeIfNeeded(
+                480,
+                null,
+                version == null ? pathImage(path) : VersionedFileImage(File(path), version: version!),
+              ),
+              fit: BoxFit.fill,
+              gaplessPlayback: true,
+            ),
             CustomPaint(painter: _MaskPainter(ops: ops)),
           ],
         ),
@@ -422,6 +435,10 @@ class MaskEditor extends StatefulWidget {
 
 class _MaskEditorState extends State<MaskEditor> {
   late final List<MaskOp> _ops = [...widget.ops];
+
+  /// The picture, as it is now on disk (not an older file of the same name
+  /// still in the image cache).
+  late final ImageProvider _picture = pathImage(widget.path);
   late MaskTool _tool = widget.find != null && widget.state != null ? MaskTool.find : MaskTool.brush;
 
   /// Find: the phrase looked for, where it fits, and how far out from the
@@ -814,8 +831,8 @@ class _MaskEditorState extends State<MaskEditor> {
                 children: [
                   Positioned.fromRect(
                     rect: r,
-                    child: Image.file(
-                      File(widget.path),
+                    child: Image(
+                      image: _picture,
                       fit: BoxFit.fill,
                       gaplessPlayback: true,
                       filterQuality: _zoom > 2 ? FilterQuality.none : FilterQuality.medium,

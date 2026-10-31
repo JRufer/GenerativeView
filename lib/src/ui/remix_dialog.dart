@@ -737,7 +737,7 @@ Widget build(BuildContext context) {
               borderRadius: BorderRadius.circular(6),
               child: Tooltip(
                 message: 'Paint where to redraw',
-                child: MaskPreview(path: item.path, ops: _mask, aspect: aspect),
+                child: MaskPreview(path: item.path, version: item.version, ops: _mask, aspect: aspect),
               ),
             );
             // Picture beside the controls when there is room, else above.
