@@ -333,6 +333,108 @@ fn guards(topic: &str) -> &'static [&'static str] {
     }
 }
 
+/// Words that lean toward a level without reaching it, which aiming a
+/// prompt higher may weight up: (word, family). "body" leans toward
+/// suggestive content and nudity, "violence" toward blood and gore. Only
+/// words already in the prompt are ever weighted; none are added.
+const LEANING: &[(&str, &str)] = &[
+    ("breasts", "body"),
+    ("cleavage", "body"),
+    ("chest", "body"),
+    ("bare skin", "body"),
+    ("skin", "body"),
+    ("bare shoulders", "body"),
+    ("curves", "body"),
+    ("curvy", "body"),
+    ("thighs", "body"),
+    ("hips", "body"),
+    ("figure", "body"),
+    ("lingerie", "body"),
+    ("underwear", "body"),
+    ("bikini", "body"),
+    ("swimsuit", "body"),
+    ("sensual", "body"),
+    ("seductive", "body"),
+    ("blood", "violence"),
+    ("bloody", "violence"),
+    ("wound", "violence"),
+    ("wounds", "violence"),
+    ("injury", "violence"),
+    ("scars", "violence"),
+    ("weapon", "violence"),
+    ("knife", "violence"),
+    ("sword", "violence"),
+    ("gun", "violence"),
+    ("fight", "violence"),
+    ("battle", "violence"),
+    ("combat", "violence"),
+    ("war", "violence"),
+    ("zombie", "violence"),
+];
+
+/// How strongly to weight a leaning word for a prompt aimed `steps` levels
+/// above where it reads.
+fn emphasis(steps: u8) -> f64 {
+    match steps {
+        0 => 1.0,
+        1 => 1.3,
+        2 => 1.5,
+        _ => 1.75,
+    }
+}
+
+/// Words that say a prompt is about a child or a teenager. Such a prompt is
+/// never aimed higher: no guard is lifted and nothing is weighted up.
+const MINOR_WORDS: &[&str] = &[
+    "child", "children", "kid", "kids", "minor", "minors", "teen", "teens", "teenage", "teenager", "teenagers", "toddler", "baby",
+    "infant", "preteen", "tween", "schoolgirl", "schoolboy", "loli", "lolita", "shota", "underage", "young girl", "young boy",
+    "little girl", "little boy", "middle school", "high school", "elementary school", "junior high",
+];
+
+/// Whether `prompt` mentions a child or a teenager, by word or by an age
+/// under 18 ("12 years old", "15yo", "aged 16").
+pub fn mentions_minor(prompt: &str) -> bool {
+    let words: Vec<String> = clean(prompt).split_whitespace().map(str::to_string).collect();
+    let has = |phrase: &str| {
+        let want: Vec<&str> = phrase.split(' ').collect();
+        words.windows(want.len()).any(|w| w.iter().map(String::as_str).eq(want.iter().copied()))
+    };
+    if MINOR_WORDS.iter().any(|w| has(w)) {
+        return true;
+    }
+    let young = |n: &str| n.parse::<u32>().is_ok_and(|n| n < 18);
+    words.iter().enumerate().any(|(i, w)| {
+        // "15yo", "15y" or "15 years old", "15 year old", "aged 15", "age 15".
+        let stem = w.trim_end_matches("yo").trim_end_matches('y');
+        (stem != w && young(stem))
+            || (young(w) && words.get(i + 1).is_some_and(|n| n == "years" || n == "year" || n == "yo" || n == "yrs"))
+            || ((w == "aged" || w == "age") && words.get(i + 1).is_some_and(|n| young(n)))
+    })
+}
+
+/// The leaning words of `prompt` that aiming it at `target` should weight
+/// up, and by how much: words of a family the target opens up (both from
+/// PG-13), not already rating at or above the target themselves.
+fn leaning(prompt: &str, from: Level, target: Level) -> Vec<(String, f64)> {
+    if target < Level::Pg13 || target <= from {
+        return Vec::new();
+    }
+    let steps = target as u8 - from.max(Level::G) as u8;
+    let words: Vec<String> = clean(prompt).split_whitespace().map(str::to_string).collect();
+    let mut out: Vec<(String, f64)> = Vec::new();
+    for (word, _) in LEANING {
+        let want: Vec<&str> = word.split(' ').collect();
+        let present = words.windows(want.len()).any(|w| w.iter().map(String::as_str).eq(want.iter().copied()));
+        let own = PHRASES.iter().find(|(p, _, _)| p == word).map_or(Level::G, |(_, l, _)| *l);
+        // "skin" inside "bare skin" is weighted once, as the longer.
+        let inside = out.iter().any(|(o, _)| o.split(' ').count() > 1 && format!(" {o} ").contains(&format!(" {word} ")));
+        if present && own < target && !inside {
+            out.push((word.to_string(), emphasis(steps)));
+        }
+    }
+    out
+}
+
 /// Every guard word steering may add, so steering up can take them out.
 fn all_guards() -> Vec<&'static str> {
     let mut all: Vec<&str> = PHRASES.iter().flat_map(|(_, _, t)| guards(t).iter().copied()).collect();
@@ -412,7 +514,17 @@ pub fn steer(prompt: &str, negative: &str, target: Level) -> Value {
     }
     neg.extend(added.iter().map(|s| s.to_string()));
     let new_prompt = kept.join(", ");
+    let minor = target > now && mentions_minor(prompt);
+    if minor {
+        // Not aimed higher: everything stays as it was.
+        return json!({
+            "from": now as u8, "to": now as u8, "prompt": prompt, "negative": negative,
+            "removed": [], "added_negative": [], "lifted_negative": [], "emphasize": [], "blocked": "minor",
+        });
+    }
+    let emphasize: Vec<Value> = leaning(&new_prompt, now, target).into_iter().map(|(w, x)| json!({ "phrase": w, "weight": x })).collect();
     json!({
+        "emphasize": emphasize,
         "from": now as u8,
         "to": from_prompt(&new_prompt).0 as u8,
         "prompt": new_prompt,
@@ -437,6 +549,34 @@ mod tests {
         let same = steer("a knight with a sword", "", Level::Pg13);
         assert_eq!(same["prompt"], "a knight with a sword");
         assert_eq!(same["removed"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn steering_up_weights_leaning_words_never_adds() {
+        let out = steer("a woman on a beach, breasts, sunset", "nsfw", Level::R);
+        assert_eq!(out["prompt"], "a woman on a beach, breasts, sunset");
+        assert_eq!(out["emphasize"], json!([{ "phrase": "breasts", "weight": 1.75 }]));
+        // One level up is a lighter touch.
+        let out = steer("a soldier, blood, rain", "", Level::R);
+        assert_eq!(out["emphasize"], json!([{ "phrase": "blood", "weight": 1.3 }]));
+        // Nothing leaning, nothing weighted; going down weights nothing.
+        assert_eq!(steer("a red fox in snow", "", Level::Nc17)["emphasize"], json!([]));
+        assert_eq!(steer("a soldier, gore, blood", "", Level::Pg13)["emphasize"], json!([]));
+    }
+
+    #[test]
+    fn a_prompt_about_a_minor_is_never_aimed_higher() {
+        for prompt in ["a teen at the beach, swimsuit", "a girl, 15 years old, bikini", "16yo, lingerie", "aged 12, blood", "schoolgirl, cleavage"] {
+            let out = steer(prompt, "nsfw, nudity", Level::Nc17);
+            assert_eq!(out["blocked"], "minor", "{prompt}");
+            assert_eq!(out["negative"], "nsfw, nudity");
+            assert_eq!(out["emphasize"], json!([]));
+        }
+        // Adults and plain numbers are not caught.
+        assert!(!mentions_minor("a woman, 25 years old, 1girl, 8k, 30yo"));
+        assert!(!mentions_minor("a kidney bean salad"));
+        // Aiming lower still works.
+        assert_eq!(steer("a teen, gore", "", Level::Pg)["prompt"], "a teen");
     }
 
     #[test]

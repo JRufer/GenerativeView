@@ -111,6 +111,8 @@ class AudienceSteer {
     required this.removed,
     required this.addedNegative,
     required this.liftedNegative,
+    this.emphasize = const [],
+    this.blocked,
   });
 
   factory AudienceSteer.fromJson(Map<String, dynamic> j) {
@@ -123,6 +125,11 @@ class AudienceSteer {
       removed: list('removed'),
       addedNegative: list('added_negative'),
       liftedNegative: list('lifted_negative'),
+      emphasize: [
+        for (final e in (j['emphasize'] as List? ?? const []))
+          if (e is Map) ('${e['phrase']}', (e['weight'] as num).toDouble()),
+      ],
+      blocked: j['blocked'] as String?,
     );
   }
 
@@ -134,5 +141,12 @@ class AudienceSteer {
   final List<String> addedNegative;
   final List<String> liftedNegative;
 
-  bool get changesAnything => removed.isNotEmpty || addedNegative.isNotEmpty || liftedNegative.isNotEmpty;
+  /// Words already in the prompt to weight up, aiming higher: (word, weight).
+  final List<(String, double)> emphasize;
+
+  /// Why it was not aimed higher: 'minor' when the prompt is about a child
+  /// or a teenager. Null when it was.
+  final String? blocked;
+
+  bool get changesAnything => removed.isNotEmpty || addedNegative.isNotEmpty || liftedNegative.isNotEmpty || emphasize.isNotEmpty;
 }

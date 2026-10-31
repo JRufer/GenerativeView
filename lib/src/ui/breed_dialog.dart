@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../core/backends.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
+import '../core/prompt_edits.dart' show weightUp;
 import '../theme.dart';
 import '../core/audience.dart';
 import 'audience_widgets.dart' show AudienceBadge, BreedAudienceSection;
@@ -185,7 +186,10 @@ class _BreedPanelState extends State<BreedPanel> {
           widget.state.backendUrls[kind]!,
           Remix(
             info: info,
-            prompt: tags.isEmpty ? (aimed?.prompt ?? child.prompt) : '${aimed?.prompt ?? child.prompt} $tags',
+            prompt: () {
+              final text = aimed == null ? child.prompt : weightUp(aimed.prompt, aimed.emphasize);
+              return tags.isEmpty ? text : '$text $tags';
+            }(),
             negative: aimed?.negative ?? info.negative,
             seed: 0,
             randomSeed: true,
@@ -458,6 +462,17 @@ class _Candidate extends StatelessWidget {
                     children: [
                       const SizedBox(height: 6),
                       Text.rich(TextSpan(children: spans), style: const TextStyle(fontSize: 12.5, height: 1.5, color: Color(0xFFCFCFD6))),
+                      if (aiming && steer != null && steer!.emphasize.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Weighted up: ${steer!.emphasize.map((e) => '${e.$1} ${e.$2}').join(', ')}',
+                          style: const TextStyle(fontSize: 11.5, color: Palette.accent),
+                        ),
+                      ],
+                      if (aiming && steer?.blocked == 'minor') ...[
+                        const SizedBox(height: 4),
+                        const Text('About a child or a teenager: not aimed higher', style: TextStyle(fontSize: 11.5, color: Palette.danger)),
+                      ],
                       if (aiming && steer != null && steer!.addedNegative.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(

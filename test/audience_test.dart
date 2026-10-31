@@ -16,6 +16,7 @@ import 'package:generativeview/src/app_state.dart';
 import 'package:generativeview/src/core/audience.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
+import 'package:generativeview/src/core/prompt_edits.dart' show weightUp;
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/ui/audience_widgets.dart' show AudienceBadge;
 import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet, openFilters;
@@ -39,6 +40,13 @@ void main() {
       expect(FilterSet.parse('audience:none').audienceUnrated, isTrue);
       // A shape the panel does not write is left as typed.
       expect(FilterSet.parse('audience:r..').free, ['audience:r..']);
+    });
+
+    test('aiming higher weights up words already there, never down', () {
+      expect(weightUp('a woman, breasts, beach', [('breasts', 1.75)]), 'a woman, (breasts:1.75), beach');
+      expect(weightUp('a woman, (breasts:1.2), beach', [('breasts', 1.5)]), 'a woman, (breasts:1.5), beach');
+      expect(weightUp('a woman, (breasts:2), beach', [('breasts', 1.5)]), 'a woman, (breasts:2), beach');
+      expect(weightUp('a red fox', [('breasts', 1.5)]), 'a red fox');
     });
   });
 
@@ -210,6 +218,35 @@ void main() {
       await tester.pump();
       await settle(tester);
       await screenshot(tester, boundary, 'audience-remix-$name');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await close(tester, state);
+    });
+
+    testWidgets('aim a remix higher, on the $name', (tester) async {
+      final state = await launch(tester, size);
+      state.select(indexOf(state, 'beach.png'));
+      await tester.pump();
+      openRemix(tester.element(find.byType(MediaGrid)), state, item(state, 'beach.png'));
+      await pumpUntil(tester, () => find.byKey(const ValueKey('remix-audience-toggle')).evaluate().isNotEmpty, what: 'the remix panel');
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.ensureVisible(find.byKey(const ValueKey('remix-audience-toggle')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('remix-audience-toggle')));
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const ValueKey('remix-audience-r')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('remix-audience-r')));
+      String prompt() => tester.widget<TextField>(find.descendant(of: find.byKey(const ValueKey('remix-prompt')), matching: find.byType(TextField))).controller!.text;
+      await pumpUntil(tester, () => prompt().contains('(swimsuit:1.5)'), what: 'swimsuit weighted up');
+      // Nothing added: the same words, one of them weighted.
+      expect(prompt(), 'a woman in a (swimsuit:1.5) on a beach, film photo');
+      await tester.ensureVisible(find.byKey(const ValueKey('audience-steer-note')));
+      await tester.pump();
+      await settle(tester);
+      await screenshot(tester, boundary, 'audience-remix-up-$name');
+      // As written puts it back.
+      await tester.tap(find.byKey(const ValueKey('remix-audience-any')));
+      await pumpUntil(tester, () => prompt() == 'a woman in a swimsuit on a beach, film photo', what: 'the prompt as written');
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await close(tester, state);
     });

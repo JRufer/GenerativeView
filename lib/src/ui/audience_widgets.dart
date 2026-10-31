@@ -9,6 +9,7 @@ import '../core/audience.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'kit.dart';
+import '../core/prompt_edits.dart' show weightUp;
 import 'prompt_editor.dart' show PromptController;
 import 'sheet.dart';
 
@@ -460,6 +461,16 @@ class AudienceSteerNote extends StatelessWidget {
     row('Taken out of the prompt', steer.removed, strike);
     row('Added to the negative', steer.addedNegative, added);
     row('Lifted from the negative', steer.liftedNegative, strike.copyWith(color: Palette.muted, decorationColor: Palette.muted));
+    row('Weighted up', [for (final (w, x) in steer.emphasize) '($w:${x.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '')})'], const TextStyle(fontSize: 12, color: Palette.accent));
+    if (steer.blocked == 'minor') {
+      rows
+        ..clear()
+        ..add(const Padding(
+          key: ValueKey<String>('audience-steer-blocked'),
+          padding: EdgeInsets.only(top: 4),
+          child: Text('This prompt is about a child or a teenager, so it is never aimed higher.', style: TextStyle(fontSize: 12, color: Palette.danger)),
+        ));
+    }
     if (rows.isEmpty) {
       rows.add(Padding(
         padding: const EdgeInsets.only(top: 4),
@@ -523,7 +534,7 @@ class _RemixAudienceSectionState extends State<RemixAudienceSection> {
     try {
       final s = await widget.state.steerAudience(prompt, negative, target);
       if (!mounted) return;
-      _set(widget.prompt, s.prompt);
+      _set(widget.prompt, weightUp(s.prompt, s.emphasize));
       _set(widget.negative, s.negative);
       setState(() {
         _target = target;
@@ -562,7 +573,7 @@ class _RemixAudienceSectionState extends State<RemixAudienceSection> {
           if (steer != null) AudienceSteerNote(steer, target: _target),
           const SizedBox(height: 6),
           const Text(
-            'Going down takes the parts that rate higher out of the prompt and guards against them in the negative. Going up only lifts those guards; it never adds content.',
+            'Going down takes the parts that rate higher out of the prompt and guards against them in the negative. Going up lifts those guards and weights up words already in the prompt that lean that way; it never adds words.',
             style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4),
           ),
         ],
@@ -588,7 +599,7 @@ class BreedAudienceSection extends StatelessWidget {
         Text(
           target == 0
               ? 'Pick a level and every candidate is aimed at it: parts that rate higher are struck out and guarded against.'
-              : 'Every candidate is aimed at ${Audience.label(target)}. Struck-out parts are left out when it is rendered.',
+              : 'Every candidate is aimed at ${Audience.label(target)}: struck-out parts are left out and weighted words weighted up when it is rendered.',
           style: const TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4),
         ),
       ],

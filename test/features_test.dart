@@ -216,6 +216,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('filter-stars-4')));
     await pumpUntil(tester, () => state.items.length == 2, what: '4 stars or more');
     expect(state.searchText.text, 'rating:>=4');
+    // Below the Audience section: scrolled to first.
+    await tester.ensureVisible(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
     await pumpUntil(tester, () => state.searchText.text == 'lora:=fur_detail.safetensors rating:>=4', what: 'and the LoRA');
     await pumpUntil(tester, () => state.items.length == 2, what: 'both foxes');
