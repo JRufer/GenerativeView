@@ -12,6 +12,7 @@ import '../core/models.dart';
 import '../core/prompt_edits.dart';
 import '../core/spelling.dart';
 import '../theme.dart';
+import 'audience_widgets.dart' show RemixAudienceSection;
 import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
 import 'prompt_editor.dart';
@@ -318,6 +319,7 @@ Widget build(BuildContext context) {
         maxLines: 5,
         onAddWord: widget.state.addUserWord,
       ),
+      RemixAudienceSection(state: widget.state, prompt: _prompt, negative: _negative),
     ];
     // How to make it.
     final how = <Widget>[

@@ -22,6 +22,21 @@ TextEditingValue weightPhrase(TextEditingValue value, String phrase, double weig
   return applyWeight(value.copyWith(selection: TextSelection(baseOffset: range.start, extentOffset: range.end)), weight);
 }
 
+/// [text] with each of [weights] (phrase, weight) weighted up to that
+/// weight where it stands; a phrase not there, or already weighted as much
+/// or more, is left as it is.
+String weightUp(String text, List<(String, double)> weights) {
+  var value = TextEditingValue(text: text);
+  for (final (phrase, weight) in weights) {
+    final range = findPhrase(value.text, phrase);
+    if (range == null) continue;
+    final group = groupAt(value.text, TextSelection(baseOffset: range.start, extentOffset: range.end));
+    if (group != null && group.weight >= weight) continue;
+    value = weightPhrase(value, phrase, weight);
+  }
+  return value.text;
+}
+
 /// [value] with [phrase] selected, or unchanged if it is not there.
 TextEditingValue selectPhrase(TextEditingValue value, String phrase) {
   final range = findPhrase(value.text, phrase);

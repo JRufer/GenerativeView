@@ -255,6 +255,43 @@ impl ContentSearch {
         }
         Ok(all.pick(matched.into_iter().map(|(_, i)| i)))
     }
+
+    /// For each row of `found`, how clearly (as [`Fit::level`]) the picture
+    /// fits each of `phrases`, in order; None for a picture not looked at
+    /// yet, and for all of them when the model is not installed.
+    pub fn fits(&self, found: &QueryResult, phrases: &[String]) -> Vec<Option<Vec<f32>>> {
+        let inner = &self.inner;
+        if found.rows.is_empty() || !inner.installed() {
+            return vec![None; found.rows.len()];
+        }
+        let (Ok(reference), Ok(texts)) = (inner.reference(), inner.phrase_vectors(phrases)) else {
+            return vec![None; found.rows.len()];
+        };
+        let pictures: Vec<Option<(Key, store::Packed)>> = found
+            .rows
+            .iter()
+            .map(|row| {
+                let key = inner.key(&found.dirs[row.1 as usize], row);
+                inner.vectors.get(&key).filter(|vector| vector.len() == reference.dim).map(|vector| (key, vector))
+            })
+            .collect();
+        let known = inner.usual.lock();
+        let missing: Vec<&(Key, store::Packed)> = pictures.iter().flatten().filter(|(key, _)| !known.contains_key(key)).collect();
+        drop(known);
+        if !missing.is_empty() {
+            let worked: Vec<(Key, Usual)> = missing.par_iter().map(|(key, vector)| (*key, usual(&reference, vector))).collect();
+            inner.usual.lock().extend(worked);
+        }
+        let known = inner.usual.lock();
+        pictures
+            .iter()
+            .map(|picture| {
+                let (key, vector) = picture.as_ref()?;
+                let usual = known.get(key)?;
+                Some(texts.iter().map(|t| if t.len() == vector.len() { usual.fit(store::score(t.as_slice(), vector)).level() } else { 0.0 }).collect())
+            })
+            .collect()
+    }
 }
 
 /// How alike two pictures must be for "more like this": the cosine of

@@ -1,6 +1,7 @@
 //! GenerativeView core: reads generation metadata out of AI images, keeps a
 //! searchable index of a folder in step with the disk, and serves thumbnails.
 
+pub mod audience;
 pub mod clip;
 pub mod dates;
 pub mod db;

@@ -27,6 +27,7 @@ class MediaItem {
     required this.durationMs,
     this.rating = 0,
     this.flag = Flag.none,
+    this.audience = 0,
   });
 
   final int id;
@@ -44,6 +45,10 @@ class MediaItem {
   /// What the user said about it, as of the query (see [Note]).
   final int rating;
   final Flag flag;
+
+  /// Who it suits on the film-rating scale, as the user has chosen to
+  /// judge it: 0 not rated yet, then 1 G to 5 NC-17 (see `audience.dart`).
+  final int audience;
 
   String get path => joinMediaPath(dir, name);
 
@@ -146,6 +151,7 @@ class ItemList {
       isVideo: _data.getUint8(o + 42) == 1,
       rating: _data.getUint8(o + 43) & 7,
       flag: Flag.fromIndex((_data.getUint8(o + 43) >> 3) & 3),
+      audience: _data.getUint8(o + 43) >> 5,
       dir: _dirs[_data.getUint32(o + 44, Endian.little)],
     );
     _cache[index] = item;

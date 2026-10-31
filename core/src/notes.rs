@@ -14,7 +14,7 @@
 //! {
 //!   "generativeview": 1,
 //!   "images": {
-//!     "ComfyUI_00012_.png": { "rating": 4, "flag": "keep", "collections": ["Night city"] }
+//!     "ComfyUI_00012_.png": { "rating": 4, "flag": "keep", "collections": ["Night city"], "audience": "pg13" }
 //!   }
 //! }
 //! ```
@@ -75,11 +75,14 @@ pub struct Note {
     pub flag: Flag,
     /// As the user wrote them, in the order they were added.
     pub collections: Vec<String>,
+    /// The audience level the user set by hand (see `crate::audience`), 1
+    /// G to 5 NC-17; 0 for none, which leaves it to the app's reading.
+    pub audience: u8,
 }
 
 impl Note {
     pub fn is_empty(&self) -> bool {
-        self.rating == 0 && self.flag == Flag::None && self.collections.is_empty()
+        self.rating == 0 && self.flag == Flag::None && self.collections.is_empty() && self.audience == 0
     }
 
     fn from_json(value: &Value) -> Note {
@@ -93,7 +96,8 @@ impl Note {
                 }
             }
         }
-        Note { rating, flag, collections }
+        let audience = value.get("audience").and_then(Value::as_str).and_then(crate::audience::Level::parse).map_or(0, |l| l as u8);
+        Note { rating, flag, collections, audience }
     }
 
     /// Write this note's fields into `entry`, leaving anything else in it.
@@ -113,10 +117,15 @@ impl Note {
         } else {
             entry.insert("collections".into(), json!(self.collections));
         }
+        if self.audience > 0 {
+            entry.insert("audience".into(), json!(crate::audience::Level::from_u8(self.audience).word()));
+        } else {
+            entry.remove("audience");
+        }
     }
 
     pub fn to_json(&self) -> Value {
-        json!({ "rating": self.rating, "flag": self.flag.name(), "collections": self.collections })
+        json!({ "rating": self.rating, "flag": self.flag.name(), "collections": self.collections, "audience": self.audience })
     }
 }
 
@@ -133,6 +142,8 @@ pub struct Change {
     pub flag: Option<Flag>,
     pub add: Vec<String>,
     pub remove: Vec<String>,
+    /// 1 to 5 sets the audience level by hand; 0 takes it off.
+    pub audience: Option<u8>,
 }
 
 impl Change {
@@ -142,6 +153,9 @@ impl Change {
         }
         if let Some(flag) = self.flag {
             note.flag = flag;
+        }
+        if let Some(audience) = self.audience {
+            note.audience = audience.min(5);
         }
         note.collections.retain(|c| !self.remove.iter().any(|r| r.eq_ignore_ascii_case(c)));
         for name in &self.add {
@@ -424,7 +438,7 @@ mod tests {
 
         let change = Change { rating: Some(4), flag: Some(Flag::Keep), add: vec!["  Night   city ".into()], ..Default::default() };
         let out = notes.change(&db, &dir, &["a.png".into(), "b.png".into()], &change).unwrap();
-        assert_eq!(out[0], Note { rating: 4, flag: Flag::Keep, collections: vec!["Night city".into()] });
+        assert_eq!(out[0], Note { rating: 4, flag: Flag::Keep, collections: vec!["Night city".into()], audience: 0 });
         assert_eq!(db.note(&dir, "b.png").flag, Flag::Keep);
 
         let file: Value = serde_json::from_str(&std::fs::read_to_string(Path::new(&dir).join(FILE_NAME)).unwrap()).unwrap();
@@ -441,6 +455,15 @@ mod tests {
         assert!(db.note(&dir, "a.png").is_empty());
         let file: Value = serde_json::from_str(&std::fs::read_to_string(Path::new(&dir).join(FILE_NAME)).unwrap()).unwrap();
         assert!(file["images"].get("a.png").is_none(), "an empty note leaves the file");
+
+        // An audience level set by hand is kept in the file as a word, and on
+        // its own keeps a note alive.
+        notes.change(&db, &dir, &["c.png".into()], &Change { audience: Some(3), ..Default::default() }).unwrap();
+        assert_eq!(db.note(&dir, "c.png").audience, 3);
+        let file: Value = serde_json::from_str(&std::fs::read_to_string(Path::new(&dir).join(FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(file["images"]["c.png"]["audience"], "pg13");
+        notes.change(&db, &dir, &["c.png".into()], &Change { audience: Some(0), ..Default::default() }).unwrap();
+        assert!(db.note(&dir, "c.png").is_empty());
 
         // A file deleted elsewhere takes its notes with it.
         std::fs::remove_file(Path::new(&dir).join(FILE_NAME)).unwrap();

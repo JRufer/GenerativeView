@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/audience.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show toast;
 import 'filter_sheet.dart';
@@ -68,6 +69,18 @@ class FilterBar extends StatelessWidget {
       chip('taste', filters.taste == 'keep' ? 'Likely keepers' : 'Suggested rejects', (f) => f.taste = null);
     }
 
+    if (filters.audienceMax > 0 || filters.audienceUnrated) {
+      final upTo = filters.audienceMax > 0 ? 'Up to ${Audience.label(filters.audienceMax)}' : 'Audience not rated';
+      chip(
+        'audience',
+        filters.audienceMax > 0 && filters.audienceUnrated ? '$upTo, or not rated' : upTo,
+        (f) {
+          f.audienceMax = 0;
+          f.audienceUnrated = false;
+        },
+        icon: Icons.shield_outlined,
+      );
+    }
     final count = state.items.length;
     return Container(
       key: const ValueKey<String>('filter-bar'),

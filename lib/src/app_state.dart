@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
+import 'core/audience.dart';
 import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
 import 'core/model_download.dart';
 import 'core/models.dart';
@@ -314,6 +315,13 @@ class AppState extends ChangeNotifier {
   /// fit whole.
   bool cropTiles = true;
 
+  /// What decides a picture's audience level: 'image', 'prompt' or 'both'
+  /// (the stricter of the two). Kept by the core, which applies it.
+  String audienceSource = 'both';
+
+  /// Whether grid tiles show their audience level.
+  bool audienceBadges = true;
+
   // ---------------------------------------------------------------- folders
 
   List<Place> places = const [];
@@ -446,6 +454,8 @@ class AppState extends ChangeNotifier {
     recursive = flag('recursive', recursive);
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
+    audienceSource = (saved['audience_source'] as String?) ?? audienceSource;
+    audienceBadges = flag('audience_badges', audienceBadges);
     sort = (saved['sort'] as String?) ?? sort;
     searchSort = (saved['search_sort'] as String?) ?? searchSort;
     pinsOpen = flag('pins_open', pinsOpen);
@@ -680,7 +690,7 @@ class AppState extends ChangeNotifier {
     unawaited(rev);
     await _reload();
     unawaited(refreshSmart());
-    if (contentSearch) unawaited(refreshContent());
+    if (_wantsVectors) unawaited(refreshContent());
   }
 
   void setRecursive(bool value) {
@@ -785,7 +795,7 @@ class AppState extends ChangeNotifier {
     }
     if (_disposed || dir != folder) return;
     content.value = status;
-    if (status.installed && (contentSearch || lookingAlike)) {
+    if (status.installed && _wantsVectors) {
       _fire(core.call('content_index', {'dir': dir, 'recursive': recursive}));
     }
   }
@@ -793,7 +803,7 @@ class AppState extends ChangeNotifier {
   /// Something about the folder's pictures changed: look again, but not on
   /// every single event of a burst.
   void _contentSoon() {
-    if (!(contentSearch || lookingAlike) || !content.value.installed) return;
+    if (!_wantsVectors || !content.value.installed) return;
     _contentTimer?.cancel();
     _contentTimer = Timer(const Duration(milliseconds: 1200), refreshContent);
   }
@@ -828,6 +838,14 @@ class AppState extends ChangeNotifier {
       _reloadTimer ??= Timer(const Duration(milliseconds: 900), () {
         _reloadTimer = null;
         _reload();
+      });
+    } else if (audienceByPicture && (done > 0 || state == 'done')) {
+      // Newly looked-at pictures have a picture reading now: the badges
+      // and any audience filter follow, a few times a pass at most.
+      _reloadTimer ??= Timer(Duration(milliseconds: state == 'done' ? 300 : 4000), () {
+        _reloadTimer = null;
+        _reload();
+        notesTick.value++;
       });
     }
   }
@@ -1249,6 +1267,49 @@ class AppState extends ChangeNotifier {
     tileSize = v;
     _save('tile_size', v.toStringAsFixed(0), debounce: true);
     notifyListeners();
+  }
+
+  void toggleAudienceBadges() {
+    audienceBadges = !audienceBadges;
+    _save('audience_badges', '$audienceBadges');
+    notifyListeners();
+  }
+
+  /// Judge audience levels by the picture, the prompt, or the stricter of
+  /// the two ('image', 'prompt', 'both'), and list the folder again so the
+  /// grid and any audience filter follow.
+  Future<void> setAudienceSource(String source) async {
+    if (source == audienceSource) return;
+    audienceSource = source;
+    notifyListeners();
+    try {
+      await core.call('set_setting', {'key': 'audience_source', 'value': source});
+    } catch (_) {}
+    await _reload();
+    notesTick.value++;
+    // Rating by picture needs content search to have looked at them.
+    if (audienceByPicture) unawaited(refreshContent());
+  }
+
+  /// Why [item] got its audience level: what its prompt asks for, what the
+  /// picture shows (not built yet), and the user's own say.
+  Future<AudienceInfo> audienceInfo(MediaItem item, String prompt) async {
+    final json = await core.call('audience_info', {'path': item.path, 'prompt': prompt});
+    return AudienceInfo.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// Set [item]'s audience level by hand (1 G to 5 NC-17), or 0 to go back
+  /// to the app's own reading.
+  Future<void> setAudience(MediaItem item, int level) async {
+    await core.call('audience_set', {'path': item.path, 'level': level});
+    await _reload();
+    notesTick.value++;
+  }
+
+  /// [prompt] and [negative] changed to aim at audience level [target].
+  Future<AudienceSteer> steerAudience(String prompt, String negative, int target) async {
+    final json = await core.call('audience_steer', {'prompt': prompt, 'negative': negative, 'target': target});
+    return AudienceSteer.fromJson(json as Map<String, dynamic>);
   }
 
   void toggleCrop() {
@@ -1691,6 +1752,13 @@ class AppState extends ChangeNotifier {
 
   /// Whether the search is for pictures that look like one.
   bool get lookingAlike => query.contains('similar:');
+
+  /// Whether audience levels take in what the pictures show, which needs
+  /// content search to look at them.
+  bool get audienceByPicture => audienceSource != 'prompt';
+
+  /// Whether content search should look at the folder's pictures.
+  bool get _wantsVectors => contentSearch || lookingAlike || audienceByPicture;
 
   /// Show the pictures that look like [item], most alike first.
   void findSimilar(MediaItem item) {
