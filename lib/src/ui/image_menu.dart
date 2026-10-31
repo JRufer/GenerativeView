@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../platform.dart';
+import 'breed_dialog.dart';
 import 'compare_view.dart';
 import 'context_menu.dart';
 import 'filter_sheet.dart' show FilterSet;
@@ -104,6 +105,8 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   final canCompare = images >= compareMin && images <= compareMax;
   final choice = await showContextMenu<String>(context, position, [
     if (canCompare) MenuEntry('compare', 'Compare $images side by side (V)', Icons.compare),
+    if (images >= 2 && images <= 4) MenuEntry('breed', 'Breed new pictures from $images… (G)', Icons.hub_outlined),
+    if (images >= 2) const MenuEntry('best', 'Tick all but the best', Icons.workspace_premium_outlined),
     MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
     if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
     const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
@@ -121,6 +124,13 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   switch (choice) {
     case 'compare':
       await openCompare(context, state, targets);
+    case 'breed':
+      await openBreed(context, state, targets);
+    case 'best':
+      final ticked = state.showingDuplicates && state.duplicateGroups.isNotEmpty
+          ? state.tickAllButBest()
+          : await state.keepBestOfTicked();
+      if (context.mounted) toast(context, ticked == 0 ? 'Could not tell which to keep' : '$ticked ticked; the best of them is left unticked');
     case 'copy':
       await copyItems(context, targets);
     case 'share':

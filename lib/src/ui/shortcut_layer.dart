@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../platform.dart';
+import 'breed_dialog.dart';
 import 'compare_view.dart';
 import 'filter_sheet.dart';
 import 'image_menu.dart';
@@ -360,6 +361,11 @@ class ShortcutLayer extends StatelessWidget {
     if (key == LogicalKeyboardKey.keyV) {
       // The ticked pictures side by side.
       if (panel != null) openCompare(panel, state, targets);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyG && targets.length >= 2) {
+      // New pictures bred from the ticked ones.
+      if (panel != null) openBreed(panel, state, targets);
       return true;
     }
     if (targets.length > 1) {

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// Below this width a panel comes up from the bottom edge, where a thumb
-/// can reach it; above it, a panel opens in the middle of the window.
-const double _sheetBelow = 700;
+/// When the window's shorter side is below this, a panel comes up from the
+/// bottom edge, where a thumb can reach it (a phone, a Fold's cover
+/// screen); otherwise it opens in the middle of the window. Going by the
+/// shorter side means turning a tablet or an open Fold round does not
+/// change which it is.
+const double _sheetBelow = 600;
 
 /// Open [builder]'s content as a panel with a [title]: a sheet from the
 /// bottom on a narrow screen, a dialog on a wide one. Same content, same
@@ -17,7 +20,7 @@ Future<T?> showPanel<T>(
   double width = 560,
   IconData? icon,
 }) {
-  final narrow = MediaQuery.sizeOf(context).width < _sheetBelow;
+  final narrow = MediaQuery.sizeOf(context).shortestSide < _sheetBelow;
   Widget frame(BuildContext context) => _PanelFrame(title: title, icon: icon, child: builder(context));
   if (narrow) {
     return showModalBottomSheet<T>(

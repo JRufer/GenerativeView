@@ -233,7 +233,13 @@ fn round2(v: f64) -> f64 {
 
 fn item_json(table: &Table, c: &Count, recipes: &[Recipe], toward_liked: bool) -> Value {
     let (keep, reject) = table.shares(c);
-    let samples: Vec<&str> = (if toward_liked { &c.best } else { &c.worst }).iter().map(|(_, i)| recipes[*i].path.as_str()).collect();
+    let samples: Vec<Value> = (if toward_liked { &c.best } else { &c.worst })
+        .iter()
+        .map(|(_, i)| {
+            let r = &recipes[*i];
+            json!({ "path": r.path, "mtime": r.mtime, "size": r.size, "rating": r.rating })
+        })
+        .collect();
     json!({
         "label": c.label,
         "kind": c.kind,

@@ -9,6 +9,7 @@ import '../theme.dart';
 import 'civitai_sheet.dart';
 import 'context_menu.dart';
 import 'notes_widgets.dart';
+import 'describe_card.dart';
 import 'prompt_check.dart';
 import 'remix_dialog.dart';
 import 'upscale_dialog.dart';
@@ -208,11 +209,7 @@ class _MetaPanelState extends State<MetaPanel> {
           ),
         ],
       ),
-      if (!info.hasGeneration)
-        const Text(
-          'No generation data found in this file.',
-          style: TextStyle(color: Palette.muted, fontSize: 13),
-        ),
+      if (!info.hasGeneration) DescribeCard(key: const ValueKey<String>('describe'), state: state, item: item),
       if (info.prompt.isNotEmpty)
         _Section(
           label: 'Prompt',

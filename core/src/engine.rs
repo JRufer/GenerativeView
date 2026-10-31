@@ -325,9 +325,24 @@ impl Engine {
 
     /// The groups of near-duplicates a duplicates search shows, each with
     /// the one to keep and why (see [`crate::works::best_of`]).
+    /// With `only` (a list of paths), those pictures are taken as one group,
+    /// whatever they look like: the best of a batch.
     fn duplicate_groups(&self, args: &Value) -> Result<String, String> {
-        let found = self.search_plain(args)?;
-        let groups = self.dupes.groups(&self.thumbs, &found);
+        let only: Option<Vec<String>> = args.get("only").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(normalize).collect());
+        let (found, groups) = match &only {
+            Some(paths) => {
+                let mut plain = args.clone();
+                plain["text"] = json!("");
+                let found = self.search_plain(&plain)?;
+                let group: Vec<usize> = (0..found.rows.len()).filter(|&i| paths.contains(&join(&found.dirs[found.rows[i].1 as usize], &found.rows[i].2))).collect();
+                (found, if group.len() >= 2 { vec![group] } else { Vec::new() })
+            }
+            None => {
+                let found = self.search_plain(args)?;
+                let groups = self.dupes.groups(&self.thumbs, &found);
+                (found, groups)
+            }
+        };
         let taste = self.taste();
         let installed = self.content.installed();
         let out: Vec<Value> = groups

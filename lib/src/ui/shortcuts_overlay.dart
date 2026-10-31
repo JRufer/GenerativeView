@@ -61,6 +61,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
       ('Ctrl A', 'Tick every picture listed'),
       ('1 – 5   P   X   U   B', 'Rate, flag or collect all the ticked pictures'),
       ('V', 'Compare two to four of them side by side'),
+      ('G', 'Breed new pictures from two to four of them'),
       ('Shift U', 'Upscale them, one after another'),
       ('Ctrl Shift C', 'Copy them as files'),
       ('Delete', 'Move them to the trash (asks once)'),

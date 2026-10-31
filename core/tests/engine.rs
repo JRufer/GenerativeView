@@ -760,4 +760,8 @@ fn artist_tools_learn_from_ratings() {
     let best = group["best"].as_u64().unwrap() as usize;
     assert!(group["paths"][best].as_str().unwrap().ends_with("b.png"), "{group}");
     assert_eq!(group["why"]["rated"], 4);
+    // Any set of pictures, taken as one group: the best of a batch.
+    let batch = h.call("duplicate_groups", json!({ "dir": dir, "recursive": true, "only": [path("bad0.png"), path("good3.png"), path("bad1.png")] }));
+    assert_eq!(batch[0]["paths"].as_array().unwrap().len(), 3, "{batch}");
+    assert!(batch[0]["paths"][batch[0]["best"].as_u64().unwrap() as usize].as_str().unwrap().ends_with("good3.png"));
 }

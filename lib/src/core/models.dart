@@ -861,3 +861,262 @@ class PhraseCheck {
     level: (j['level'] as num?)?.toDouble() ?? 0,
   );
 }
+
+// ------------------------------------------------------------ artist tools
+
+int _int(Object? v) => (v as num?)?.toInt() ?? 0;
+double _double(Object? v) => (v as num?)?.toDouble() ?? 0;
+List<Map<String, dynamic>> _maps(Object? v) => [
+  for (final m in (v as List? ?? const []))
+    if (m is Map<String, dynamic>) m,
+];
+
+/// One phrase offered for describing a picture.
+class DescribedPhrase {
+  const DescribedPhrase({required this.text, required this.level, required this.on});
+  final String text;
+
+  /// How clearly the model sees it (1 or more is clear).
+  final double level;
+
+  /// Whether it starts in the described prompt.
+  final bool on;
+
+  /// How sure, 0 to 1, for a bar.
+  double get confidence => (level / 2).clamp(0.05, 1.0).toDouble();
+
+  factory DescribedPhrase.fromJson(Map<String, dynamic> j) =>
+      DescribedPhrase(text: j['text'] as String? ?? '', level: _double(j['level']), on: j['on'] == true);
+}
+
+/// A picture with no prompt of its own, described in groups of phrases:
+/// subject, setting, style, light.
+class Description {
+  const Description(this.groups);
+  final List<(String, List<DescribedPhrase>)> groups;
+
+  factory Description.fromJson(Map<String, dynamic> j) => Description([
+    for (final g in _maps(j['groups'])) (g['name'] as String? ?? '', [for (final p in _maps(g['phrases'])) DescribedPhrase.fromJson(p)]),
+  ]);
+}
+
+/// One phrase or setting range on the What Works page.
+class WorksItem {
+  const WorksItem({
+    required this.label,
+    required this.kind,
+    required this.keep,
+    required this.reject,
+    required this.judged,
+    required this.few,
+    required this.query,
+    required this.samples,
+  });
+  final String label;
+
+  /// phrase | cfg | steps | lora | sampler
+  final String kind;
+
+  /// The share of liked and of disliked pictures it turns up in, 0 to 1.
+  final double keep;
+  final double reject;
+
+  /// Judged pictures with it.
+  final int judged;
+
+  /// Too few pictures to trust.
+  final bool few;
+
+  /// The search that shows its pictures.
+  final String query;
+  final List<UsageSample> samples;
+
+  factory WorksItem.fromJson(Map<String, dynamic> j) => WorksItem(
+    label: j['label'] as String? ?? '',
+    kind: j['kind'] as String? ?? 'phrase',
+    keep: _double(j['keep']),
+    reject: _double(j['reject']),
+    judged: _int(j['judged']),
+    few: j['few'] == true,
+    query: j['query'] as String? ?? '',
+    samples: [
+      for (final s in _maps(j['samples']))
+        UsageSample(s['path'] as String? ?? '', _int(s['mtime']), _int(s['size']), _int(s['rating'])),
+    ],
+  );
+}
+
+/// What the user's ratings say works: phrases common among liked
+/// pictures, among disliked ones, and settings that set them apart.
+class WorksStats {
+  const WorksStats({
+    required this.liked,
+    required this.disliked,
+    required this.model,
+    required this.models,
+    required this.keep,
+    required this.reject,
+    required this.settings,
+  });
+  final int liked;
+  final int disliked;
+
+  /// The model it is narrowed to (its index key), or empty for all.
+  final String model;
+
+  /// The models there are to narrow it to: (key, label, pictures).
+  final List<(String, String, int)> models;
+  final List<WorksItem> keep;
+  final List<WorksItem> reject;
+  final List<WorksItem> settings;
+
+  bool get isEmpty => keep.isEmpty && reject.isEmpty && settings.isEmpty;
+
+  factory WorksStats.fromJson(Map<String, dynamic> j) {
+    List<WorksItem> group(String kind) => [
+      for (final g in _maps(j['groups']))
+        if (g['kind'] == kind)
+          for (final i in _maps(g['items'])) WorksItem.fromJson(i),
+    ];
+    return WorksStats(
+      liked: _int(j['liked']),
+      disliked: _int(j['disliked']),
+      model: j['model'] as String? ?? '',
+      models: [for (final m in _maps(j['models'])) (m['key'] as String? ?? '', m['label'] as String? ?? '', _int(m['count']))],
+      keep: group('keep'),
+      reject: group('reject'),
+      settings: group('settings'),
+    );
+  }
+}
+
+/// One change Prompt Doctor suggests.
+class Suggestion {
+  const Suggestion({required this.kind, required this.phrases, this.reason = '', this.weight, this.keep = 0, this.reject = 0});
+
+  /// missed (weight it up) | remove | add
+  final String kind;
+  final List<String> phrases;
+
+  /// no_difference | in_rejects | in_keepers, for remove and add.
+  final String reason;
+  final double? weight;
+  final double keep;
+  final double reject;
+
+  factory Suggestion.fromJson(Map<String, dynamic> j) => Suggestion(
+    kind: j['kind'] as String? ?? '',
+    phrases: [for (final p in (j['phrases'] as List? ?? const [])) '$p'],
+    reason: j['reason'] as String? ?? '',
+    weight: (j['weight'] as num?)?.toDouble(),
+    keep: _double(j['keep']),
+    reject: _double(j['reject']),
+  );
+}
+
+/// Prompt Doctor's advice for one prompt.
+class Advice {
+  const Advice({required this.suggestions, required this.modelLabel, required this.checked});
+  final List<Suggestion> suggestions;
+
+  /// The model the ratings were narrowed to, or empty when all were used.
+  final String modelLabel;
+
+  /// Whether the picture was checked against its prompt.
+  final bool checked;
+
+  factory Advice.fromJson(Map<String, dynamic> j) => Advice(
+    suggestions: [for (final s in _maps(j['suggestions'])) Suggestion.fromJson(s)],
+    modelLabel: j['model_label'] as String? ?? '',
+    checked: j['checked'] == true,
+  );
+}
+
+/// Where in a picture a phrase fits: [grid] × [grid] values, 0 to 1, row
+/// by row from the top.
+class HeatMap {
+  const HeatMap(this.grid, this.values, this.level);
+  final int grid;
+  final List<double> values;
+
+  /// How clearly the whole picture shows the phrase, if known.
+  final double? level;
+
+  double at(int x, int y) => values[y * grid + x];
+
+  factory HeatMap.fromJson(Map<String, dynamic> j) => HeatMap(
+    _int(j['grid']),
+    [for (final v in (j['heat'] as List? ?? const [])) (v as num).toDouble()],
+    (j['level'] as num?)?.toDouble(),
+  );
+}
+
+/// One phrase of a bred prompt and the parent it came from (null: new).
+class BredPhrase {
+  const BredPhrase(this.text, this.from);
+  final String text;
+  final int? from;
+}
+
+/// One recipe Breed proposes.
+class BredChild {
+  const BredChild({required this.base, required this.prompt, required this.phrases, required this.loras, this.steps, this.cfg, this.stars});
+
+  /// The parent whose recipe it is made on.
+  final int base;
+  final String prompt;
+  final List<BredPhrase> phrases;
+  final List<(String, double)> loras;
+  final int? steps;
+  final double? cfg;
+
+  /// How the user would likely rate it, 1 to 5, when there is a guess.
+  final double? stars;
+
+  factory BredChild.fromJson(Map<String, dynamic> j) => BredChild(
+    base: _int(j['base']),
+    prompt: j['prompt'] as String? ?? '',
+    phrases: [for (final p in _maps(j['phrases'])) BredPhrase(p['text'] as String? ?? '', (p['from'] as num?)?.toInt())],
+    loras: [for (final l in _maps(j['loras'])) (l['name'] as String? ?? '', _double(l['weight']))],
+    steps: (j['steps'] as num?)?.round(),
+    cfg: (j['cfg'] as num?)?.toDouble(),
+    stars: (j['stars'] as num?)?.toDouble(),
+  );
+}
+
+/// A group of near-duplicates, with the one to keep and why.
+class DuplicateGroup {
+  const DuplicateGroup({required this.paths, required this.best, this.rated, this.kept = false, this.likely, this.seen, this.checked, this.sharpest = false});
+  final List<String> paths;
+  final int best;
+  final int? rated;
+  final bool kept;
+  final double? likely;
+  final int? seen;
+  final int? checked;
+  final bool sharpest;
+
+  String get bestPath => paths[best.clamp(0, paths.length - 1)];
+
+  /// Why the best one was picked, in a few words.
+  String get why => [
+    if (rated != null) '★$rated rated' else if (likely != null) '★${likely!.toStringAsFixed(1)} likely',
+    if (kept) 'kept',
+    if (seen != null && checked != null && checked! > 0) '$seen of $checked phrases seen',
+    if (sharpest) 'sharpest',
+  ].join(' · ');
+
+  factory DuplicateGroup.fromJson(Map<String, dynamic> j) {
+    final why = j['why'] is Map<String, dynamic> ? j['why'] as Map<String, dynamic> : const <String, dynamic>{};
+    return DuplicateGroup(
+      paths: [for (final p in (j['paths'] as List? ?? const [])) '$p'],
+      best: _int(j['best']),
+      rated: (why['rated'] as num?)?.toInt(),
+      kept: why['kept'] == true,
+      likely: (why['likely'] as num?)?.toDouble(),
+      seen: (why['seen'] as num?)?.toInt(),
+      checked: (why['checked'] as num?)?.toInt(),
+      sharpest: why['sharpest'] == true,
+    );
+  }
+}

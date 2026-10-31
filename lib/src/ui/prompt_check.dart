@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../core/models.dart';
 import '../theme.dart';
+import 'kit.dart';
 
 /// Under the prompt in the metadata panel: which of its phrases content
 /// search's model sees in the picture. Shown at once for a picture content
@@ -144,7 +145,7 @@ class _PromptCheckViewState extends State<PromptCheckView> {
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
-                    'Seen in the picture: ${check.seen} of ${check.checked} phrases',
+                    'Seen in the picture: ${check.seen} of ${check.checked} phrases · tap one for more',
                     key: const ValueKey<String>('prompt-check-summary'),
                     style: const TextStyle(fontSize: 12, color: Palette.muted),
                   ),
@@ -156,50 +157,20 @@ class _PromptCheckViewState extends State<PromptCheckView> {
           Wrap(
             spacing: 5,
             runSpacing: 5,
-            children: [for (final p in check.phrases) _PhraseChip(phrase: p)],
+            children: [
+              for (final p in check.phrases)
+                PhraseChip(
+                  key: ValueKey<String>('prompt-phrase-${p.text}'),
+                  text: p.text,
+                  look: !p.checked ? PhraseLook.unchecked : (p.seen ? PhraseLook.seen : PhraseLook.missing),
+                  tooltip: !p.checked
+                      ? 'Asks for quality, which the model cannot see: not looked for'
+                      : (p.seen ? 'Seen in the picture' : 'Not seen in the picture'),
+                  onPressAt: (at) => showPhraseMenu(context, at: at, state: widget.state, item: widget.item, phrase: p.text, seen: p.seen),
+                ),
+            ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PhraseChip extends StatelessWidget {
-  const _PhraseChip({required this.phrase});
-  final PhraseCheck phrase;
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color, tip) = !phrase.checked
-        ? (Icons.remove, Palette.faint, 'Asks for quality, which the model cannot see: not looked for')
-        : phrase.seen
-        ? (Icons.check, Palette.accent, 'Seen in the picture')
-        : (Icons.visibility_off_outlined, Palette.danger, 'Not seen in the picture');
-    return Tooltip(
-      message: tip,
-      child: Container(
-        key: ValueKey<String>('prompt-phrase-${phrase.text}'),
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        decoration: BoxDecoration(
-          color: Palette.raised,
-          borderRadius: BorderRadius.circular(5),
-          border: Border.all(color: phrase.checked && !phrase.seen ? Palette.danger.withValues(alpha: 0.45) : Palette.line),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 12, color: color),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                phrase.text,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11.5, color: phrase.checked ? Palette.text : Palette.faint),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
