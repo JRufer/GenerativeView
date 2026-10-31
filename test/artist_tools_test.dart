@@ -244,6 +244,22 @@ void main() {
           .toList();
       // The recipe's size (1024 × 1024 in these test graphs), as Remix starts from.
       expect(sides, ['1024', '1024']);
+      // Likely stars: rated pictures content search has not looked at yet
+      // are looked at from here, and the candidates get their stars.
+      final look = find.byKey(const ValueKey('breed-look-at-judged'), skipOffstage: false);
+      if (look.evaluate().isNotEmpty) {
+        await screenshot(tester, boundary, 'artist-breed-no-stars-$name');
+        await tester.ensureVisible(look);
+        await tester.pump();
+        await tester.tap(look);
+      }
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('breed-why-no-stars'), skipOffstage: false).evaluate().isEmpty,
+        what: 'likely stars (${tester.widgetList<Text>(find.descendant(of: find.byKey(const ValueKey('breed-why-no-stars'), skipOffstage: false), matching: find.byType(Text), skipOffstage: false)).map((t) => t.data).join(' ')})',
+        timeout: const Duration(seconds: 90),
+      );
+      expect(find.descendant(of: find.byKey(const ValueKey('breed-child-0'), skipOffstage: false), matching: find.textContaining(RegExp(r'^[1-5]\.\d$'), skipOffstage: false)), findsOneWidget);
       await settle(tester);
       await screenshot(tester, boundary, 'artist-breed-$name');
       // Mixing less: the candidates are written again.

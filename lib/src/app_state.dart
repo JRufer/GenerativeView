@@ -118,6 +118,18 @@ class FolderDragInfo {
   final bool copy;
 }
 
+/// A pass of content search over the rated and flagged pictures: under
+/// way, or how it ended. [tick] changes with every report.
+@immutable
+class JudgedPass {
+  const JudgedPass({this.running = false, this.done = 0, this.total = 0, this.error, this.tick = 0});
+  final bool running;
+  final int done;
+  final int total;
+  final String? error;
+  final int tick;
+}
+
 class DirNode {
   const DirNode(this.name, this.path, this.hasChildren);
   final String name;
@@ -266,6 +278,17 @@ class AppState extends ChangeNotifier {
   /// Bumped whenever ratings, flags or collections change, so what shows
   /// them reads them again.
   final ValueNotifier<int> notesTick = ValueNotifier(0);
+
+  /// Content search looking at the rated and flagged pictures (for likely
+  /// stars), while it does, and how the last pass ended.
+  final ValueNotifier<JudgedPass> judged = ValueNotifier(const JudgedPass());
+
+  /// Have content search look at every rated or flagged picture it has not
+  /// yet, wherever it is; see [judged].
+  Future<void> lookAtJudged() async {
+    judged.value = JudgedPass(running: true, tick: judged.value.tick);
+    await core.call('content_index_judged', const {});
+  }
 
   /// Pictures being dragged onto a folder, while they are.
   final ValueNotifier<FolderDragInfo?> folderDrag = ValueNotifier(null);
@@ -1002,6 +1025,14 @@ class AppState extends ChangeNotifier {
     switch (e['t']) {
       case 'content':
         _onContentEvent(e);
+      case 'judged':
+        judged.value = JudgedPass(
+          running: e['state'] == 'indexing',
+          done: (e['done'] as num?)?.toInt() ?? 0,
+          total: (e['total'] as num?)?.toInt() ?? 0,
+          error: e['state'] == 'error' ? (e['error'] as String? ?? 'could not look at them') : (e['state'] == 'no_model' ? 'the content search model is not installed' : null),
+          tick: judged.value.tick + 1,
+        );
       case 'changed':
         _contentSoon();
         _smartSoon();
@@ -1451,7 +1482,7 @@ class AppState extends ChangeNotifier {
   /// first. [change] is 0 (close to the parents) to 1 (adventurous).
   /// [prompts], in the order of [parents], stand in for those with no
   /// prompt of their own (described from the picture; empty for the rest).
-  Future<(List<BredChild>, bool)> breed(
+  Future<BreedResult> breed(
     List<MediaItem> parents, {
     required bool phrases,
     required bool loras,
@@ -1470,12 +1501,14 @@ class AppState extends ChangeNotifier {
       'count': count,
       'seed': seed,
     }) as Map<String, dynamic>;
-    return (
-      [
+    return BreedResult(
+      children: [
         for (final c in (json['children'] as List? ?? const []))
           if (c is Map<String, dynamic>) BredChild.fromJson(c),
       ],
-      json['rated'] == true,
+      likely: json['likely'] as String? ?? (json['rated'] == true ? 'ok' : 'none_judged'),
+      judged: (json['judged'] as num?)?.toInt() ?? 0,
+      seen: (json['seen'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -2677,6 +2710,7 @@ class AppState extends ChangeNotifier {
     _highlightTimer?.cancel();
     notesTick.dispose();
     folderDrag.dispose();
+    judged.dispose();
     _notices.close();
     _zoomSteps.close();
     for (final t in _saveTimers.values) {

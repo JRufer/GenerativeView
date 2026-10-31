@@ -1100,6 +1100,26 @@ class BredPhrase {
 }
 
 /// One recipe Breed proposes.
+/// What breeding gave: the new recipes, likeliest liked first, and
+/// whether their likely stars could be told.
+class BreedResult {
+  const BreedResult({required this.children, required this.likely, this.judged = 0, this.seen = 0});
+  final List<BredChild> children;
+
+  /// 'ok'; or why there are no likely stars: 'no_model' (content search is
+  /// not installed), 'none_judged' (nothing rated or flagged yet),
+  /// 'not_seen' (rated, but content search has not looked at them yet), or
+  /// 'error: …'.
+  final String likely;
+
+  /// How many pictures are rated or flagged, and how many of them content
+  /// search has looked at.
+  final int judged;
+  final int seen;
+
+  bool get rated => likely == 'ok';
+}
+
 class BredChild {
   const BredChild({required this.base, required this.prompt, required this.phrases, required this.loras, this.steps, this.cfg, this.stars});
 

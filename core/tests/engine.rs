@@ -820,6 +820,26 @@ fn artist_tools_learn_from_ratings() {
 
     // ---- with the model: describe, heat, breed, best of group ---------------
     install_mini_model(&h);
+    // Rated, but nothing looked at yet (a new model, say): breeding says
+    // so, rather than showing no stars without a word.
+    let bred = h.call("breed", json!({ "paths": [path("good0.png"), path("good1.png")], "count": 2, "seed": 5 }));
+    assert_eq!(bred["likely"], "not_seen", "{bred}");
+    assert_eq!(bred["rated"], false);
+    assert!(bred["judged"].as_u64().unwrap() > 0);
+    assert_eq!(bred["seen"], 0);
+    // Looking at just the rated and flagged pictures is enough for stars.
+    h.call("content_index_judged", json!({}));
+    let done = h.wait("judged pass", |e| e["t"] == "judged" && e["state"] == "done");
+    assert_eq!(done["total"], bred["judged"], "every judged picture looked at");
+    let bred = h.call("breed", json!({ "paths": [path("good0.png"), path("good1.png")], "count": 2, "seed": 5 }));
+    assert_eq!(bred["likely"], "ok", "{bred}");
+    assert_eq!(bred["seen"], bred["judged"]);
+    assert!(bred["children"][0]["stars"].is_number(), "{bred}");
+    // Asked again with nothing left to look at, it is done at once.
+    h.call("content_index_judged", json!({}));
+    let again = h.wait("judged pass", |e| e["t"] == "judged" && e["state"] == "done");
+    assert_eq!(again["total"], 0);
+
     h.call("content_index", json!({ "dir": dir, "recursive": true }));
     h.wait("content pass", |e| e["t"] == "content" && e["state"] == "done" && e["total"].as_u64().unwrap_or(0) > 0);
     let described = h.call("describe_groups", json!({ "path": path("good0.png") }));
@@ -835,6 +855,7 @@ fn artist_tools_learn_from_ratings() {
     let children = bred["children"].as_array().unwrap();
     assert!(!children.is_empty() && children.len() <= 4, "{bred}");
     assert_eq!(bred["rated"], true);
+    assert_eq!(bred["likely"], "ok");
     for c in children {
         assert!(c["prompt"].as_str().unwrap().starts_with("a red fox"), "{c}");
         let stars = c["stars"].as_f64().unwrap();

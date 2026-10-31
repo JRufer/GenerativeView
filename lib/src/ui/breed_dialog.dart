@@ -84,6 +84,17 @@ class _BreedPanelState extends State<BreedPanel> {
 
   List<BredChild>? _children;
   bool _rated = false;
+
+  /// Why there are no likely stars, when there are none (see
+  /// [BreedResult.likely]), with how many pictures are rated or flagged
+  /// and how many of them content search has looked at.
+  String _likely = 'ok';
+  int _judged = 0;
+  int _seen = 0;
+
+  /// Content search was asked to look at the rated pictures for this
+  /// panel; when it is done, the candidates are scored again.
+  bool _lookingAtJudged = false;
   bool _loading = false;
   String? _error;
 
@@ -108,9 +119,42 @@ class _BreedPanelState extends State<BreedPanel> {
 
   @override
   void dispose() {
+    widget.state.judged.removeListener(_judgedMoved);
     _width.dispose();
     _height.dispose();
     super.dispose();
+  }
+
+  /// Have content search look at the rated pictures it has not yet, so the
+  /// candidates can be given likely stars.
+  Future<void> _lookAtJudged() async {
+    setState(() => _lookingAtJudged = true);
+    try {
+      await widget.state.lookAtJudged();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _lookingAtJudged = false;
+          _likely = 'error: $e';
+        });
+      }
+    }
+  }
+
+  void _judgedMoved() {
+    if (!mounted || !_lookingAtJudged) return;
+    final pass = widget.state.judged.value;
+    if (pass.running) {
+      setState(() {});
+      return;
+    }
+    setState(() => _lookingAtJudged = false);
+    if (pass.error != null) {
+      setState(() => _likely = 'error: ${pass.error}');
+    } else {
+      // Same recipes (same seed), now with their likely stars.
+      _write();
+    }
   }
 
   @override
@@ -131,6 +175,7 @@ class _BreedPanelState extends State<BreedPanel> {
     // A server that is set up, the one that made the first picture if it is;
     // otherwise the one that made it, to be set up on sending.
     _backend = ready.contains(made) ? made : (ready.isNotEmpty ? ready.first : (made ?? 'comfyui'));
+    widget.state.judged.addListener(_judgedMoved);
     _write();
   }
 
@@ -141,7 +186,7 @@ class _BreedPanelState extends State<BreedPanel> {
       _error = null;
     });
     try {
-      final (children, rated) = await widget.state.breed(
+      final bred = await widget.state.breed(
         widget.parents,
         phrases: _phrases,
         loras: _loras,
@@ -152,9 +197,13 @@ class _BreedPanelState extends State<BreedPanel> {
         prompts: [for (final i in widget.infos) i.source == 'described' ? i.prompt : ''],
       );
       if (!mounted) return;
+      final children = bred.children;
       setState(() {
         _children = children;
-        _rated = rated;
+        _rated = bred.rated;
+        _likely = bred.likely;
+        _judged = bred.judged;
+        _seen = bred.seen;
         _ticked
           ..clear()
           ..addAll([for (var i = 0; i < math.min(4, children.length); i++) i]);
@@ -360,14 +409,7 @@ class _BreedPanelState extends State<BreedPanel> {
           label: const Text('Write more'),
         ),
       ),
-      if (!_rated && children != null && children.isNotEmpty)
-        const Padding(
-          padding: EdgeInsets.only(bottom: 8),
-          child: Text(
-            'Rate or flag some pictures and turn on content search, and the likeliest liked come first.',
-            style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
-          ),
-        ),
+      if (!_rated && children != null && children.isNotEmpty) _whyNoStars(),
       if (_loading && children == null)
         const Padding(padding: EdgeInsets.all(20), child: Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))))
       else if (children != null)
@@ -426,6 +468,67 @@ class _BreedPanelState extends State<BreedPanel> {
           leading: Text('Results go to ${AppState.remixCollection}', style: const TextStyle(fontSize: 12, color: Palette.faint)),
         ),
       ],
+    );
+  }
+}
+
+extension on _BreedPanelState {
+  /// Why the candidates have no likely stars, and what would give them
+  /// some: a button to have the rated pictures looked at when that is all
+  /// it takes.
+  Widget _whyNoStars() {
+    const style = TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35);
+    final pass = widget.state.judged.value;
+    final Widget body;
+    if (_lookingAtJudged) {
+      body = Row(
+        children: [
+          const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              pass.total > 0 ? 'Looking at your rated pictures for likely stars: ${pass.done} of ${pass.total}…' : 'Looking at your rated pictures for likely stars…',
+              style: style,
+            ),
+          ),
+        ],
+      );
+    } else {
+      body = switch (_likely) {
+        'no_model' => const Text(
+            'No likely stars: content search is not installed. Turn it on (the picture button in the search box) and they show here.',
+            style: style,
+          ),
+        'none_judged' => const Text(
+            'No likely stars yet: rate or flag some pictures, and the likeliest liked come first.',
+            style: style,
+          ),
+        'not_seen' => Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'No likely stars yet: content search has not looked at ${_judged == 1 ? 'your rated picture' : 'your $_judged rated pictures'}${_seen > 0 ? ' ($_seen done)' : ''}.',
+                  style: style,
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                key: const ValueKey<String>('breed-look-at-judged'),
+                onPressed: _lookAtJudged,
+                child: const Text('Look at them'),
+              ),
+            ],
+          ),
+        final why => Text(
+            'Could not work out likely stars: ${why.startsWith('error: ') ? why.substring(7) : why}',
+            style: const TextStyle(fontSize: 11.5, color: Palette.danger, height: 1.35),
+          ),
+      };
+    }
+    return Padding(
+      key: const ValueKey<String>('breed-why-no-stars'),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: body,
     );
   }
 }

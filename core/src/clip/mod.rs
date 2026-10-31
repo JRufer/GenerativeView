@@ -88,8 +88,15 @@ const EVERYDAY: &str = include_str!("everyday.txt");
 ///   no better than this one.
 pub const CLEAR: f32 = 1.5;
 
+/// Says how a pass of looking at pictures goes: its state, how many are
+/// done of how many, and any error.
+type Report<'a> = dyn Fn(&str, usize, usize, Option<&str>) + 'a;
+
 enum Job {
     Index { root: String, recursive: bool, generation: u64 },
+    /// Look at every rated or flagged picture anywhere that has not been
+    /// looked at yet: what likely stars and the taste model learn from.
+    Judged,
     Close,
 }
 
@@ -184,6 +191,12 @@ impl ContentSearch {
     pub fn index(&self, root: &str, recursive: bool) {
         let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.tx.send(Job::Index { root: root.to_string(), recursive, generation });
+    }
+
+    /// Look at the rated and flagged pictures not looked at yet, wherever
+    /// they are, reporting as `{"t": "judged", ...}` events.
+    pub fn index_judged(&self) {
+        let _ = self.tx.send(Job::Judged);
     }
 
     pub fn close(&self) {
@@ -1075,6 +1088,7 @@ impl Inner {
                         self.embed_folder(&mut vision, &root, recursive, generation);
                     }
                 }
+                Ok(Job::Judged) => self.embed_judged(&mut vision),
                 // Nothing to do for a while: give the model's memory back.
                 Err(RecvTimeoutError::Timeout) => vision = None,
                 Ok(Job::Close) | Err(RecvTimeoutError::Disconnected) => break,
@@ -1084,13 +1098,13 @@ impl Inner {
 
     fn embed_folder(&self, vision: &mut Option<model::Vision>, root: &str, recursive: bool, generation: u64) {
         let cancelled = || self.generation.load(Ordering::SeqCst) != generation;
+        let report = |state: &str, done: usize, total: usize, error: Option<&str>| self.emit(root, state, done, total, error);
         if !self.installed() {
-            self.emit(root, "no_model", 0, 0, None);
-            return;
+            return report("no_model", 0, 0, None);
         }
         let all = match self.db.query(&Query { dir: root.to_string(), recursive, ..Default::default() }) {
             Ok(all) => all,
-            Err(e) => return self.emit(root, "error", 0, 0, Some(&e.to_string())),
+            Err(e) => return report("error", 0, 0, Some(&e.to_string())),
         };
         // Newest first, like the grid: what is on screen gets done first.
         let todo: Vec<(Key, String, i64, i64)> = all
@@ -1099,18 +1113,64 @@ impl Inner {
             .map(|row| (self.key(&all.dirs[row.1 as usize], row), join(&all.dirs[row.1 as usize], &row.2), row.6, row.7))
             .filter(|(key, ..)| !self.vectors.done(key))
             .collect();
+        self.embed(vision, &todo, &cancelled, &report);
+    }
+
+    /// Look at the rated and flagged pictures not looked at yet. Reported
+    /// on its own (`"t": "judged"`), so the open folder's progress is left
+    /// alone; a folder pass asked for meanwhile goes first next time.
+    fn embed_judged(&self, vision: &mut Option<model::Vision>) {
+        let generation = self.generation.load(Ordering::SeqCst);
+        let cancelled = || self.generation.load(Ordering::SeqCst) != generation;
+        let report = |state: &str, done: usize, total: usize, error: Option<&str>| {
+            let mut event = json!({ "t": "judged", "state": state, "done": done, "total": total });
+            if let Some(error) = error {
+                event["error"] = json!(error);
+            }
+            (self.sink)(event.to_string());
+        };
+        if !self.installed() {
+            return report("no_model", 0, 0, None);
+        }
+        let all = match self.db.query(&Query { dir: String::new(), recursive: true, ..Default::default() }) {
+            Ok(all) => all,
+            Err(e) => return report("error", 0, 0, Some(&e.to_string())),
+        };
+        let todo: Vec<(Key, String, i64, i64)> = all
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let mark = all.marks.get(*i).copied().unwrap_or(0);
+                crate::taste::target(mark & 7, (mark >> 3) & 3).is_some()
+            })
+            .map(|(_, row)| (self.key(&all.dirs[row.1 as usize], row), join(&all.dirs[row.1 as usize], &row.2), row.6, row.7))
+            .filter(|(key, ..)| !self.vectors.done(key))
+            .collect();
+        self.embed(vision, &todo, &cancelled, &report);
+    }
+
+    /// Look at the pictures in `todo` (key, path, modified time, size) and
+    /// file their vectors, saying how it goes through `report`.
+    fn embed(
+        &self,
+        vision: &mut Option<model::Vision>,
+        todo: &[(Key, String, i64, i64)],
+        cancelled: &dyn Fn() -> bool,
+        report: &Report,
+    ) {
         let total = todo.len();
         if total == 0 {
-            return self.emit(root, "done", 0, 0, None);
+            return report("done", 0, 0, None);
         }
         if vision.is_none() {
             match model::Vision::load(&self.model_dir) {
                 Ok(loaded) => *vision = Some(loaded),
-                Err(e) => return self.emit(root, "error", 0, total, Some(&e)),
+                Err(e) => return report("error", 0, total, Some(&e)),
             }
         }
         let Some(encoder) = vision.as_ref() else { return };
-        self.emit(root, "indexing", 0, total, None);
+        report("indexing", 0, total, None);
         // Have the yardstick ready by the time there is something to search.
         let _ = self.reference();
         let mut done = 0;
@@ -1149,15 +1209,15 @@ impl Inner {
             let vectors = encoder.embed(&pictures);
             let filed: Vec<(Key, Vec<f32>)> = keys.into_iter().zip(vectors.chunks_exact(encoder.dim)).map(|(key, v)| (key, v.to_vec())).collect();
             if let Err(e) = self.vectors.put(&filed, &skipped) {
-                return self.emit(root, "error", done, total, Some(&e));
+                return report("error", done, total, Some(&e));
             }
             done += chunk.len();
             if cancelled() {
                 return;
             }
-            self.emit(root, "indexing", done, total, None);
+            report("indexing", done, total, None);
         }
-        self.emit(root, "done", done, total, None);
+        report("done", done, total, None);
     }
 }
 

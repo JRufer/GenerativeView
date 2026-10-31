@@ -316,6 +316,17 @@ impl Engine {
 
     /// Every judged picture content search has looked at, as (its vector,
     /// how liked 0 to 1).
+    /// How many pictures anywhere are rated or flagged.
+    fn judged_count(&self) -> usize {
+        let all = self.db.query(&Query { dir: String::new(), recursive: true, ..Default::default() }).unwrap_or_default();
+        (0..all.rows.len())
+            .filter(|&i| {
+                let mark = all.marks.get(i).copied().unwrap_or(0);
+                crate::taste::target(mark & 7, (mark >> 3) & 3).is_some()
+            })
+            .count()
+    }
+
     fn judged_vectors(&self) -> Vec<(Vec<f32>, f32)> {
         let all = self.db.query(&Query { dir: String::new(), recursive: true, ..Default::default() }).unwrap_or_default();
         all.rows
@@ -377,18 +388,37 @@ impl Engine {
         }
         // Make more than asked for, and keep the likeliest liked.
         let children = crate::works::breed(&parents, mix, change, &fresh, count * 2, seed);
-        let samples = if self.content.installed() { self.judged_vectors() } else { Vec::new() };
-        let likely: Vec<Option<f32>> = if samples.is_empty() {
+        // How the user would likely rate each: from the rated and flagged
+        // pictures content search has looked at. When that cannot be told,
+        // `likely` says why, with how many are judged and looked at.
+        let installed = self.content.installed();
+        let judged = self.judged_count();
+        let samples = if installed { self.judged_vectors() } else { Vec::new() };
+        let mut why: Option<String> = None;
+        let likely: Vec<Option<f32>> = if !installed {
+            why = Some("no_model".into());
+            vec![None; children.len()]
+        } else if samples.is_empty() {
+            why = Some(if judged == 0 { "none_judged" } else { "not_seen" }.into());
             vec![None; children.len()]
         } else {
-            self.content.likely(&children.iter().map(|c| c.prompt()).collect::<Vec<_>>(), &samples).unwrap_or_else(|_| vec![None; children.len()])
+            match self.content.likely(&children.iter().map(|c| c.prompt()).collect::<Vec<_>>(), &samples) {
+                Ok(likely) => likely,
+                Err(e) => {
+                    why = Some(format!("error: {e}"));
+                    vec![None; children.len()]
+                }
+            }
         };
         let mut ranked: Vec<(Option<f32>, &crate::works::Child)> = likely.into_iter().zip(&children).collect();
         ranked.sort_by(|a, b| b.0.unwrap_or(-1.0).total_cmp(&a.0.unwrap_or(-1.0)));
         ranked.truncate(count);
         Ok(json!({
             "paths": paths,
-            "rated": !samples.is_empty(),
+            "rated": !samples.is_empty() && why.is_none(),
+            "likely": why.unwrap_or_else(|| "ok".into()),
+            "judged": judged,
+            "seen": samples.len(),
             "children": ranked.iter().map(|(l, c)| c.to_json(*l)).collect::<Vec<_>>(),
         })
         .to_string())
@@ -727,6 +757,10 @@ impl Engine {
             "query" | "query_json" => Ok(serde_json::to_string(&self.search(args)?).unwrap_or_default()),
             "content_status" => Ok(self.content.status(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive")).to_string()),
             "content_prepare" => Ok(json!({ "installed": self.content.prepare()? }).to_string()),
+            "content_index_judged" => {
+                self.content.index_judged();
+                Ok("null".into())
+            }
             "content_index" => {
                 self.content.index(&normalize(str_arg(args, "dir")?), bool_arg(args, "recursive"));
                 Ok("null".into())
