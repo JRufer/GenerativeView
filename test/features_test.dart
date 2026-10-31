@@ -1593,11 +1593,25 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyX);
     await tester.sendKeyUpEvent(primaryModifier);
     await tester.pump();
+    expect(state.cutCount, 1);
+    final cutPath = state.isCut(item('fox_03.png'));
     await rightClick(pinnedSub);
     expect(find.text('Paste here'), findsOneWidget);
     await screenshot(tester, boundary, '61-folder-menu-move');
-    await tester.tap(find.text('Move the cut file here'));
-    await pumpUntil(tester, inSub, what: 'the cut file to move');
+    final moveHere = find.text('Move the cut file here');
+    final menuHits = [for (final e in tester.hitTestOnBinding(tester.getCenter(moveHere)).path) e.target.runtimeType.toString()].take(6).join(' < ');
+    await tester.tap(moveHere);
+    for (var i = 0; i < 60 && !inSub(); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(
+      inSub(),
+      isTrue,
+      reason: 'cut move: fox_03 was cut $cutPath; hit $menuHits; menu still open ${moveHere.evaluate().isNotEmpty}; cut now ${state.cutCount}; '
+          'showing ${[for (final t in tester.widgetList<Text>(find.descendant(of: find.byType(SnackBar), matching: find.byType(Text)))) t.data]}; '
+          'in sub ${File('$sub/fox_03.png').existsSync()}, at home ${File('${library.path}/fox_03.png').existsSync()}, sub has ${Directory(sub).listSync().map((e) => e.path.split('/').last).toList()}',
+    );
     expect(state.hasCut, isFalse);
     await tester.runAsync(() => state.movePaths(['$sub/fox_03.png'], home, remember: false));
     await pumpUntil(tester, () => atHome() && indexOf(state, 'fox_03.png') >= 0, what: 'back home');
@@ -1616,7 +1630,16 @@ void main() {
     await screenshot(tester, boundary, '62-drag-to-folder');
     await mouse.up();
     await mouse.removePointer();
-    await pumpUntil(tester, inSub, what: 'the drop');
+    for (var i = 0; i < 60 && !inSub(); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(
+      inSub(),
+      isTrue,
+      reason: 'drop: showing ${[for (final t in tester.widgetList<Text>(find.descendant(of: find.byType(SnackBar), matching: find.byType(Text)))) t.data]}; '
+          'in sub ${File('$sub/fox_03.png').existsSync()}, at home ${File('${library.path}/fox_03.png').existsSync()}',
+    );
     expect(state.folderDrag.value, isNull);
     expect(find.byKey(const ValueKey<String>('drag-feedback')), findsNothing);
     expect(((notesFile(sub)['images'] as Map)['fox_03.png'] as Map)['rating'], 4);
