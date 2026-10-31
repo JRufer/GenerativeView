@@ -235,14 +235,15 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('selection-breed')));
       await pumpUntil(tester, () => find.byKey(const ValueKey('breed-child-0')).evaluate().isNotEmpty, what: 'the candidates');
       expect(find.byKey(const ValueKey('breed-send')), findsOneWidget);
-      // The size, set as in Remix, starting from the first parent's.
+      // The size, set as in Remix, starting from the first parent's recipe.
       expect(find.byKey(const ValueKey('breed-size'), skipOffstage: false), findsOneWidget);
       expect(find.byKey(const ValueKey('breed-size-slider'), skipOffstage: false), findsOneWidget);
       final sides = tester
           .widgetList<TextField>(find.descendant(of: find.byKey(const ValueKey('breed-size'), skipOffstage: false), matching: find.byType(TextField), skipOffstage: false))
           .map((f) => f.controller!.text)
           .toList();
-      expect(sides, ['320', '320']);
+      // The recipe's size (1024 × 1024 in these test graphs), as Remix starts from.
+      expect(sides, ['1024', '1024']);
       await settle(tester);
       await screenshot(tester, boundary, 'artist-breed-$name');
       // Mixing less: the candidates are written again.
