@@ -1545,9 +1545,23 @@ void main() {
     // (The folder as the core lists it, which may be the real path behind a link.)
     expect(state.moveTargets.first, endsWith('/sub'));
     // Undo puts it back, notes and all.
-    await pumpUntil(tester, () => find.byKey(const ValueKey<String>('undo-move')).evaluate().isNotEmpty, what: 'the Undo');
-    await tester.tap(find.byKey(const ValueKey<String>('undo-move')));
-    await pumpUntil(tester, atHome, what: 'the undo');
+    final undo = find.byKey(const ValueKey<String>('undo-move'));
+    await pumpUntil(tester, () => undo.evaluate().isNotEmpty, what: 'the Undo');
+    await settle(tester);
+    // What a tap there reaches, and what is showing, to say why if the
+    // undo does not happen.
+    final hits = [for (final e in tester.hitTestOnBinding(tester.getCenter(undo)).path) e.target.runtimeType.toString()].take(8).join(' < ');
+    await tester.tap(undo);
+    for (var i = 0; i < 60 && !atHome(); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(
+      atHome(),
+      isTrue,
+      reason: 'undo: hit $hits; showing ${[for (final t in tester.widgetList<Text>(find.descendant(of: find.byType(SnackBar), matching: find.byType(Text)))) t.data]}; '
+          'in sub ${File('$sub/fox_03.png').existsSync()}, at home ${File('${library.path}/fox_03.png').existsSync()}',
+    );
     await pumpUntil(tester, () => indexOf(state, 'fox_03.png') >= 0 && item('fox_03.png').rating == 4, what: 'back with its stars');
 
     // The picker remembers where things went.
