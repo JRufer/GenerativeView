@@ -1,0 +1,45 @@
+Resolving dependencies...
+Downloading packages...
+  code_assets 1.2.1 (2.1.0 available)
+  crypto 3.0.7 (3.0.8 available)
+  hooks 2.0.2 (2.2.0 available)
+  jni 1.1.0 (1.1.1 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.2 available)
+  permission_handler_android 14.1.0 (14.1.1 available)
+  permission_handler_apple 9.6.2 (9.6.4 available)
+  petitparser 7.0.2 (7.1.0 available)
+  posix 6.5.2 (6.5.4 available)
+  record_use 0.6.0 (1.1.1 available)
+  safe_local_storage 2.0.6 (2.0.7 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.4 available)
+  vm_service 15.3.0 (15.4.0 available)
+  wakelock_plus 1.8.1 (1.8.2 available)
+  web 1.1.1 (1.1.2 available)
+  xml 7.0.1 (7.1.0 available)
+Got dependencies!
+19 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart
+00:00 +0: (setUpAll)
+00:00 +0: audience terms the panel reads back what it writes
+00:00 +1: audience terms aiming higher weights up words already there, never down
+00:00 +2: audience filter and badges, on the fold-closed
+00:03 +3: audience row in the info panel, on the fold-closed
+00:04 +4: aim a remix at an audience level, on the fold-closed
+00:06 +5: aim a remix higher, on the fold-closed
+00:07 +6: aim bred candidates at an audience level, on the fold-closed
+00:08 +7: audience filter and badges, on the fold-open
+00:09 +8: audience row in the info panel, on the fold-open
+00:11 +9: aim a remix at an audience level, on the fold-open
+00:12 +10: aim a remix higher, on the fold-open
+00:13 +11: aim bred candidates at an audience level, on the fold-open
+00:14 +12: audience filter and badges, on the tab
+00:15 +13: audience row in the info panel, on the tab
+00:17 +14: aim a remix at an audience level, on the tab
+00:18 +15: aim a remix higher, on the tab
+00:19 +16: aim bred candidates at an audience level, on the tab
+00:20 +17: (tearDownAll)
+00:20 +17: All tests passed!
