@@ -1648,6 +1648,7 @@ void main() {
           'in sub ${File('$sub/fox_03.png').existsSync()}, at home ${File('${library.path}/fox_03.png').existsSync()}',
     );
     expect(state.folderDrag.value, isNull);
+    await settle(tester);
     expect(find.byKey(const ValueKey<String>('drag-feedback')), findsNothing);
     expect(((notesFile(sub)['images'] as Map)['fox_03.png'] as Map)['rating'], 4);
 
