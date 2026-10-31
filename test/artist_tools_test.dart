@@ -128,7 +128,12 @@ void main() {
     await tester.pumpWidget(RepaintBoundary(key: boundary, child: GenerativeViewApp(state: state)));
     var done = false;
     state.restore(initialFolder: library.path).whenComplete(() => done = true);
-    await pumpUntil(tester, () => done && state.items.length >= 19, what: 'the folder to open');
+    await pumpUntil(tester, () => done, what: 'the folder to open');
+    // Whatever the last test left showing, start from the whole folder.
+    state.clearChecked();
+    state.applySearch('');
+    if (state.leftOpen && state.narrowLayout) state.toggleLeft();
+    await pumpUntil(tester, () => state.items.length >= 19, what: 'every picture to be listed');
     return state;
   }
 
@@ -179,7 +184,8 @@ void main() {
       await tester.tap(find.text('What works'));
       await pumpUntil(tester, () => find.byKey(const ValueKey('works-row-rim lighting')).evaluate().isNotEmpty, what: 'what works');
       expect(find.byKey(const ValueKey('works-row-8k')), findsOneWidget);
-      expect(find.textContaining('From 16 rated pictures'), findsOneWidget);
+      // The rim lighting and 8k foxes, and the twin rated four stars.
+      expect(find.textContaining('From 17 rated pictures'), findsOneWidget);
       await screenshot(tester, boundary, 'artist-works-$name');
       // A row shows its pictures.
       await tester.tap(find.byKey(const ValueKey('works-row-rim lighting')));
@@ -249,6 +255,7 @@ void main() {
       final state = await launch(tester, size);
       state.select(indexOf(state, 'shared.png'));
       if (!state.rightOpen) state.toggleRight();
+      await screenshot(tester, boundary, 'artist-describe-before-$name');
       await pumpUntil(tester, () => state.content.value.installed && find.byKey(const ValueKey('describe-start')).evaluate().isNotEmpty, what: 'the describe button');
       await tester.ensureVisible(find.byKey(const ValueKey('describe-start')));
       await tester.tap(find.byKey(const ValueKey('describe-start')));
@@ -267,6 +274,8 @@ void main() {
       await pumpUntil(tester, () => find.byKey(const ValueKey('remix-mode')).evaluate().isNotEmpty, what: 'the remix panel');
       await tester.tap(find.text('Image to image'));
       await tester.pump();
+      await screenshot(tester, boundary, 'artist-find-before-$name');
+      await pumpUntil(tester, () => find.byKey(const ValueKey('remix-mask-edit')).evaluate().isNotEmpty, what: 'the image to image section');
       await tester.ensureVisible(find.byKey(const ValueKey('remix-mask-edit')));
       await tester.tap(find.byKey(const ValueKey('remix-mask-edit')));
       await pumpUntil(tester, () => find.byKey(const ValueKey('mask-canvas')).evaluate().isNotEmpty, what: 'the mask editor');
