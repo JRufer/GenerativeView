@@ -48,7 +48,10 @@ VersionedFileImage pathImage(String path) {
   String version;
   try {
     final stat = file.statSync();
-    version = '${stat.modified.millisecondsSinceEpoch}/${stat.size}';
+    // A missing file is not an error to statSync: it says so in its type.
+    version = stat.type == FileSystemEntityType.notFound
+        ? ''
+        : '${stat.modified.millisecondsSinceEpoch}/${stat.size}';
   } catch (_) {
     version = '';
   }
