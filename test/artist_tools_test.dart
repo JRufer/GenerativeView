@@ -20,6 +20,7 @@ import 'package:generativeview/src/ui/mask_editor.dart' show heatToMask, smoothH
 import 'package:generativeview/src/ui/media_grid.dart' show BestBadge, MediaGrid;
 import 'package:generativeview/src/ui/remix_dialog.dart' show openRemix;
 import 'package:generativeview/src/ui/stats_page.dart' show openStats;
+import 'package:generativeview/src/ui/thumb_image.dart' show ThumbImage;
 
 import 'support.dart';
 
@@ -265,6 +266,26 @@ void main() {
       // Mixing less: the candidates are written again.
       await tester.tap(find.byKey(const ValueKey('breed-mix-settings')));
       await pumpUntil(tester, () => find.byKey(const ValueKey('breed-child-0')).evaluate().isNotEmpty, what: 'the candidates again');
+      // Dragging the second parent left over the first makes it the first,
+      // the one new pictures are made on, and the candidates are written again.
+      String parentAt(int i) => tester
+          .widget<ThumbImage>(find.descendant(of: find.byKey(ValueKey('breed-parent-$i'), skipOffstage: false), matching: find.byType(ThumbImage), skipOffstage: false))
+          .item
+          .name;
+      final before = [parentAt(0), parentAt(1)];
+      await tester.ensureVisible(find.byKey(const ValueKey('breed-parent-1')));
+      await tester.pump();
+      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const ValueKey('breed-parent-1'))));
+      await gesture.moveBy(const Offset(-24, 0));
+      await tester.pump();
+      await gesture.moveTo(tester.getCenter(find.byKey(const ValueKey('breed-parent-0'))));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+      expect([parentAt(0), parentAt(1)], before.reversed.toList());
+      await pumpUntil(tester, () => find.byKey(const ValueKey('breed-child-0')).evaluate().isNotEmpty, what: 'the candidates on the new order');
+      await settle(tester);
+      await screenshot(tester, boundary, 'artist-breed-reordered-$name');
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await close(tester, state);
     });
