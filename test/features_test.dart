@@ -594,10 +594,14 @@ void main() {
     await pumpUntil(tester, () => out.existsSync() && state.upscales.value.isEmpty, what: 'the upscale', timeout: const Duration(minutes: 3));
     // The original's metadata, byte for byte: it reads the same.
     await pumpUntil(tester, () => names(state).contains('heron_up2x.png'), what: 'the upscale in the grid');
-    // Done, and waiting on the round button to be gone to.
+    // Done, in the Upscales collection, and waiting on the round button to
+    // be gone to.
+    await pumpUntil(tester, () => state.upscaled.value.isNotEmpty, what: 'the upscale done');
     expect(state.upscaled.value.single.replaceAll(r'\', '/'), endsWith('/heron_up2x.png'));
     state.dismissDoneUpscales();
     final bigger = state.items[indexOf(state, 'heron_up2x.png')];
+    final upNote = await tester.runAsync(() => state.notes(bigger));
+    expect(upNote!.collections, [AppState.upscaleCollection]);
     expect((bigger.width, bigger.height), (640, 640));
     final info = await tester.runAsync(() => state.metadata(bigger));
     expect(info!.prompt, 'a brass heron, studio light');
@@ -618,6 +622,11 @@ void main() {
     await pumpUntil(tester, () => names(state).contains('heron_up2x-2.png'), what: 'it in the grid');
     final plain = await tester.runAsync(() => state.metadata(state.items[indexOf(state, 'heron_up2x-2.png')]));
     expect(plain!.hasGeneration, isFalse);
+    // Leave the Upscales collection as it was for the tests that follow.
+    await tester.runAsync(() => state.core.call('notes_set', {
+          'paths': [out.path, bare.path],
+          'remove': [AppState.upscaleCollection],
+        }));
     out.deleteSync();
     bare.deleteSync();
     await close(tester, state);
@@ -725,14 +734,20 @@ void main() {
     expect(sent['prompt'], 'a brass heron, studio light');
     expect((sent['init_images'] as List).single, isA<String>());
     expect(sent.containsKey('mask'), isFalse);
-    // It is a remix like any other: in the Remixes collection.
+    // It is an upscale: in the Upscales collection, not Remixes, and done
+    // with the upscales.
     await pumpUntil(tester, () => names(state).contains('heron_hires1.png'), what: 'the hires fix in the grid');
     final note = await tester.runAsync(() => state.notes(state.items[indexOf(state, 'heron_hires1.png')]));
-    expect(note!.collections, contains(AppState.remixCollection));
-    // Leave the Remixes collection as it was for the tests that follow.
+    expect(note!.collections, contains(AppState.upscaleCollection));
+    expect(note.collections, isNot(contains(AppState.remixCollection)));
+    await pumpUntil(tester, () => state.upscaled.value.any((p) => p.replaceAll(r'\', '/').endsWith('/heron_hires1.png')),
+        what: 'the hires fix done with the upscales');
+    expect(state.remixes.value, isEmpty);
+    state.dismissDoneUpscales();
+    // Leave the Upscales collection as it was for the tests that follow.
     await tester.runAsync(() => state.core.call('notes_set', {
           'paths': [out.path],
-          'remove': [AppState.remixCollection],
+          'remove': [AppState.upscaleCollection],
         }));
     out.deleteSync();
 
@@ -856,7 +871,7 @@ void main() {
     await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the failures');
 
     // Something that went wrong is kept on it, in red, until put away.
-    state.problems.value = ['heron.png: upscaled, but InvokeAI did not take the refine: out of memory'];
+    state.problems.value = ['heron.png: InvokeAI did not take the refine: out of memory'];
     await pumpUntil(tester, () => find.byKey(const ValueKey('activity-problem-icon')).evaluate().isNotEmpty, what: 'the problem shown');
     await settle(tester);
     await tester.tap(button);

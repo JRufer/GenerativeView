@@ -340,20 +340,20 @@ class _UpscalePanelState extends State<UpscalePanel> {
               ownSize
                   ? (many
                         ? '${widget.items.length} pictures, one after another: each sent to ${backendNames[_server]} at its own size, '
-                              'nothing upscaled here, and saved beside its original as name_hires1, in ${AppState.remixCollection}'
+                              'nothing upscaled here, and saved beside its original as name_hires1, in ${AppState.upscaleCollection}'
                         : 'Sent to ${backendNames[_server]} at its own size, nothing upscaled here, and saved as '
-                              '${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                              '${_stem(item.name)}_hires1, in ${AppState.upscaleCollection}')
                   : refine
                   ? (many
-                        ? '${widget.items.length} pictures, one after another: each upscaled here as name_up${scaleText(_hiresScale)}x, '
-                              'then refined on ${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.remixCollection}'
-                        : 'Upscaled here as ${_stem(item.name)}_up${scaleText(_hiresScale)}x.$ext, then refined on ${backendNames[_server]} '
-                              'and saved as ${_stem(item.name)}_hires1, in ${AppState.remixCollection}')
+                        ? '${widget.items.length} pictures, one after another: each upscaled here (not kept), '
+                              'refined on ${backendNames[_server]} and saved beside its original as name_hires1, in ${AppState.upscaleCollection}'
+                        : 'Upscaled here to ${scaleText(_hiresScale)}x (not kept), refined on ${backendNames[_server]} '
+                              'and saved as ${_stem(item.name)}_hires1, in ${AppState.upscaleCollection}')
                   : _factor == null
                   ? 'Nothing to upscale at this size.'
                   : many
-                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${scaleText(factor)}x'
-                  : 'Saved as ${_stem(item.name)}_up${scaleText(factor)}x.$ext',
+                  ? '${widget.items.length} pictures, one after another, each saved beside its original as name_up${scaleText(factor)}x, in ${AppState.upscaleCollection}'
+                  : 'Saved as ${_stem(item.name)}_up${scaleText(factor)}x.$ext, in ${AppState.upscaleCollection}',
               key: const ValueKey<String>('upscale-saved-as'),
               style: const TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
             ),
@@ -632,7 +632,8 @@ class HiresNotSent implements Exception {
 /// made here) to the server [kind] as image to image, with [original]'s own
 /// prompt, settings and seed, at [scale] times [original]'s size and
 /// [strength]. What comes back is saved beside [original] as
-/// `name_hires1.png` and put in the remix collection, as a remix is.
+/// `name_hires1.png` and put in the upscale collection. [upscaled] has been
+/// read by the time this answers, so the caller may delete it.
 /// Answers with a line to show; throws [HiresNotSent] (or the server's own
 /// error) when it cannot be sent.
 Future<String?> refineUpscale(
@@ -645,25 +646,25 @@ Future<String?> refineUpscale(
 }) async {
   final name = backendNames[kind] ?? kind;
   final base = state.backendUrls[kind] ?? '';
-  if (base.isEmpty) throw HiresNotSent('upscaled, but not refined: $name is no longer set up');
+  if (base.isEmpty) throw HiresNotSent('not refined: $name is no longer set up');
   final GenInfo info;
   try {
     info = await state.metadata(original);
   } catch (_) {
-    throw HiresNotSent('upscaled, but not refined: its generation data could not be read');
+    throw HiresNotSent('not refined: its generation data could not be read');
   }
   if (backendSupport(info)[kind] != null) {
-    throw HiresNotSent('upscaled, but not refined: it has no generation data to refine with');
+    throw HiresNotSent('not refined: it has no generation data to refine with');
   }
   var (w, h) = (original.width, original.height);
   if (w <= 0 || h <= 0) (w, h) = recipeSize(info);
-  if (w <= 0 || h <= 0) throw HiresNotSent('upscaled, but not refined: its size is not known');
+  if (w <= 0 || h <= 0) throw HiresNotSent('not refined: its size is not known');
   final (width, height) = hiresSize(w, h, scale);
   final ImageInput init;
   try {
     init = await prepareImageInput(path: upscaled, width: width, height: height, strength: strength, ops: const []);
   } catch (e) {
-    throw HiresNotSent('upscaled, but not refined: could not read the upscale ($e)');
+    throw HiresNotSent('not refined: could not read the upscale ($e)');
   }
   final seed = int.tryParse(info.seed.trim());
   final RemixTicket ticket;
@@ -684,7 +685,7 @@ Future<String?> refineUpscale(
     ),
     );
   } catch (e) {
-    throw HiresNotSent('upscaled, but $name did not take the refine: $e');
+    throw HiresNotSent('$name did not take the refine: $e');
   }
   state.collectRemix(original, ticket, label: 'hires');
   // What the server was given, model stand-ins and LoRAs left out included.
