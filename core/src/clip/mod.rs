@@ -149,6 +149,15 @@ fn join(dir: &str, name: &str) -> String {
 }
 
 impl ContentSearch {
+    /// A file was moved: keep what content search worked out about it
+    /// under the new place, so it is not looked at again.
+    pub fn moved(&self, from: &str, mtime: i64, size: i64, to: &str, new_mtime: i64, new_size: i64) {
+        let old = store::key(MODEL, from, mtime, size);
+        let Some(packed) = self.inner.vectors.get(&old) else { return };
+        let new = store::key(MODEL, to, new_mtime, new_size);
+        let _ = self.inner.vectors.put(&[(new, store::unpack(&packed))], &[]);
+    }
+
     pub fn start(data_dir: &Path, db: Arc<Db>, thumbs: Arc<Thumbs>, sink: EventSink) -> Result<ContentSearch, String> {
         let inner = Arc::new(Inner {
             model_dir: data_dir.join("models").join(MODEL),

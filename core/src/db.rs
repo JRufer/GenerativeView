@@ -16,7 +16,7 @@ use crate::meta::{facet_value, GenInfo};
 use crate::notes::{Flag, Note};
 use parking_lot::Mutex;
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{params, params_from_iter, Connection, OpenFlags};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -460,6 +460,40 @@ impl Db {
 
     pub fn delete_path(&self, dir: &str, name: &str) -> DbResult<usize> {
         self.write.lock().execute("DELETE FROM files WHERE dir = ?1 AND name = ?2", params![dir, name])
+    }
+
+    /// A file was moved: point its row at the new place, keeping everything
+    /// read from it. A row already at the new place (the folder watcher can
+    /// get there first) gives way. Returns whether there was a row to move.
+    pub fn move_path(&self, from_dir: &str, from_name: &str, to_dir: &str, to_name: &str, mtime: i64, size: i64) -> DbResult<bool> {
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        let id: Option<i64> = tx
+            .query_row("SELECT id FROM files WHERE dir = ?1 AND name = ?2", params![from_dir, from_name], |r| r.get(0))
+            .optional()?;
+        let Some(id) = id else {
+            return Ok(false);
+        };
+        tx.execute("DELETE FROM files WHERE dir = ?1 AND name = ?2 AND id != ?3", params![to_dir, to_name, id])?;
+        tx.execute(
+            "UPDATE files SET dir = ?1, name = ?2, mtime = ?3, size = ?4 WHERE id = ?5",
+            params![to_dir, to_name, mtime, size, id],
+        )?;
+        if from_name != to_name {
+            // The name is searched too.
+            let old = from_name.to_lowercase();
+            let new = to_name.to_lowercase();
+            let blob: Option<String> = tx.query_row("SELECT blob FROM ftext WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+            if let Some(blob) = blob {
+                let blob = match blob.strip_prefix(&old) {
+                    Some(rest) => format!("{new}{rest}"),
+                    None => blob,
+                };
+                tx.execute("UPDATE ftext SET lname = ?1, blob = ?2 WHERE id = ?3", params![new, blob, id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Drop every row under a directory (it was removed or renamed away).

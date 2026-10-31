@@ -871,3 +871,57 @@ fn artist_tools_learn_from_ratings() {
     assert_eq!(batch[0]["paths"].as_array().unwrap().len(), 3, "{batch}");
     assert!(batch[0]["paths"][batch[0]["best"].as_u64().unwrap() as usize].as_str().unwrap().ends_with("good3.png"));
 }
+
+#[test]
+fn moved_pictures_keep_their_notes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = Harness::new();
+    let root = tmp.path().join("pics");
+    std::fs::create_dir_all(root.join("keepers")).unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    for (i, name) in ["a.png", "b.png", "keepers/b.png"].iter().enumerate() {
+        write_png(&root.join(name), i as u32, &[("prompt", &comfy_prompt("a lynx", i as u64, "flux.safetensors"))]);
+    }
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+    // Notes on a picture, another left over in the target folder for a
+    // file that is gone, and an unknown field that must survive.
+    h.call("notes_set", json!({ "paths": [path("a.png"), path("b.png")], "rating": 5, "flag": "keep", "add": ["Lynx"] }));
+    let mut file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
+    file["images"]["a.png"]["comment"] = json!("from a newer version");
+    std::fs::write(root.join(".generativeview.json"), file.to_string()).unwrap();
+    std::fs::write(root.join("keepers/.generativeview.json"), r#"{"generativeview":1,"images":{"a.png":{"rating":1}}}"#).unwrap();
+    // A thumbnail made before the move is not made again after it.
+    let md = std::fs::metadata(root.join("a.png")).unwrap();
+    let mtime = md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    h.engine.thumbs.get(&path("a.png"), mtime, md.len() as i64, 0).unwrap();
+    let cache = h._dirs.path().join("cache");
+    let thumbs_before = walk_count(&cache);
+
+    let out = h.call("move", json!({ "paths": [path("a.png"), path("b.png"), path("gone.png")], "to": path("keepers") }));
+    assert_eq!(out[0]["to"], json!(path("keepers/a.png")));
+    // A name already taken gets a number, as a paste does.
+    assert_eq!(out[1]["to"], json!(path("keepers/b (2).png")));
+    assert!(out[2]["error"].is_string());
+    assert!(!root.join("a.png").exists() && root.join("keepers/a.png").exists());
+
+    // The notes went with them, the leftover was replaced, nothing stayed
+    // behind, and the source folder's notes file went once it was empty.
+    let to: Value = serde_json::from_str(&std::fs::read_to_string(root.join("keepers/.generativeview.json")).unwrap()).unwrap();
+    assert_eq!(to["images"]["a.png"]["rating"], 5);
+    assert_eq!(to["images"]["a.png"]["comment"], "from a newer version");
+    assert_eq!(to["images"]["b (2).png"]["flag"], "keep");
+    assert!(!root.join(".generativeview.json").exists());
+    assert_eq!(h.call("notes_get", json!({ "path": path("keepers/a.png") }))["collections"], json!(["Lynx"]));
+    assert_eq!(h.call("collections", json!({}))[0], json!({ "name": "Lynx", "count": 2 }));
+    h.expect_names(&root, true, "collection:lynx rating:5", &["a.png", "b (2).png"]);
+    h.expect_names(&root, false, "", &[]);
+    // Searchable by its new name, with the thumbnail carried over.
+    h.expect_names(&root, true, "name:=\"b (2).png\"", &["b (2).png"]);
+    assert_eq!(walk_count(&cache), thumbs_before);
+    let moved_md = std::fs::metadata(root.join("keepers/a.png")).unwrap();
+    let moved_mtime = moved_md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    h.engine.thumbs.get(&path("keepers/a.png"), moved_mtime, moved_md.len() as i64, 0).unwrap();
+    assert_eq!(walk_count(&cache), thumbs_before, "the moved thumbnail is used, not a new one");
+}

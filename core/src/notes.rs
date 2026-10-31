@@ -320,6 +320,48 @@ impl Notes {
         self.edit_smart(dir, |list| list.retain(|s| !s.name.eq_ignore_ascii_case(name.trim())))
     }
 
+    /// A picture was moved from `from_dir/from_name` to `to_dir/to_name`:
+    /// take its entry out of the first folder's notes file and put it, as
+    /// it was (fields this version does not know included), into the
+    /// second's. The target is written first, so a failure part way leaves
+    /// the note in both places rather than in neither. Returns whether
+    /// there was a note to carry.
+    pub fn transfer(&self, db: &Db, from_dir: &str, from_name: &str, to_dir: &str, to_name: &str) -> Result<bool, String> {
+        let _guard = self.lock.lock();
+        let from_path = join(from_dir, FILE_NAME);
+        let mut from = read_file(&from_path);
+        let entry = from.get_mut("images").and_then(Value::as_object_mut).and_then(|images| images.remove(from_name));
+        let Some(entry) = entry.filter(|e| e.as_object().is_some_and(|m| !m.is_empty())) else {
+            return Ok(false);
+        };
+        if from_dir == to_dir {
+            // A rename within one folder: one file to write.
+            if let Some(images) = from.get_mut("images").and_then(Value::as_object_mut) {
+                images.insert(to_name.to_string(), entry);
+            }
+            save_file(&from_path, &mut from)?;
+        } else {
+            let to_path = join(to_dir, FILE_NAME);
+            let mut to = read_file(&to_path);
+            let images = to.entry("images").or_insert_with(|| Value::Object(Map::new()));
+            if !images.is_object() {
+                *images = Value::Object(Map::new());
+            }
+            if let Value::Object(images) = images {
+                // Any entry already under this name is left over from a
+                // file that is no longer there: the move's name was free.
+                images.insert(to_name.to_string(), entry);
+            }
+            save_file(&to_path, &mut to)?;
+            save_file(&from_path, &mut from)?;
+        }
+        self.load_dir(db, to_dir, true);
+        if from_dir != to_dir {
+            self.load_dir(db, from_dir, true);
+        }
+        Ok(true)
+    }
+
     fn edit_smart(&self, dir: &str, edit: impl FnOnce(&mut Vec<Smart>)) -> Result<(), String> {
         let _guard = self.lock.lock();
         let path = join(dir, FILE_NAME);
@@ -382,6 +424,25 @@ pub fn parse_smart(file: &Map<String, Value>) -> Vec<Smart> {
 /// briefly hold a handle on `.generativeview.json` without `FILE_SHARE_DELETE`,
 /// causing `std::fs::rename` to return `PermissionDenied` or sharing violation
 /// (OS error 32). A bounded retry loop resolves transient locks cleanly.
+/// Write a notes file, or remove it when nothing is left in it.
+fn save_file(path: &Path, file: &mut Map<String, Value>) -> Result<(), String> {
+    file.insert("generativeview".into(), json!(1));
+    let images_empty = file.get("images").and_then(Value::as_object).is_none_or(Map::is_empty);
+    if images_empty {
+        file.remove("images");
+    }
+    let others = file.keys().filter(|k| *k != "generativeview").count();
+    if others == 0 {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("cannot update {}: {e}", path.display())),
+        }
+    } else {
+        write_atomic(path, file)
+    }
+}
+
 fn write_atomic(path: &Path, file: &Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Value::Object(file.clone())).map_err(|e| e.to_string())? + "\n";
     let tmp = path.with_file_name(format!("{FILE_NAME}.{}.tmp", std::process::id()));

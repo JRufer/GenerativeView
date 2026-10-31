@@ -141,6 +141,19 @@ impl Duplicates {
         Duplicates { conn: conn.map(Mutex::new), cache: Mutex::new(cache), busy: Mutex::new(()) }
     }
 
+    /// A file was moved: keep its fingerprint under the new place.
+    pub fn moved(&self, from: &str, mtime: i64, size: i64, to: &str, new_mtime: i64, new_size: i64) {
+        let (old, new) = (key(from, mtime, size), key(to, new_mtime, new_size));
+        let Some(fp) = self.cache.lock().remove(&old) else { return };
+        if let Some(conn) = &self.conn {
+            let conn = conn.lock();
+            let bytes = fp.map(|f| f.to_bytes().to_vec());
+            let _ = conn.execute("DELETE FROM prints WHERE key = ?1", params![old.as_slice()]);
+            let _ = conn.execute("INSERT OR REPLACE INTO prints (key, fp) VALUES (?1, ?2)", params![new.as_slice(), bytes]);
+        }
+        self.cache.lock().insert(new, fp);
+    }
+
     /// The fingerprint of each picture in `result` (None for videos and
     /// pictures that cannot be read), making those not yet made.
     fn prints(&self, thumbs: &Thumbs, result: &QueryResult) -> Vec<Option<Fingerprint>> {
