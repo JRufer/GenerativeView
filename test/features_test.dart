@@ -222,6 +222,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')));
     await pumpUntil(tester, () => state.searchText.text == 'lora:=fur_detail.safetensors rating:>=4', what: 'and the LoRA');
     await pumpUntil(tester, () => state.items.length == 2, what: 'both foxes');
+    // Back up to the flags, above the Audience section.
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('filter-flag-keep')),
+      -200,
+      scrollable: find.ancestor(of: find.byKey(const ValueKey('filter-lora-fur_detail.safetensors')), matching: find.byType(Scrollable)).first,
+    );
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('filter-flag-keep')));
     await pumpUntil(tester, () => names(state).join() == 'fox_01.png', what: 'the kept one');
     expect(find.text('Show 1 picture'), findsOneWidget);
