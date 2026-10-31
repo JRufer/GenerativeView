@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../core/models.dart';
 import '../core/taste.dart';
 import '../theme.dart';
+import 'audience_widgets.dart' show AudienceRow;
 import 'civitai_sheet.dart';
 import 'context_menu.dart';
 import 'notes_widgets.dart';
@@ -183,6 +184,7 @@ class _MetaPanelState extends State<MetaPanel> {
       _FileHeader(item: item, info: info),
       NotesBar(state: state, item: item),
       TasteHint(state: state, item: item),
+      AudienceRow(state: state, item: item, prompt: info.prompt),
       Wrap(
         spacing: 6,
         runSpacing: 6,

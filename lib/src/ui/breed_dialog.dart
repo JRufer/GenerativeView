@@ -7,6 +7,8 @@ import '../core/backends.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
 import '../theme.dart';
+import '../core/audience.dart';
+import 'audience_widgets.dart' show AudienceBadge, BreedAudienceSection;
 import 'kit.dart';
 import 'meta_panel.dart' show toast;
 import 'remix_dialog.dart' show cfgText, openBackendSettings, remixTwoColumns, snapSize;
@@ -68,6 +70,12 @@ class _BreedPanelState extends State<BreedPanel> {
   bool _loading = false;
   String? _error;
 
+  /// The audience level every candidate is aimed at; 0 for as bred.
+  int _audience = 0;
+
+  /// Each candidate aimed at [_audience], or what it reads as when 0.
+  List<AudienceSteer?> _steers = const [];
+
   /// The children ticked to render.
   final Set<int> _ticked = {};
 
@@ -119,11 +127,27 @@ class _BreedPanelState extends State<BreedPanel> {
           ..clear()
           ..addAll([for (var i = 0; i < math.min(4, children.length); i++) i]);
       });
+      await _aimAll();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Aim every candidate at the chosen audience level.
+  Future<void> _aimAll() async {
+    final children = _children;
+    if (children == null) return;
+    final steers = <AudienceSteer?>[];
+    for (final child in children) {
+      try {
+        steers.add(await widget.state.steerAudience(child.prompt, widget.infos[child.base].negative, _audience));
+      } catch (_) {
+        steers.add(null);
+      }
+    }
+    if (mounted) setState(() => _steers = steers);
   }
 
   void _toggle(VoidCallback change) {
@@ -157,13 +181,14 @@ class _BreedPanelState extends State<BreedPanel> {
           for (final l in info.loras)
             LoraChoice(l, weight: child.loras.where((c) => c.$1 == l.name).map((c) => c.$2).firstOrNull ?? l.weight),
         ];
+        final aimed = _audience != 0 && i < _steers.length ? _steers[i] : null;
         final ticket = await sendRemix(
           kind,
           widget.state.backendUrls[kind]!,
           Remix(
             info: info,
-            prompt: tags.isEmpty ? child.prompt : '${child.prompt} $tags',
-            negative: info.negative,
+            prompt: tags.isEmpty ? (aimed?.prompt ?? child.prompt) : '${aimed?.prompt ?? child.prompt} $tags',
+            negative: aimed?.negative ?? info.negative,
             seed: 0,
             randomSeed: true,
             count: 1,
@@ -242,6 +267,13 @@ class _BreedPanelState extends State<BreedPanel> {
           ),
         ],
       ),
+      BreedAudienceSection(
+        target: _audience,
+        onChanged: (level) {
+          setState(() => _audience = level);
+          _aimAll();
+        },
+      ),
       const SizedBox(height: 14),
       Row(
         children: [
@@ -300,6 +332,8 @@ class _BreedPanelState extends State<BreedPanel> {
             child: _Candidate(
               key: ValueKey<String>('breed-child-$i'),
               candidate: children[i],
+              steer: i < _steers.length ? _steers[i] : null,
+              aiming: _audience != 0,
               ticked: _ticked.contains(i),
               faded: _loading,
               onTap: () => setState(() => _ticked.contains(i) ? _ticked.remove(i) : _ticked.add(i)),
@@ -355,8 +389,13 @@ class _BreedPanelState extends State<BreedPanel> {
 /// colour of the parent it came from, its settings, and how the user would
 /// likely rate it.
 class _Candidate extends StatelessWidget {
-  const _Candidate({super.key, required this.candidate, required this.ticked, required this.onTap, this.faded = false});
+  const _Candidate({super.key, required this.candidate, required this.ticked, required this.onTap, this.faded = false, this.steer, this.aiming = false});
   final BredChild candidate;
+
+  /// The candidate aimed at an audience level: parts it takes out are
+  /// struck through, and the level shown is where it ends up.
+  final AudienceSteer? steer;
+  final bool aiming;
   final bool ticked;
   final bool faded;
   final VoidCallback onTap;
@@ -369,6 +408,14 @@ class _Candidate extends StatelessWidget {
       final p = child.phrases[i];
       if (i > 0) spans.add(const TextSpan(text: ', '));
       final from = p.from;
+      final out = aiming && (steer?.removed.contains(p.text.trim()) ?? false);
+      if (out) {
+        spans.add(TextSpan(
+          text: p.text,
+          style: const TextStyle(color: Palette.danger, decoration: TextDecoration.lineThrough, decorationColor: Palette.danger),
+        ));
+        continue;
+      }
       spans.add(
         from == null
             ? TextSpan(text: p.text, style: const TextStyle(color: Palette.accent))
@@ -413,6 +460,13 @@ class _Candidate extends StatelessWidget {
                     children: [
                       const SizedBox(height: 6),
                       Text.rich(TextSpan(children: spans), style: const TextStyle(fontSize: 12.5, height: 1.5, color: Color(0xFFCFCFD6))),
+                      if (aiming && steer != null && steer!.addedNegative.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Negative + ${steer!.addedNegative.join(', ')}',
+                          style: const TextStyle(fontSize: 11.5, color: Color(0xFF7BC88F)),
+                        ),
+                      ],
                       if (settings.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(settings, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
@@ -442,6 +496,10 @@ class _Candidate extends StatelessWidget {
                       ScoreBar(stars == null ? 0 : (stars - 1) / 4, color: keepGreen),
                       const SizedBox(height: 3),
                       const Text('likely stars', style: TextStyle(fontSize: 11, color: Palette.faint)),
+                      if (steer != null) ...[
+                        const SizedBox(height: 8),
+                        AudienceBadge(aiming ? steer!.to : steer!.from),
+                      ],
                     ],
                   ),
                 ),

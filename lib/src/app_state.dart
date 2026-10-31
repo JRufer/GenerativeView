@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
+import 'core/audience.dart';
 import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
 import 'core/model_download.dart';
 import 'core/models.dart';
@@ -314,6 +315,13 @@ class AppState extends ChangeNotifier {
   /// fit whole.
   bool cropTiles = true;
 
+  /// What decides a picture's audience level: 'image', 'prompt' or 'both'
+  /// (the stricter of the two). Kept by the core, which applies it.
+  String audienceSource = 'both';
+
+  /// Whether grid tiles show their audience level.
+  bool audienceBadges = true;
+
   // ---------------------------------------------------------------- folders
 
   List<Place> places = const [];
@@ -446,6 +454,8 @@ class AppState extends ChangeNotifier {
     recursive = flag('recursive', recursive);
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
+    audienceSource = (saved['audience_source'] as String?) ?? audienceSource;
+    audienceBadges = flag('audience_badges', audienceBadges);
     sort = (saved['sort'] as String?) ?? sort;
     searchSort = (saved['search_sort'] as String?) ?? searchSort;
     pinsOpen = flag('pins_open', pinsOpen);
@@ -1249,6 +1259,47 @@ class AppState extends ChangeNotifier {
     tileSize = v;
     _save('tile_size', v.toStringAsFixed(0), debounce: true);
     notifyListeners();
+  }
+
+  void toggleAudienceBadges() {
+    audienceBadges = !audienceBadges;
+    _save('audience_badges', '$audienceBadges');
+    notifyListeners();
+  }
+
+  /// Judge audience levels by the picture, the prompt, or the stricter of
+  /// the two ('image', 'prompt', 'both'), and list the folder again so the
+  /// grid and any audience filter follow.
+  Future<void> setAudienceSource(String source) async {
+    if (source == audienceSource) return;
+    audienceSource = source;
+    notifyListeners();
+    try {
+      await core.call('set_setting', {'key': 'audience_source', 'value': source});
+    } catch (_) {}
+    await _reload();
+    notesTick.value++;
+  }
+
+  /// Why [item] got its audience level: what its prompt asks for, what the
+  /// picture shows (not built yet), and the user's own say.
+  Future<AudienceInfo> audienceInfo(MediaItem item, String prompt) async {
+    final json = await core.call('audience_info', {'path': item.path, 'prompt': prompt});
+    return AudienceInfo.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// Set [item]'s audience level by hand (1 G to 5 NC-17), or 0 to go back
+  /// to the app's own reading.
+  Future<void> setAudience(MediaItem item, int level) async {
+    await core.call('audience_set', {'path': item.path, 'level': level});
+    await _reload();
+    notesTick.value++;
+  }
+
+  /// [prompt] and [negative] changed to aim at audience level [target].
+  Future<AudienceSteer> steerAudience(String prompt, String negative, int target) async {
+    final json = await core.call('audience_steer', {'prompt': prompt, 'negative': negative, 'target': target});
+    return AudienceSteer.fromJson(json as Map<String, dynamic>);
   }
 
   void toggleCrop() {

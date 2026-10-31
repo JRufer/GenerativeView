@@ -11,6 +11,7 @@ import '../core/thumb_cache.dart';
 import '../platform.dart';
 import '../theme.dart';
 import 'kit.dart';
+import 'audience_widgets.dart' show AudienceBadge;
 import 'breed_dialog.dart';
 import 'compare_view.dart';
 import 'image_menu.dart';
@@ -452,6 +453,7 @@ class _MediaGridState extends State<MediaGrid> {
             fit: state.cropTiles ? BoxFit.cover : BoxFit.contain,
             selected: index == state.selectedIndex,
             checked: state.isChecked(item.id),
+            audience: state.audienceBadges,
             best: _runs.isNotEmpty && _runs.any((r) => index >= r.$1 && index < r.$1 + r.$2 && item.path == r.$3.bestPath),
             onTap: () => _tap(index, item),
             onCheck: () => _check(index, item),
@@ -675,9 +677,13 @@ class _Tile extends StatelessWidget {
     required this.onMenu,
     this.onDragOut,
     this.best = false,
+    this.audience = false,
   });
 
   final MediaItem item;
+
+  /// Show the picture's audience level in its bottom right corner.
+  final bool audience;
 
   /// The one of its near-duplicate group to keep.
   final bool best;
@@ -779,6 +785,15 @@ class _Tile extends StatelessWidget {
                   ),
                   if (checked) const ColoredBox(color: Color(0x2E7AA2F7)),
                   if (item.isVideo) _VideoBadge(durationMs: item.durationMs),
+                  if (audience && item.audience > 0)
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      // Above a video's length, which has that corner.
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(5, 5, 5, item.isVideo ? 28 : 5),
+                        child: AudienceBadge(item.audience, onDark: true),
+                      ),
+                    ),
                   if (item.rating > 0 || item.flag != Flag.none)
                     TileMarks(rating: item.rating, flag: item.flag, compact: compact, besideCheck: true),
                   Align(

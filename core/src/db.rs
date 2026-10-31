@@ -129,7 +129,9 @@ impl QueryResult {
 }
 
 /// A picture's rating (0 to 5) and flag (see [`crate::notes::Flag`]) in one
-/// byte: the rating in the low three bits, the flag in the two above.
+/// byte: the rating in the low three bits, the flag in the two above. The
+/// top three bits carry the audience level (see `crate::audience`), filled
+/// in by the engine after the query.
 pub fn mark(rating: u8, flag: u8) -> u8 {
     (rating & 7) | (flag & 3) << 3
 }
@@ -227,6 +229,19 @@ impl Db {
     }
 
     // ------------------------------------------------------------ settings
+
+    /// The positive prompts of the files with `ids`, by id.
+    pub fn prompts(&self, ids: &[i64]) -> DbResult<HashMap<i64, String>> {
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare_cached("SELECT prompt FROM ftext WHERE id = ?1")?;
+        let mut out = HashMap::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(p) = stmt.query_row([id], |r| r.get::<_, String>(0)) {
+                out.insert(*id, p);
+            }
+        }
+        Ok(out)
+    }
 
     pub fn get_setting(&self, key: &str) -> Option<String> {
         self.read
@@ -592,6 +607,7 @@ fn field_alias(s: &str) -> Option<&'static str> {
         "collection" | "col" | "in" => "collection",
         "similar" | "like" => "similar",
         "taste" | "likely" => "taste",
+        "audience" | "aud" => "audience",
         "type" | "kind" | "media" | "is" => "kind",
         _ => return None,
     })
@@ -717,6 +733,11 @@ pub fn wants_duplicates(text: &str) -> bool {
     parse_terms(text).iter().any(|t| t.field == Some("kind") && !t.negate && is_duplicate_word(&t.text))
 }
 
+/// What a search's `audience:` term asks for, if it has one it can read.
+pub fn audience_term(text: &str) -> Option<crate::audience::Want> {
+    parse_terms(text).into_iter().filter(|t| t.field == Some("audience") && !t.negate).find_map(|t| crate::audience::Want::parse(&t.text))
+}
+
 /// What a search's `taste:` term asks for: the pictures the user has not
 /// judged yet that their taste suggests keeping (`taste:keep`) or
 /// rejecting (`taste:reject`). None for a search with no such term, or one
@@ -770,7 +791,7 @@ impl Term {
 
     /// Whether this term's predicate reads the `ftext` table.
     fn reads_text(&self) -> bool {
-        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar" | "taste" | "kind"))
+        !matches!(self.field, Some("seed" | "source" | "date" | "rating" | "flag" | "collection" | "similar" | "taste" | "audience" | "kind"))
     }
 
     /// Append this term's predicate.
@@ -786,6 +807,8 @@ impl Term {
             (Some("similar"), _) => return,
             // Answered after the query, by the model of the user's taste.
             (Some("taste"), _) => return,
+            // Answered after the query, by crate::audience.
+            (Some("audience"), _) => return,
             // Answered after the query, by comparing what the pictures look like.
             (Some("kind"), _) if is_duplicate_word(&self.text) => return,
             (Some("seed"), true) => any(self.alternatives().into_iter().map(|v| format!("f.seed = ?{}", bind(v.to_string()))).collect()),

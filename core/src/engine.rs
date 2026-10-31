@@ -33,6 +33,11 @@ pub struct Engine {
     /// The model of the user's taste, with a fingerprint of the ratings it
     /// learned from: fitted again only when they change.
     taste: parking_lot::Mutex<Option<(u64, Arc<Taste>)>>,
+    /// MOCKUP: audience levels the user set by hand, by path. The real ones
+    /// belong in the folder's notes file.
+    audience_own: parking_lot::Mutex<std::collections::HashMap<String, crate::audience::Level>>,
+    /// Prompt levels already worked out, by (id, mtime).
+    audience_cache: parking_lot::Mutex<std::collections::HashMap<(i64, i64), crate::audience::Level>>,
 }
 
 /// The taste model, or why there is none yet, with how many of the
@@ -74,7 +79,7 @@ impl Engine {
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
         let dupes = crate::dupes::Duplicates::open(data_dir);
-        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default() })
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default(), audience_own: Default::default(), audience_cache: Default::default() })
     }
 
     pub fn close(&self) {
@@ -104,9 +109,59 @@ impl Engine {
         if crate::db::wants_duplicates(text) {
             // Duplicates stay in their groups, whatever the order asked for.
             let groups = self.dupes.only_duplicates(&self.thumbs, &found);
-            return Ok(self.by_taste(groups, "", text));
+            return Ok(self.with_audience(self.by_taste(groups, "", text), text));
         }
-        Ok(self.by_taste(found, sort, text))
+        Ok(self.with_audience(self.by_taste(found, sort, text), text))
+    }
+
+    fn audience_source(&self) -> crate::audience::Source {
+        crate::audience::Source::parse(self.db.get_setting(crate::audience::SOURCE_SETTING).as_deref())
+    }
+
+    /// Each row's audience level, as the user has chosen to judge it.
+    fn audience_levels(&self, found: &crate::db::QueryResult) -> Vec<crate::audience::Level> {
+        use crate::audience::{decide, from_prompt, Level};
+        let source = self.audience_source();
+        let missing: Vec<i64> = {
+            let cache = self.audience_cache.lock();
+            found.rows.iter().filter(|r| !cache.contains_key(&(r.0, r.6))).map(|r| r.0).collect()
+        };
+        if !missing.is_empty() {
+            let prompts = self.db.prompts(&missing).unwrap_or_default();
+            let mut cache = self.audience_cache.lock();
+            for r in found.rows.iter().filter(|r| missing.contains(&r.0)) {
+                let level = prompts.get(&r.0).map_or(Level::Unknown, |p| from_prompt(p).0);
+                cache.insert((r.0, r.6), level);
+            }
+        }
+        let cache = self.audience_cache.lock();
+        let own = self.audience_own.lock();
+        found
+            .rows
+            .iter()
+            .map(|r| {
+                let prompt = cache.get(&(r.0, r.6)).copied().unwrap_or_default();
+                // The picture side is not built yet: no image score.
+                decide(source, None, prompt, own.get(&join(&found.dirs[r.1 as usize], &r.2)).copied())
+            })
+            .collect()
+    }
+
+    /// `found` with each row's audience level in its mark (bits 5 to 7),
+    /// narrowed by an `audience:` term in `text`.
+    fn with_audience(&self, mut found: crate::db::QueryResult, text: &str) -> crate::db::QueryResult {
+        let levels = self.audience_levels(&found);
+        found.marks.resize(found.rows.len(), 0);
+        for (m, l) in found.marks.iter_mut().zip(&levels) {
+            *m = (*m & 0x1f) | (*l as u8) << 5;
+        }
+        match crate::db::audience_term(text) {
+            Some(want) => {
+                let keep: Vec<usize> = (0..found.rows.len()).filter(|&i| want.takes(levels[i])).collect();
+                found.pick(keep)
+            }
+            None => found,
+        }
     }
 
     /// The taste model, fitted to what the user has rated and flagged
@@ -579,7 +634,7 @@ impl Engine {
         }
         if method == "content_query" {
             // The same packed rows as `query`.
-            return Ok(Reply::Bytes(self.content_query(args)?.pack()));
+            return Ok(Reply::Bytes(self.with_audience(self.content_query(args)?, "").pack()));
         }
         self.call(method, args).map(Reply::Json)
     }
@@ -656,6 +711,28 @@ impl Engine {
                 Ok(self.content.check_prompt(&normalize(str_arg(args, "path")?), str_arg(args, "prompt")?, make)?.to_string())
             }
             "taste_status" => Ok(self.taste_status().to_string()),
+            "audience_info" => {
+                let path = normalize(str_arg(args, "path")?);
+                let own = self.audience_own.lock().get(&path).copied();
+                Ok(crate::audience::explain(self.audience_source(), str_arg(args, "prompt")?, None, own).to_string())
+            }
+            "audience_set" => {
+                // A level 1 to 5, or 0 to go back to the app's own reading.
+                let path = normalize(str_arg(args, "path")?);
+                let level = crate::audience::Level::from_u8(args.get("level").and_then(Value::as_u64).unwrap_or(0) as u8);
+                let mut own = self.audience_own.lock();
+                if level == crate::audience::Level::Unknown {
+                    own.remove(&path);
+                } else {
+                    own.insert(path, level);
+                }
+                Ok("null".into())
+            }
+            "audience_steer" => {
+                let target = crate::audience::Level::from_u8(args.get("target").and_then(Value::as_u64).unwrap_or(0) as u8);
+                let negative = args.get("negative").and_then(Value::as_str).unwrap_or("");
+                Ok(crate::audience::steer(str_arg(args, "prompt")?, negative, target).to_string())
+            }
             "describe_groups" => self.describe_groups(str_arg(args, "path")?),
             "what_works" => {
                 let recipes = self.db.recipes(&normalize(args.get("dir").and_then(Value::as_str).unwrap_or("")), bool_arg(args, "recursive"), args.get("text").and_then(Value::as_str).unwrap_or("")).map_err(db_err)?;

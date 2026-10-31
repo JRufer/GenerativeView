@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/audience.dart';
 import '../core/models.dart';
 import '../core/taste.dart';
 import '../theme.dart';
+import 'audience_widgets.dart' show AudienceFilterSection;
 import 'notes_widgets.dart' show starColor;
 import 'sheet.dart';
 import 'smart_editor.dart';
@@ -42,6 +44,8 @@ class FilterSet {
     this.media = MediaShown.both,
     this.duplicates = false,
     this.taste,
+    this.audienceMax = 0,
+    this.audienceUnrated = false,
   }) : flags = flags ?? {};
 
   /// Terms the panel does not manage: typed words, dates, negations.
@@ -62,6 +66,16 @@ class FilterSet {
   /// ('keep', `taste:keep`) or rejecting ('reject'); null for neither.
   String? taste;
 
+  /// Only pictures rated this audience level or lower (`audience:..pg13`);
+  /// 0 for no limit.
+  int audienceMax;
+
+  /// Take in the pictures not rated for an audience yet (`|none`); on its
+  /// own, only those.
+  bool audienceUnrated;
+
+  static const Set<String> _audienceFields = {'audience', 'aud'};
+
   static const Set<String> _tasteFields = {'taste', 'likely'};
 
   static const Set<String> _duplicateWords = {'duplicate', 'duplicates', 'dupe', 'dupes', 'near-duplicate', 'near-duplicates'};
@@ -69,7 +83,7 @@ class FilterSet {
   /// The search fields that mean the kind of file (`type:video`).
   static const Set<String> _typeFields = {'type', 'kind', 'media', 'is'};
 
-  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag', ..._typeFields, ..._tasteFields};
+  static final Set<String> _managed = {for (final f in _facets) f.$2, 'rating', 'flag', ..._typeFields, ..._tasteFields, ..._audienceFields};
 
   /// The same search with every filter taken off and typed words kept.
   FilterSet cleared() => FilterSet(free: free, chosen: {});
@@ -84,6 +98,8 @@ class FilterSet {
     var media = MediaShown.both;
     var duplicates = false;
     String? taste;
+    var audienceMax = 0;
+    var audienceUnrated = false;
     for (final raw in splitTerms(query)) {
       final t = parseTerm(raw);
       if (t.negate || !_managed.contains(t.field)) {
@@ -96,6 +112,28 @@ class FilterSet {
           taste = 'keep';
         } else if (v.startsWith('reject') || v == 'dislike' || v == 'disliked' || v == 'bad') {
           taste = 'reject';
+        } else {
+          free.add(raw);
+        }
+        continue;
+      }
+      if (_audienceFields.contains(t.field)) {
+        // Only the shapes the panel writes: `..pg13`, `..pg13|none`, `none`.
+        var known = true;
+        var max = 0;
+        var none = false;
+        for (final part in t.value.toLowerCase().split('|').map((p) => p.trim())) {
+          if (part == 'none') {
+            none = true;
+          } else if (part.startsWith('..') && Audience.parse(part.substring(2)) != Audience.unknown) {
+            max = Audience.parse(part.substring(2));
+          } else {
+            known = false;
+          }
+        }
+        if (known && (max > 0 || none)) {
+          audienceMax = max;
+          audienceUnrated = none;
         } else {
           free.add(raw);
         }
@@ -138,7 +176,7 @@ class FilterSet {
       final values = _allOf.contains(t.field) || t.field == 'fullprompt' ? [t.value] : t.value.split('|');
       chosen.putIfAbsent(t.field, () => {}).addAll(values.where((v) => v.isNotEmpty));
     }
-    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media, duplicates: duplicates, taste: taste);
+    return FilterSet(free: free, chosen: chosen, minRating: minRating, unrated: unrated, flags: flags, media: media, duplicates: duplicates, taste: taste, audienceMax: audienceMax, audienceUnrated: audienceUnrated);
   }
 
   bool get isEmpty =>
@@ -148,7 +186,9 @@ class FilterSet {
       flags.isEmpty &&
       media == MediaShown.both &&
       !duplicates &&
-      taste == null;
+      taste == null &&
+      audienceMax == 0 &&
+      !audienceUnrated;
 
   int get count =>
       chosen.values.fold(0, (n, s) => n + s.length) +
@@ -157,7 +197,8 @@ class FilterSet {
       flags.length +
       (media == MediaShown.both ? 0 : 1) +
       (duplicates ? 1 : 0) +
-      (taste == null ? 0 : 1);
+      (taste == null ? 0 : 1) +
+      (audienceMax > 0 || audienceUnrated ? 1 : 0);
 
   bool has(String field, String value) => chosen[field]?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
 
@@ -198,6 +239,9 @@ class FilterSet {
     if (media == MediaShown.videos) parts.add('type:video');
     if (duplicates) parts.add('is:duplicate');
     if (taste != null) parts.add('taste:$taste');
+    if (audienceMax > 0 || audienceUnrated) {
+      parts.add('audience:${[if (audienceMax > 0) '..${Audience.word(audienceMax)}', if (audienceUnrated) 'none'].join('|')}');
+    }
     return parts.join(' ');
   }
 }
@@ -352,6 +396,22 @@ class _FilterPanelState extends State<FilterPanel> {
                     ),
                     const PanelHeading('Your taste'),
                     _tasteRow(),
+                    const PanelHeading('Audience'),
+                    AudienceFilterSection(
+                      key: const ValueKey<String>('filter-audience'),
+                      state: widget.state,
+                      max: _filters.audienceMax,
+                      unrated: _filters.audienceUnrated,
+                      onMax: (level) {
+                        // Tapping the level already chosen takes the limit off.
+                        _filters.audienceMax = level == _filters.audienceMax ? 0 : level;
+                        _apply();
+                      },
+                      onUnrated: () {
+                        _filters.audienceUnrated = !_filters.audienceUnrated;
+                        _apply();
+                      },
+                    ),
                     for (final (kind, field, title) in _facets) ..._section(kind, field, title),
                   ],
                 );
