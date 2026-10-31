@@ -871,7 +871,7 @@ void main() {
     await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the failures');
 
     // Something that went wrong is kept on it, in red, until put away.
-    state.problems.value = ['heron.png: upscaled, but InvokeAI did not take the refine: out of memory'];
+    state.problems.value = ['heron.png: InvokeAI did not take the refine: out of memory'];
     await pumpUntil(tester, () => find.byKey(const ValueKey('activity-problem-icon')).evaluate().isNotEmpty, what: 'the problem shown');
     await settle(tester);
     await tester.tap(button);

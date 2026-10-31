@@ -2307,14 +2307,15 @@ class AppState extends ChangeNotifier {
       case 'done':
         list.removeAt(at);
         final path = e['path'] as String? ?? '';
-        _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}');
-        _rescanSoon();
         final then = _upscaleThen.remove(job);
         if (then != null && path.isNotEmpty) {
-          // Only a step on the way: what the server sends back is the
-          // upscale that goes in the collection.
-          unawaited(_runUpscaleThen(then.$1, path, then.$2, then.$3));
+          // Only a step on the way: it is sent to the server and then
+          // deleted, so no upscale is kept that the server did not finish.
+          // What comes back is the upscale that goes in the collection.
+          unawaited(_runUpscaleThen(then.$1, path, then.$2, then.$3, discard: true));
         } else if (path.isNotEmpty) {
+          _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}');
+          _rescanSoon();
           unawaited(_addToUpscales(path));
         }
       case 'cancelled':
@@ -2357,7 +2358,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _runUpscaleThen(MediaItem original, String upscaled, UpscaleThen then, String? label) async {
+  /// With [discard], [upscaled] is only a step on the way (made here for
+  /// [then] to send on) and is deleted once [then] is done with it, sent or
+  /// not: an upscale is never kept without what the server makes of it.
+  Future<void> _runUpscaleThen(MediaItem original, String upscaled, UpscaleThen then, String? label, {bool discard = false}) async {
     final doing = label == null ? original.name : '${original.name}, $label';
     afterUpscale.value = [...afterUpscale.value, doing];
     try {
@@ -2370,6 +2374,14 @@ class AppState extends ChangeNotifier {
         _notices.add(text);
       }
     } finally {
+      if (discard && normalizePath(upscaled) != normalizePath(original.path)) {
+        try {
+          await File(upscaled).delete();
+        } catch (_) {
+          // Already gone, or the folder will not let it go: nothing to do.
+        }
+        _rescanSoon();
+      }
       if (!_disposed) {
         final left = [...afterUpscale.value]..remove(doing);
         afterUpscale.value = left;
