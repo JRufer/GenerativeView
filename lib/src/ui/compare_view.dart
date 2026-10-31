@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -7,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/compare.dart';
+import '../core/media_image.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show copyText, toast;
@@ -326,8 +326,8 @@ class _ComparePageState extends State<ComparePage> {
             child: Transform(
               transform: transform,
               child: SizedBox.expand(
-                child: Image.file(
-                  File(item.path),
+                child: Image(
+                  image: mediaImage(item),
                   fit: BoxFit.contain,
                   filterQuality: _zoom > 1.5 ? FilterQuality.none : FilterQuality.medium,
                   gaplessPlayback: true,

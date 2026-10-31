@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
 import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
+import 'core/media_image.dart';
 import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
@@ -1712,6 +1713,9 @@ class AppState extends ChangeNotifier {
         _notices.add('Could not update the index: $e');
       }
       _checked.remove(item.id);
+      // Its decoded picture goes too: a file saved later under the same name
+      // (the next remix numbered into the gap) must not show it.
+      forgetMediaImage(item);
     }
     notesTick.value++;
     await _reload();

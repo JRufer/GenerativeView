@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/media_image.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'image_menu.dart';
@@ -113,7 +113,7 @@ class _FocusViewState extends State<FocusView> {
       if (i < 0 || i >= items.length) continue;
       final item = items[i];
       if (item.isVideo) continue;
-      precacheImage(FileImage(File(item.path)), context, onError: (_, _) {});
+      precacheImage(mediaImage(item), context, onError: (_, _) {});
     }
   }
 
@@ -662,8 +662,8 @@ class _FocusPageState extends State<_FocusPage>
                     fit: BoxFit.contain,
                     showPlaceholderIcon: false,
                   ),
-                  Image.file(
-                    File(item.path),
+                  Image(
+                    image: mediaImage(item),
                     key: ValueKey<String>(item.version),
                     fit: BoxFit.contain,
                     gaplessPlayback: true,
