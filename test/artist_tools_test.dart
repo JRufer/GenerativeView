@@ -105,7 +105,7 @@ void main() {
 
     // The small stand-in content-search model, installed.
     final model = Directory('${Directory.current.path}/core/tests/fixtures/clip_mini');
-    final home = Directory('${scratch.path}/data/models/tinyclip-vit-40m-32-text-19m')..createSync(recursive: true);
+    final home = Directory('${scratch.path}/data/models/datacomp-clip-vit-b-32')..createSync(recursive: true);
     for (final name in ['config.json', 'tokenizer.json', 'model.safetensors']) {
       File('${model.path}/$name').copySync('${home.path}/$name');
     }

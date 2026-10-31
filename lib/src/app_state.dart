@@ -892,6 +892,9 @@ class AppState extends ChangeNotifier {
     content.value = status.copyWith(error: () => null);
     try {
       await job.run();
+      // The model comes in OpenCLIP's layout: the core rewrites it, once,
+      // in the one its encoders read (a few seconds, with the bar full).
+      if (!_disposed) await core.call('content_prepare');
     } on DownloadCancelled {
       // Nothing to say: it was asked for.
     } catch (e) {

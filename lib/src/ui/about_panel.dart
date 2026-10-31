@@ -81,7 +81,7 @@ const List<(String, List<Credit>)> credits = [
     'Models and data',
     [
       Credit('Real-ESRGAN', 'The upscale models, by Xintao Wang', 'BSD-3-Clause', 'https://github.com/xinntao/Real-ESRGAN'),
-      Credit('TinyCLIP', 'The content-search model, by Microsoft', 'MIT', 'https://github.com/wkcn/TinyCLIP'),
+      Credit('DataComp CLIP ViT-B/32', 'The content-search model, by LAION, trained with OpenCLIP', 'MIT', 'https://huggingface.co/laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K'),
       Credit('pyspellchecker', 'The English word list for the spelling check', 'MIT', 'https://github.com/barrust/pyspellchecker'),
       Credit('Civitai', 'Model and LoRA lookups, when asked for', 'Web service', 'https://civitai.com'),
     ],

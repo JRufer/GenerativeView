@@ -7,9 +7,11 @@
 //! pictures in the background and finds the ones a typed description fits.
 //!
 //! The model is not part of the app. It is three files in
-//! `<data dir>/models/<MODEL>`, downloaded once by the UI (see [`FILES`]);
-//! until they are there, every request here says so and does nothing else.
+//! `<data dir>/models/<MODEL>`, downloaded once by the UI (see [`FILES`])
+//! and then rewritten in the layout the encoders read (see `convert`);
+//! until it is there, every request here says so and does nothing else.
 
+pub mod convert;
 pub mod image;
 pub mod model;
 pub mod store;
@@ -29,17 +31,30 @@ use std::sync::Arc;
 use std::time::Duration;
 use store::{Key, Vectors};
 
-/// The model in use, which is also the name of its folder. TinyCLIP's
-/// 40M-parameter picture encoder with 32-pixel patches and its 19M text
-/// encoder: about half the size and twice the speed of the original CLIP
-/// ViT-B/32 for nearly the same accuracy.
-pub const MODEL: &str = "tinyclip-vit-40m-32-text-19m";
+/// The model in use, which is also the name of its folder: CLIP ViT-B/32
+/// trained by LAION on DataComp-1B. The size and speed of the original
+/// CLIP ViT-B/32 (32-pixel patches), and well ahead of it: 72.7 % on the
+/// usual ImageNet zero-shot test, against 63.3 % for OpenAI's and 59.8 %
+/// for TinyCLIP ViT-40M/32, which the app used before.
+pub const MODEL: &str = "datacomp-clip-vit-b-32";
 
 /// Where the model's files come from.
-pub const SOURCE: &str = "https://huggingface.co/wkcn/TinyCLIP-ViT-40M-32-Text-19M-LAION400M/resolve/main/";
+pub const SOURCE: &str = "https://huggingface.co/laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K/resolve/main/";
 
-/// The files that make up the model, and how many bytes each must be.
-pub const FILES: [(&str, u64); 3] = [("config.json", 4_602), ("tokenizer.json", 2_224_041), ("model.safetensors", 336_859_508)];
+/// The files the model is downloaded as (OpenCLIP's layout), and how many
+/// bytes each must be.
+pub const FILES: [(&str, u64); 3] = [
+    (convert::OPEN_CLIP_CONFIG, 469),
+    ("tokenizer.json", 2_224_053),
+    (convert::OPEN_CLIP_WEIGHTS, 605_143_284),
+];
+
+/// The files the model is read from once converted (Hugging Face's layout).
+const READY: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
+
+/// Models the app used before, removed (with their vectors) once the
+/// current one is installed.
+const OLD_MODELS: [&str; 1] = ["tinyclip-vit-40m-32-text-19m"];
 
 /// Pictures embedded per pass through the model.
 const BATCH: usize = 8;
@@ -590,6 +605,24 @@ impl ContentSearch {
         self.inner.installed()
     }
 
+    /// Make the model ready once its files are downloaded: rewrite it in
+    /// the layout the encoders read (a few seconds, once), then let go of
+    /// any model used before, and of its vectors. Answers whether the model
+    /// is installed.
+    pub fn prepare(&self) -> Result<bool, String> {
+        let inner = &self.inner;
+        let fresh = !inner.installed();
+        if fresh {
+            let downloaded = FILES.iter().all(|(name, bytes)| std::fs::metadata(inner.model_dir.join(name)).is_ok_and(|m| m.is_file() && m.len() == *bytes));
+            if !downloaded {
+                return Ok(false);
+            }
+            convert::convert(&inner.model_dir)?;
+        }
+        inner.forget_old_models(fresh);
+        Ok(true)
+    }
+
     /// Where in the picture at `path` the model sees `phrase`, or where it
     /// would fit best: a [`HEAT_GRID`]-square map of 0 to 1, row by row from
     /// the top, with how clearly the whole picture shows the phrase.
@@ -843,7 +876,26 @@ fn everyday_lines() -> Vec<&'static str> {
 
 impl Inner {
     fn installed(&self) -> bool {
-        FILES.iter().all(|(name, _)| std::fs::metadata(self.model_dir.join(name)).map_or(false, |m| m.is_file() && m.len() > 0))
+        READY.iter().all(|name| std::fs::metadata(self.model_dir.join(name)).is_ok_and(|m| m.is_file() && m.len() > 0))
+    }
+
+    /// Remove the models used before this one and, when this one has just
+    /// been installed (`fresh`), every vector they made: those are of no use
+    /// to this model, which embeds the pictures afresh. Tidying, best effort.
+    fn forget_old_models(&self, fresh: bool) {
+        let Some(models) = self.model_dir.parent() else { return };
+        let old: Vec<PathBuf> = OLD_MODELS.iter().map(|m| models.join(m)).filter(|d| d.exists()).collect();
+        if old.is_empty() {
+            return;
+        }
+        // Only an old model's vectors can be in the store yet, as nothing
+        // has been embedded with this one.
+        if fresh {
+            let _ = self.vectors.forget_all_but(MODEL);
+        }
+        for dir in old {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     fn key(&self, dir: &str, row: &crate::db::Row) -> Key {
