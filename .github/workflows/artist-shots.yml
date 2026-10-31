@@ -1,0 +1,55 @@
+# Temporary, for the artist-tools branch only: runs the artist tools tests
+# and commits their screenshots to the artist-tools-shots branch, so they can
+# be looked at without downloading an artifact. Remove before merging.
+name: artist-tools screenshots
+
+on:
+  push:
+    branches: [feature/breed-size]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  shots:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - name: Build Rust core
+        working-directory: core
+        run: cargo build --release --lib
+      - run: flutter pub get
+      - name: Test the artist tools, with screenshots
+        id: test
+        continue-on-error: true
+        env:
+          GV_SCREENSHOT_DIR: ${{ runner.temp }}/screens
+        run: flutter test test/artist_tools_test.dart --plain-name "breed" --reporter expanded 2>&1 | tee "${{ runner.temp }}/test.log"; exit ${PIPESTATUS[0]}
+      - name: Commit the screenshots and the log to artist-tools-shots
+        run: |
+          set -e
+          out="${{ runner.temp }}/out"
+          mkdir -p "$out"
+          cp "${{ runner.temp }}"/screens/*.png "$out"/ 2>/dev/null || true
+          tail -c 200000 "${{ runner.temp }}/test.log" > "$out/test.log" || true
+          echo "${{ github.sha }} ${{ steps.test.outcome }}" > "$out/RUN.txt"
+          cd "$out"
+          git init -q -b artist-tools-shots
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Screenshots for ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" artist-tools-shots
