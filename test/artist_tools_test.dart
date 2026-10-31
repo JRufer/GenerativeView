@@ -265,8 +265,10 @@ void main() {
 
     testWidgets('describe a picture with no generation data, on the $name', (tester) async {
       final state = await launch(tester, size);
-      state.select(indexOf(state, 'shared.png'));
+      // As a person would: the panel open, then the picture tapped.
       if (!state.rightOpen) state.toggleRight();
+      await settle(tester);
+      state.select(indexOf(state, 'shared.png'));
       await settle(tester);
       await screenshot(tester, boundary, 'artist-describe-before-$name');
       await pumpUntil(
