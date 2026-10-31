@@ -591,10 +591,7 @@ extension on _BreedPanelState {
       );
     } else {
       body = switch (_likely) {
-        'no_model' => const Text(
-            'No likely stars: content search is not installed. Turn it on (the picture button in the search box) and they show here.',
-            style: style,
-          ),
+        'no_model' => _GetModel(state: widget.state, onInstalled: _lookAtJudged),
         'none_judged' => const Text(
             'No likely stars yet: rate or flag some pictures, and the likeliest liked come first.',
             style: style,
@@ -625,6 +622,71 @@ extension on _BreedPanelState {
       key: const ValueKey<String>('breed-why-no-stars'),
       padding: const EdgeInsets.only(bottom: 8),
       child: body,
+    );
+  }
+}
+
+/// Likely stars need the content search model: fetch it from right here,
+/// with its progress, and once it is in, have the rated pictures looked at
+/// ([onInstalled]) so the stars fill in.
+class _GetModel extends StatelessWidget {
+  const _GetModel({required this.state, required this.onInstalled});
+  final AppState state;
+  final Future<void> Function() onInstalled;
+
+  Future<void> _get() async {
+    await state.downloadModel();
+    if (state.content.value.installed) await onInstalled();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.35);
+    return ValueListenableBuilder<ContentStatus>(
+      valueListenable: state.content,
+      builder: (context, status, _) => ValueListenableBuilder<DownloadProgress?>(
+        valueListenable: state.download,
+        builder: (context, progress, _) {
+          if (progress != null) {
+            String mb(int b) => (b / 1000000).toStringAsFixed(0);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Getting the content search model for likely stars: ${mb(progress.received)} of ${mb(progress.total)} MB', style: style),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: progress.total > 0 ? progress.received / progress.total : null,
+                  minHeight: 3,
+                  backgroundColor: Palette.line,
+                  color: Palette.accent,
+                ),
+              ],
+            );
+          }
+          final size = status.downloadBytes > 0 ? ' (${status.downloadBytes ~/ 1000000} MB, once)' : '';
+          return Row(
+            children: [
+              const Icon(Icons.info_outline, size: 16, color: Palette.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  status.error != null
+                      ? 'No likely stars: the content search model could not be set up (${status.error}).'
+                      : 'No likely stars: they come from the content search model, which is not on this device yet$size.',
+                  style: style,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonalIcon(
+                key: const ValueKey<String>('breed-get-model'),
+                onPressed: _get,
+                icon: const Icon(Icons.download, size: 16),
+                label: const Text('Get it'),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }
