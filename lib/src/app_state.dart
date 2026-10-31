@@ -1417,6 +1417,8 @@ class AppState extends ChangeNotifier {
 
   /// New recipes mixed from [parents] (two to four), the likeliest liked
   /// first. [change] is 0 (close to the parents) to 1 (adventurous).
+  /// [prompts], in the order of [parents], stand in for those with no
+  /// prompt of their own (described from the picture; empty for the rest).
   Future<(List<BredChild>, bool)> breed(
     List<MediaItem> parents, {
     required bool phrases,
@@ -1426,9 +1428,11 @@ class AppState extends ChangeNotifier {
     required double change,
     int count = 6,
     int seed = 1,
+    List<String> prompts = const [],
   }) async {
     final json = await core.call('breed', {
       'paths': [for (final p in parents) p.path],
+      if (prompts.isNotEmpty) 'prompts': prompts,
       'mix': {'phrases': phrases, 'loras': loras, 'settings': settings, 'model': model},
       'change': change,
       'count': count,
@@ -1525,6 +1529,94 @@ class AppState extends ChangeNotifier {
     _metaCache[key] = info;
     if (_metaCache.length > 64) _metaCache.remove(_metaCache.keys.first);
     return info;
+  }
+
+  bool _askingContent = false;
+
+  /// Find out whether the picture model is here, once, if not known yet.
+  void knowContent() {
+    if (content.value.known || _askingContent) return;
+    _askingContent = true;
+    unawaited(refreshContent().whenComplete(() => _askingContent = false));
+  }
+
+  /// Whether the picture model is here to describe pictures (it is content
+  /// search's).
+  Future<bool> canDescribe() async {
+    if (!content.value.known) await refreshContent();
+    return content.value.installed;
+  }
+
+  /// Whether [item] can be remade on a server, as far as is known now:
+  /// from its own generation data or, for a picture without any, from a
+  /// prompt the picture model describes from it.
+  bool canRemakeNow(MediaItem item) => item.generated || (!item.isVideo && content.value.installed);
+
+  /// [canRemakeNow], asking whether the picture model is here if need be.
+  Future<bool> canRemake(MediaItem item) async {
+    if (item.generated) return true;
+    return !item.isVideo && await canDescribe();
+  }
+
+  static List<MediaItem> _breedable(List<MediaItem> items) {
+    final pictures = [for (final i in items) if (!i.isVideo) i];
+    return pictures.length >= 2 && pictures.length <= 4 ? pictures : const [];
+  }
+
+  /// Whether new pictures can be bred from [items], as far as is known
+  /// now: two to four pictures, each one able to be remade.
+  bool canBreedNow(List<MediaItem> items) {
+    final pictures = _breedable(items);
+    return pictures.isNotEmpty && pictures.every(canRemakeNow);
+  }
+
+  /// [canBreedNow], asking whether the picture model is here if need be.
+  Future<bool> canBreed(List<MediaItem> items) async {
+    final pictures = _breedable(items);
+    if (pictures.isEmpty) return false;
+    if (pictures.every((p) => p.generated)) return true;
+    return await canDescribe();
+  }
+
+  /// A recipe for remaking [item], which has no generation data, on a
+  /// server: [prompt], or else the prompt described from the picture, on
+  /// the model the folder's pictures use most (the server's own if none).
+  Future<GenInfo> describedRecipe(MediaItem item, {String? prompt}) async {
+    final text = prompt ?? (await describe(item)).prompt;
+    var model = '';
+    try {
+      final stats = await usage();
+      for (final g in stats.groups) {
+        if (g.kind == 'model' && g.items.isNotEmpty) model = g.items.first.value;
+      }
+    } catch (_) {
+      // No model to name: the server's own.
+    }
+    return GenInfo(
+      source: 'described',
+      prompt: text,
+      negative: '',
+      seed: '',
+      model: model,
+      models: [if (model.isNotEmpty) ModelRef('checkpoint', model, '')],
+      loras: const [],
+      params: const [],
+      nodes: const [],
+      raw: const [],
+      width: item.width,
+      height: item.height,
+      durationMs: 0,
+    );
+  }
+
+  /// [item]'s recipe for remaking it: its own generation data, or one
+  /// described from the picture when it has none and the picture model is
+  /// here. Null when it cannot be remade.
+  Future<GenInfo?> remakeRecipe(MediaItem item) async {
+    final info = await metadata(item);
+    if (info.hasGeneration) return info;
+    if (item.isVideo || !await canDescribe()) return null;
+    return describedRecipe(item);
   }
 
   /// What the current folder's images were made with, and how often; only

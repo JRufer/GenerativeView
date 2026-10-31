@@ -336,7 +336,18 @@ impl Engine {
         if paths.len() < 2 {
             return Err("pick two to four pictures to breed".into());
         }
-        let infos: Vec<meta::GenInfo> = paths.iter().map(|p| meta::extract(Path::new(p))).collect();
+        let mut infos: Vec<meta::GenInfo> = paths.iter().map(|p| meta::extract(Path::new(p))).collect();
+        // A picture with no prompt of its own (no generation data) may come
+        // with one described from the picture: `prompts`, in the order of
+        // `paths`, an empty string where the file's own is used.
+        if let Some(given) = args.get("prompts").and_then(Value::as_array) {
+            for (info, prompt) in infos.iter_mut().zip(given) {
+                let prompt = prompt.as_str().unwrap_or("").trim();
+                if info.prompt.trim().is_empty() && !prompt.is_empty() {
+                    info.prompt = prompt.to_string();
+                }
+            }
+        }
         let parents: Vec<crate::works::Parent> = infos
             .iter()
             .map(|info| {

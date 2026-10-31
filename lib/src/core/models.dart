@@ -28,6 +28,7 @@ class MediaItem {
     this.rating = 0,
     this.flag = Flag.none,
     this.audience = 0,
+    this.generated = true,
   });
 
   final int id;
@@ -49,6 +50,10 @@ class MediaItem {
   /// Who it suits on the film-rating scale, as the user has chosen to
   /// judge it: 0 not rated yet, then 1 G to 5 NC-17 (see `audience.dart`).
   final int audience;
+
+  /// Whether the file carries generation data (a prompt or workflow) to
+  /// remake it from, as the index found it.
+  final bool generated;
 
   String get path => joinMediaPath(dir, name);
 
@@ -148,7 +153,10 @@ class ItemList {
       height: _data.getUint32(o + 28, Endian.little),
       durationMs: _data.getUint32(o + 32, Endian.little),
       name: utf8.decode(Uint8List.view(_data.buffer, start, nameLen)),
-      isVideo: _data.getUint8(o + 42) == 1,
+      // The kind (1 a video), its top bit set when the file carries
+      // generation data.
+      isVideo: (_data.getUint8(o + 42) & 0x7f) == 1,
+      generated: (_data.getUint8(o + 42) & 0x80) != 0,
       rating: _data.getUint8(o + 43) & 7,
       flag: Flag.fromIndex((_data.getUint8(o + 43) >> 3) & 3),
       audience: _data.getUint8(o + 43) >> 5,
@@ -900,6 +908,14 @@ class DescribedPhrase {
 class Description {
   const Description(this.groups);
   final List<(String, List<DescribedPhrase>)> groups;
+
+  /// The phrases that start switched in, as one prompt: subject, setting,
+  /// style and light, in that order.
+  String get prompt => [
+    for (final (_, phrases) in groups)
+      for (final p in phrases)
+        if (p.on) p.text,
+  ].join(', ');
 
   factory Description.fromJson(Map<String, dynamic> j) => Description([
     for (final g in _maps(j['groups'])) (g['name'] as String? ?? '', [for (final p in _maps(g['phrases'])) DescribedPhrase.fromJson(p)]),

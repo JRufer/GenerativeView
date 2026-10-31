@@ -33,6 +33,12 @@ Future<void> showImageMenu(
   final targets = state.targetsFor(item);
   if (targets.length > 1) return _showManyMenu(context, state, targets, position);
   final shownCollection = _shownCollection(state);
+  // Remix only when there is something to remake it from: its generation
+  // data, or a prompt the picture model can describe from it.
+  // (Known at once for a picture with generation data, so the menu opens
+  // without waiting.)
+  final remakeable = state.canRemakeNow(item) || await state.canRemake(item);
+  if (!context.mounted) return;
   final choice = await showContextMenu<String>(context, position, [
     MenuEntry(
       'file',
@@ -44,7 +50,7 @@ Future<void> showImageMenu(
     if (canShareFiles) MenuEntry('share', item.isVideo ? 'Share video…' : 'Share image…', Icons.share_outlined),
     const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
     const MenuEntry('similar', 'More like this (L)', Icons.image_search),
-    const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
+    if (remakeable) const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
     if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
     const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
     MenuEntry(
@@ -103,9 +109,11 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   final allKeep = targets.every((t) => t.flag == Flag.keep);
   final allReject = targets.every((t) => t.flag == Flag.reject);
   final canCompare = images >= compareMin && images <= compareMax;
+  final canBreed = state.canBreedNow(targets) || await state.canBreed(targets);
+  if (!context.mounted) return;
   final choice = await showContextMenu<String>(context, position, [
     if (canCompare) MenuEntry('compare', 'Compare $images side by side (V)', Icons.compare),
-    if (images >= 2 && images <= 4) MenuEntry('breed', 'Breed new pictures from $images… (G)', Icons.hub_outlined),
+    if (canBreed) MenuEntry('breed', 'Breed new pictures from $images… (G)', Icons.hub_outlined),
     if (images >= 2) const MenuEntry('best', 'Tick all but the best', Icons.workspace_premium_outlined),
     MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
     if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),

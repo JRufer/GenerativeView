@@ -81,34 +81,10 @@ class _DescribeCardState extends State<DescribeCard> {
   /// Remix the picture with the described prompt: from the picture itself
   /// (image to image), on the model the folder's pictures use most.
   Future<void> _remix() async {
-    final state = widget.state;
     final item = widget.item;
-    var model = '';
-    try {
-      final usage = await state.usage();
-      for (final g in usage.groups) {
-        if (g.kind == 'model' && g.items.isNotEmpty) model = g.items.first.value;
-      }
-    } catch (_) {
-      // No model to name: the server's own.
-    }
+    final recipe = await widget.state.describedRecipe(item, prompt: _prompt);
     if (!mounted) return;
-    final recipe = GenInfo(
-      source: 'described',
-      prompt: _prompt,
-      negative: '',
-      seed: '',
-      model: model,
-      models: [if (model.isNotEmpty) ModelRef('checkpoint', model, '')],
-      loras: const [],
-      params: const [],
-      nodes: const [],
-      raw: const [],
-      width: item.width,
-      height: item.height,
-      durationMs: 0,
-    );
-    await openRemix(context, state, item, recipe: recipe, imageToImage: true);
+    await openRemix(context, widget.state, item, recipe: recipe, imageToImage: true);
   }
 
   @override

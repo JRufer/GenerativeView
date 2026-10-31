@@ -117,6 +117,10 @@ pub struct QueryResult {
     /// empty, which is the same as all zero.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<u8>,
+    /// For each row, whether the file carries generation data (a prompt or
+    /// workflow to remake it from); may be empty, which is the same as none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generated: Vec<bool>,
 }
 
 impl QueryResult {
@@ -126,6 +130,7 @@ impl QueryResult {
         for i in indexes {
             out.rows.push(self.rows[i].clone());
             out.marks.push(self.marks.get(i).copied().unwrap_or(0));
+            out.generated.push(self.generated.get(i).copied().unwrap_or(false));
         }
         out
     }
@@ -150,6 +155,8 @@ impl QueryResult {
     ///           i64 id, i64 mtime (ms), i64 size,
     ///           u32 width, u32 height, u32 duration (ms),
     ///           u32 name offset, u16 name length, u8 kind, u8 mark, u32 dir index
+    ///         (kind: 0 picture, 1 video; its top bit set when the file
+    ///         carries generation data)
     /// dirs    8 bytes each: u32 offset, u32 length
     /// strings UTF-8, addressed by the offsets above
     /// ```
@@ -171,7 +178,7 @@ impl QueryResult {
             out.extend_from_slice(&(*duration as u32).to_le_bytes());
             out.extend_from_slice(&(strings.len() as u32).to_le_bytes());
             out.extend_from_slice(&(name.len() as u16).to_le_bytes());
-            out.push(*kind);
+            out.push(*kind | if self.generated.get(i).copied().unwrap_or(false) { 0x80 } else { 0 });
             out.push(self.marks.get(i).copied().unwrap_or(0));
             out.extend_from_slice(&dir.to_le_bytes());
             strings.extend_from_slice(name.as_bytes());
@@ -491,7 +498,7 @@ impl Db {
         let join = if needs_text(&terms) || ranked.is_some() { "JOIN ftext t ON t.id = f.id" } else { "" };
         let sql = format!(
             "SELECT f.id, f.dir, f.name, f.kind, f.width, f.height, f.mtime, f.size, f.duration,
-                    coalesce(n.rating, 0), coalesce(n.flag, 0)
+                    coalesce(n.rating, 0), coalesce(n.flag, 0), f.source != ''
              FROM files f {join} LEFT JOIN notes n ON n.dir = f.dir AND n.name = f.name
              WHERE {cond} ORDER BY {order}"
         );
@@ -513,6 +520,7 @@ impl Db {
             };
             out.rows.push((r.get(0)?, di, r.get(2)?, r.get::<_, i64>(3)? as u8, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?));
             out.marks.push(mark(r.get::<_, i64>(9)? as u8, r.get::<_, i64>(10)? as u8));
+            out.generated.push(r.get::<_, i64>(11)? != 0);
         }
         Ok(out)
     }
@@ -1499,6 +1507,24 @@ mod tests {
     }
 
     #[test]
+    fn which_files_carry_generation_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path()).unwrap();
+        let photo = FileRecord { dir: "/out".into(), name: "photo.jpg".into(), size: 10, mtime: 2, video: false, info: GenInfo::default() };
+        db.upsert(&[rec("/out", "a.png", 1, "a fox", "flux", "fur"), photo]).unwrap();
+        let q = Query { dir: "/out".into(), recursive: false, sort: "name".into(), ..Default::default() };
+        let found = db.query(&q).unwrap();
+        let names: Vec<&str> = found.rows.iter().map(|r| r.2.as_str()).collect();
+        assert_eq!(names, ["a.png", "photo.jpg"]);
+        assert_eq!(found.generated, [true, false]);
+        // Kept through a pick, and packed in the top bit of each row's kind.
+        let picked = found.pick([1, 0]);
+        assert_eq!(picked.generated, [false, true]);
+        let b = picked.pack();
+        assert_eq!((b[16 + 42], b[16 + 48 + 42]), (0, 0x80));
+    }
+
+    #[test]
     fn images_or_videos() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Db::open(tmp.path()).unwrap();
@@ -1922,6 +1948,7 @@ mod tests {
             dirs: vec!["/a".into(), "/a/bé".into()],
             rows: vec![(7, 0, "x.png".into(), 0, 640, 480, 1_700_000_000_123, 99, 0), (-2, 1, "ü.mp4".into(), 1, 1920, 1080, 5, 1 << 33, 2500)],
             marks: vec![0, mark(4, 1)],
+            generated: vec![true, false],
         };
         let b = r.pack();
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) as usize;
@@ -1936,6 +1963,8 @@ mod tests {
         let (off, len) = (u32_at(row + 36), u16::from_le_bytes([b[row + 40], b[row + 41]]) as usize);
         assert_eq!(std::str::from_utf8(&b[strings + off..strings + off + len]).unwrap(), "ü.mp4");
         assert_eq!((b[row + 42], u32_at(row + 44)), (1, 1));
+        // The first row carries generation data: the top bit of its kind.
+        assert_eq!(b[16 + 42], 0x80);
         assert_eq!((b[16 + 43], b[row + 43]), (0, 4 | 1 << 3));
         let d = 16 + 2 * 48 + 8; // second dir
         assert_eq!(std::str::from_utf8(&b[strings + u32_at(d)..strings + u32_at(d) + u32_at(d + 4)]).unwrap(), "/a/bé");

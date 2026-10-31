@@ -42,7 +42,7 @@ Future<void> openRemix(
   GenInfo? recipe,
   bool imageToImage = false,
 }) async {
-  final GenInfo info;
+  GenInfo info;
   try {
     info = recipe ?? await state.metadata(item);
   } catch (e) {
@@ -51,8 +51,22 @@ Future<void> openRemix(
   }
   if (!context.mounted) return;
   if (!info.hasGeneration) {
-    toast(context, 'This picture has no generation data to remix');
-    return;
+    // No recipe in the file: remix from a prompt described from the
+    // picture, starting from the picture itself, when that can be done.
+    if (item.isVideo || !await state.canDescribe()) {
+      if (context.mounted) toast(context, 'This picture has no generation data to remix');
+      return;
+    }
+    if (!context.mounted) return;
+    toast(context, 'No generation data: describing the picture for a prompt…');
+    try {
+      info = await state.describedRecipe(item);
+    } catch (e) {
+      if (context.mounted) toast(context, 'Could not describe this picture: $e');
+      return;
+    }
+    if (!context.mounted) return;
+    imageToImage = true;
   }
   await showPanel<void>(
     context,
