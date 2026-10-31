@@ -167,6 +167,14 @@ pub fn from_prompt(prompt: &str) -> (Level, Vec<(String, Level)>) {
             found.push((phrase.to_string(), *level));
         }
     }
+    // A phrase found only inside a longer one ("blood" in "blood
+    // splatter") is not a reason of its own.
+    let all = found.clone();
+    found.retain(|(p, _)| {
+        let n = words.windows(p.split(' ').count()).filter(|w| w.join(" ") == *p).count();
+        let inside = all.iter().filter(|(q, _)| q != p && q.split(' ').count() > p.split(' ').count() && format!(" {q} ").contains(&format!(" {p} "))).map(|(q, _)| words.windows(q.split(' ').count()).filter(|w| w.join(" ") == *q).count()).sum::<usize>();
+        n > inside
+    });
     found.sort_by(|a, b| b.1.cmp(&a.1));
     let level = found.first().map_or(Level::G, |f| f.1);
     (level, found)
@@ -452,6 +460,10 @@ mod tests {
         assert_eq!(from_prompt("a gunmetal sculpture, sexton beetle").0, Level::G);
         let (_, why) = from_prompt("a zombie, gore, dead body");
         assert_eq!(why[0].1, Level::R);
+        // "blood" inside "blood splatter" is not counted twice; on its own it is.
+        let names = |p: &str| from_prompt(p).1.into_iter().map(|(p, _)| p).collect::<Vec<_>>();
+        assert_eq!(names("blood splatter, dusk"), ["blood splatter"]);
+        assert_eq!(names("blood splatter, blood"), ["blood splatter", "blood"]);
     }
 
     #[test]

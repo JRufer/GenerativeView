@@ -260,7 +260,7 @@ class _AudienceRowState extends State<AudienceRow> {
           Text(level == Audience.unknown ? '' : none, style: value)
         else
           for (final r in why)
-            Text('“${r.phrase}”${r.topic.isEmpty ? '' : ' · ${r.topic}'}', style: value.copyWith(color: audienceColor(r.level))),
+            Text('“${r.phrase}”${r.topic.isEmpty || r.topic == r.phrase ? '' : ' · ${r.topic}'}', style: value.copyWith(color: audienceColor(r.level))),
       ],
     );
   }

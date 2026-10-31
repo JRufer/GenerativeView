@@ -17,6 +17,7 @@ import 'package:generativeview/src/core/audience.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
+import 'package:generativeview/src/ui/audience_widgets.dart' show AudienceBadge;
 import 'package:generativeview/src/ui/filter_sheet.dart' show FilterSet, openFilters;
 import 'package:generativeview/src/ui/media_grid.dart' show MediaGrid;
 import 'package:generativeview/src/ui/remix_dialog.dart' show openRemix;
@@ -224,8 +225,15 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('breed-audience-pg')));
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('breed-audience-pg')));
-      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 500)));
-      await tester.pump();
+      // Every candidate aimed at PG: each shows where it ends up, none above.
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('breed-child-audience')).evaluate().length >= 2 && find.textContaining('Negative +').evaluate().isNotEmpty,
+        what: 'the candidates aimed at PG',
+      );
+      for (final badge in tester.widgetList<AudienceBadge>(find.byKey(const ValueKey('breed-child-audience')))) {
+        expect(badge.level, lessThanOrEqualTo(Audience.pg));
+      }
       await settle(tester);
       await screenshot(tester, boundary, 'audience-breed-$name');
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);

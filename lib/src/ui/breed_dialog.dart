@@ -139,15 +139,13 @@ class _BreedPanelState extends State<BreedPanel> {
   Future<void> _aimAll() async {
     final children = _children;
     if (children == null) return;
-    final steers = <AudienceSteer?>[];
-    for (final child in children) {
-      try {
-        steers.add(await widget.state.steerAudience(child.prompt, widget.infos[child.base].negative, _audience));
-      } catch (_) {
-        steers.add(null);
-      }
-    }
-    if (mounted) setState(() => _steers = steers);
+    final target = _audience;
+    final steers = await Future.wait([
+      for (final child in children)
+        widget.state.steerAudience(child.prompt, widget.infos[child.base].negative, target).then<AudienceSteer?>((s) => s, onError: (Object _) => null),
+    ]);
+    // A newer choice, or newer candidates, have taken over.
+    if (mounted && target == _audience && identical(children, _children)) setState(() => _steers = steers);
   }
 
   void _toggle(VoidCallback change) {
@@ -498,7 +496,7 @@ class _Candidate extends StatelessWidget {
                       const Text('likely stars', style: TextStyle(fontSize: 11, color: Palette.faint)),
                       if (steer != null) ...[
                         const SizedBox(height: 8),
-                        AudienceBadge(aiming ? steer!.to : steer!.from),
+                        AudienceBadge(aiming ? steer!.to : steer!.from, key: const ValueKey<String>('breed-child-audience')),
                       ],
                     ],
                   ),
