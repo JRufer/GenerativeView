@@ -709,7 +709,14 @@ pub const LIKELY_NEIGHBOURS: usize = 24;
 /// best are, each counted by how well it fits, sharpened so the closest
 /// count most.
 pub fn likely_liked(text: &[f32], samples: &[(Vec<f32>, f32)]) -> Option<f32> {
-    let mut near: Vec<(f32, f32)> = samples.iter().filter(|(v, _)| v.len() == text.len()).map(|(v, t)| (store::dot(v, text), *t)).collect();
+    // A sample of another length, or any value that is not a number, is
+    // left out: one such vector would otherwise spoil every score.
+    let mut near: Vec<(f32, f32)> = samples
+        .iter()
+        .filter(|(v, t)| v.len() == text.len() && t.is_finite())
+        .map(|(v, t)| (store::dot(v, text), *t))
+        .filter(|(score, _)| score.is_finite())
+        .collect();
     if near.is_empty() {
         return None;
     }
@@ -722,7 +729,8 @@ pub fn likely_liked(text: &[f32], samples: &[(Vec<f32>, f32)]) -> Option<f32> {
         sum += w * target;
         weight += w;
     }
-    (weight > 0.0).then(|| sum / weight)
+    let liked = sum / weight;
+    (weight > 0.0 && liked.is_finite()).then_some(liked)
 }
 
 /// Most phrases checked in one prompt; past these the rest are left out.
@@ -1325,6 +1333,14 @@ mod tests {
         let disliked = likely_liked(&axis(1), &samples).unwrap();
         assert!(liked > 0.85 && disliked < 0.15, "{liked} {disliked}");
         assert_eq!(likely_liked(&axis(0), &[]), None);
+        // One vector that is not numbers, or of another length, is left
+        // out rather than spoiling every score.
+        let mut spoiled = samples.clone();
+        spoiled.push((vec![f32::NAN; dim], 1.0));
+        spoiled.push((vec![1.0; dim * 2], 0.0));
+        let still = likely_liked(&axis(0), &spoiled).unwrap();
+        assert!((still - liked).abs() < 1e-6, "{still} {liked}");
+        assert_eq!(likely_liked(&axis(0), &[(vec![1.0; dim * 2], 1.0)]), None);
     }
 
     /// A unit vector along axis `axis`, tilted `tilt` of the way to `to`.
