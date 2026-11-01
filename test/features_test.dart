@@ -1537,6 +1537,10 @@ void main() {
     await pumpUntil(tester, () => find.text('Move to sub').evaluate().isNotEmpty, what: 'the sub folder open');
     await tester.tap(find.byKey(const ValueKey<String>('move-here')));
     await pumpUntil(tester, inSub, what: 'the move');
+    // The file lands before the app has finished taking the move in (it
+    // remembers the folder once the core answers): wait for that too, or
+    // a slow machine checks too soon.
+    await pumpUntil(tester, () => state.moveTargets.isNotEmpty, what: 'the folder remembered');
     final subNotes = (notesFile(sub)['images'] as Map)['fox_03.png'] as Map;
     expect(subNotes['rating'], 4);
     expect(subNotes['collections'], ['Movers']);
