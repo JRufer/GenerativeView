@@ -1075,6 +1075,55 @@ Future<String> _invokeUpload(HttpClient client, String base, Uint8List bytes) as
   return name;
 }
 
+/// The pictures an InvokeAI run made, by name, from its finished [session].
+///
+/// Every node that hands on a picture has it in the session's results, not
+/// only the ones that make one: an `image` node that feeds in a picture the
+/// graph was given (a reference image from the picture's own graph, the
+/// picture sent for image to image) answers with that picture's name. Those
+/// are already in InvokeAI's gallery, so they are not intermediate, and
+/// without this they came back as if the run had made them. So a name the
+/// graph itself names as an input, or that an `image` node gave back, is
+/// left out.
+List<String> invokeMadeImages(Map<dynamic, dynamic> session) {
+  final results = session['results'];
+  if (results is! Map) return const [];
+  final graph = session['graph'];
+  final nodes = graph is Map ? graph['nodes'] : null;
+  // Every picture named anywhere in the graph as sent is one it was given.
+  final given = <String>{};
+  void collect(Object? value) {
+    if (value is Map) {
+      final name = value['image_name'];
+      if (name is String) given.add(name);
+      value.values.forEach(collect);
+    } else if (value is List) {
+      value.forEach(collect);
+    }
+  }
+
+  if (nodes is Map) nodes.values.forEach(collect);
+  // The results are keyed by the prepared node; this says which node of
+  // the graph each one came from.
+  final sources = session['prepared_source_mapping'];
+  String typeOf(Object? key) {
+    final source = sources is Map ? (sources[key] ?? key) : key;
+    final node = nodes is Map ? nodes[source] : null;
+    return node is Map ? '${node['type'] ?? ''}' : '';
+  }
+
+  final names = <String>[];
+  for (final MapEntry(:key, :value) in results.entries) {
+    if (value is! Map) continue;
+    final image = value['image'];
+    final name = image is Map ? image['image_name'] : null;
+    if (name is! String || given.contains(name) || names.contains(name)) continue;
+    if (typeOf(key) == 'image') continue;
+    names.add(name);
+  }
+  return names;
+}
+
 /// Wait for each of the InvokeAI queue items [ids] and fetch the pictures
 /// it kept (not its intermediate steps), telling [done] as each is dealt
 /// with.
@@ -1129,20 +1178,11 @@ Stream<RemixImage> _invokeResults(String base, List<int> ids, [StreamController<
           continue;
       }
       final session = item['session'];
-      final results = session is Map ? session['results'] : null;
-      if (results is! Map) {
+      if (session is! Map || session['results'] is! Map) {
         done?.add('$id');
         continue;
       }
-      final names = <String>{};
-      for (final result in results.values) {
-        if (result is! Map) continue;
-        final image = result['image'];
-        if (image is Map && image['image_name'] is String) {
-          names.add(image['image_name'] as String);
-        }
-      }
-      for (final name in names) {
+      for (final name in invokeMadeImages(session)) {
         final path = Uri.encodeComponent(name);
         final dto = await _get(client, '$api/images/i/$path');
         if (dto['is_intermediate'] == true) continue;

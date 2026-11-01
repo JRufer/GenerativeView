@@ -1770,6 +1770,37 @@ void main() {
     await sendRemix('comfyui', base, remix(sdxl));
     expect(asked.where((p) => p.startsWith('/object_info/')), ['/object_info/CheckpointLoaderSimple']);
   });
+  test('an InvokeAI run gives back only the pictures it made, not the ones it was given', () {
+    // A hires fix sent with the picture's own graph: a reference image
+    // node fed in a gallery picture, which InvokeAI lists among the
+    // results beside what the run made.
+    final session = {
+      'graph': {
+        'nodes': {
+          'ref': {'id': 'ref', 'type': 'image', 'image': {'image_name': 'reference.png'}},
+          'generativeview_i2l': {'id': 'generativeview_i2l', 'type': 'flux_vae_encode', 'image': {'image_name': 'sent.png'}},
+          'decode': {'id': 'decode', 'type': 'flux_vae_decode', 'is_intermediate': false},
+        },
+      },
+      'prepared_source_mapping': {'p1': 'ref', 'p2': 'generativeview_i2l', 'p3': 'decode'},
+      'results': {
+        'p1': {'type': 'image_output', 'image': {'image_name': 'reference.png'}},
+        'p2': {'type': 'latents_output', 'latents': {'latents_name': 'l'}},
+        'p3': {'type': 'image_output', 'image': {'image_name': 'made.png'}},
+      },
+    };
+    expect(invokeMadeImages(session), ['made.png']);
+    // An image node is left out even when the graph does not name what it gave.
+    final bare = {
+      'graph': {'nodes': {'ref': {'id': 'ref', 'type': 'image'}}},
+      'results': {
+        'ref': {'image': {'image_name': 'other.png'}},
+        'out': {'image': {'image_name': 'made.png'}},
+      },
+    };
+    expect(invokeMadeImages(bare), ['made.png']);
+    expect(invokeMadeImages({'results': 'nothing'}), isEmpty);
+  });
 }
 
 /// Standard CRC-32, written out here so the test does not lean on the code
