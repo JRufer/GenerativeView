@@ -22,7 +22,7 @@ use std::path::Path;
 
 pub type DbResult<T> = Result<T, rusqlite::Error>;
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 // `files` stays narrow so listing a folder touches few pages. The search
 // text lives beside it in `ftext`, lower-cased; it is only ever searched,
@@ -31,8 +31,12 @@ const SCHEMA_VERSION: i64 = 7;
 // `facets` lists what the image was made with, one line each, in the layout
 // `GenInfo::facets_text` describes.
 const SCHEMA: &str = r#"
+-- AUTOINCREMENT so a file's id is never handed to another: a picture
+-- deleted (a hires fix's on-device step, say) and another saved after it
+-- would otherwise get the same id, and the app knows tiles, ticks and
+-- selection by id.
 CREATE TABLE IF NOT EXISTS files (
-    id       INTEGER PRIMARY KEY,
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
     dir      TEXT NOT NULL,
     name     TEXT NOT NULL,
     size     INTEGER NOT NULL,
@@ -1538,6 +1542,23 @@ mod tests {
     fn names(db: &Db, dir: &str, recursive: bool, text: &str) -> Vec<String> {
         let q = Query { dir: dir.into(), recursive, text: text.into(), sort: "name".into(), ..Default::default() };
         db.query(&q).unwrap().rows.into_iter().map(|r| r.2).collect()
+    }
+
+    #[test]
+    fn ids_are_never_given_to_another_file() {
+        // A hires fix saves its on-device step, deletes it, then saves what
+        // the server sent: the last must not take the deleted one's id.
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path()).unwrap();
+        let id = |name: &str| -> i64 {
+            db.read.lock().query_row("SELECT id FROM files WHERE name = ?1", [name], |r| r.get(0)).unwrap()
+        };
+        db.upsert(&[rec("/out", "heron.png", 1, "a heron", "", "")]).unwrap();
+        db.upsert(&[rec("/out", "heron_upscale1.png", 2, "a heron", "", "")]).unwrap();
+        let step = id("heron_upscale1.png");
+        db.delete_path("/out", "heron_upscale1.png").unwrap();
+        db.upsert(&[rec("/out", "heron_hires1.png", 3, "a heron", "", "")]).unwrap();
+        assert!(id("heron_hires1.png") > step);
     }
 
     #[test]
