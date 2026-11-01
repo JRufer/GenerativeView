@@ -52,6 +52,7 @@ class _MediaGridState extends State<MediaGrid> {
   double _viewport = 0;
 
   int _seenReveal = 0;
+  int _seenScrollTop = 0;
   double _seenTileSize = 0;
   String? _seenFolder;
 
@@ -73,6 +74,7 @@ class _MediaGridState extends State<MediaGrid> {
   void initState() {
     super.initState();
     _seenReveal = state.revealTick;
+    _seenScrollTop = state.scrollTopTick;
     _seenTileSize = state.tileSize;
     state.addListener(_onState);
     HardwareKeyboard.instance.addHandler(_onKey);
@@ -116,6 +118,10 @@ class _MediaGridState extends State<MediaGrid> {
     if (state.folder != _seenFolder) {
       _seenFolder = state.folder;
       if (_scroll.hasClients) _scroll.jumpTo(0);
+    }
+    if (state.scrollTopTick != _seenScrollTop) {
+      _seenScrollTop = state.scrollTopTick;
+      _scrollToTop();
     }
     setState(() {});
     if (state.revealTick != _seenReveal) {
@@ -200,6 +206,20 @@ class _MediaGridState extends State<MediaGrid> {
           SliverPadding(padding: const EdgeInsets.all(_gap), sliver: tiles(last, state.items.length - last)),
         const SliverToBoxAdapter(child: SizedBox(height: _gap)),
       ],
+    );
+  }
+
+  /// Back to the top of the list, quickly. From far down it jumps to a
+  /// couple of screens from the top first, so the glide is short and doesn't
+  /// build every row on the way.
+  void _scrollToTop() {
+    if (!_scroll.hasClients || _scroll.offset <= 0) return;
+    final near = math.max(_viewport, 1.0) * 2;
+    if (_scroll.offset > near) _scroll.jumpTo(near);
+    _scroll.animateTo(
+      0,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
     );
   }
 

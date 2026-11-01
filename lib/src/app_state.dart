@@ -247,6 +247,15 @@ class AppState extends ChangeNotifier {
   /// Bumped whenever the grid should scroll the selection into view.
   int revealTick = 0;
 
+  /// Bumped whenever the grid should scroll back to its top (a tap on the
+  /// top bar's empty space).
+  int scrollTopTick = 0;
+
+  void scrollToTop() {
+    scrollTopTick++;
+    notifyListeners();
+  }
+
   /// Set by the grid so keyboard navigation can move by rows and pages.
   int gridColumns = 1;
   int gridRowsPerPage = 1;

@@ -769,6 +769,57 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('a tap on the top bar scrolls the grid back to the top', (
+    tester,
+  ) async {
+    final state = await launch(tester, size: const Size(400, 700));
+    await pumpUntil(
+      tester,
+      () => state.items.length == 9,
+      what: 'the initial listing',
+    );
+    // Big tiles, so nine of them run well past the bottom of a phone.
+    state.setTileSize(maxTileSize);
+    await tester.pump();
+    ScrollPosition gridScroll() => tester
+        .state<ScrollableState>(
+          find.descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(Scrollable),
+          ),
+        )
+        .position;
+    gridScroll().jumpTo(gridScroll().maxScrollExtent);
+    await tester.pump();
+    expect(gridScroll().pixels, greaterThan(700));
+
+    // A button in the bar does its own job and leaves the grid where it is.
+    await tester.tap(find.byTooltip('Sub-folders are included'));
+    await pumpUntil(
+      tester,
+      () => state.items.length == 7,
+      what: 'the non-recursive listing',
+    );
+    await tester.tap(find.byTooltip('Sub-folders are not included'));
+    await pumpUntil(
+      tester,
+      () => state.items.length == 9,
+      what: 'the recursive listing',
+    );
+    gridScroll().jumpTo(gridScroll().maxScrollExtent);
+    await tester.pump();
+    expect(gridScroll().pixels, greaterThan(700));
+
+    // The bar's empty space, between the folder's name and its buttons,
+    // takes the grid to the top.
+    final tools = tester.getRect(find.byKey(const ValueKey<String>('bar-tools')));
+    await tester.tapAt(Offset(tools.left - 2, tools.center.dy));
+    await tester.pumpAndSettle();
+    expect(gridScroll().pixels, 0);
+
+    await close(tester, state);
+  });
+
   testWidgets('on a narrow screen the panels slide over the grid', (
     tester,
   ) async {
