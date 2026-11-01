@@ -31,6 +31,18 @@ flutter test integration_test/app_test.dart -d emulator-5554 \
 status=${PIPESTATUS[0]}
 
 kill "$sampler" 2>/dev/null || true
+
+# The notification icon must be one the status bar can draw: a bad one
+# crashes the app as soon as a remix posts its "waiting" notification.
+adb logcat -c 2>/dev/null || true
+adb shell cmd notification post -S bigtext -t "Icon check" \
+  -i "@$pkg:drawable/ic_stat_remix" gv-icon-check "Notification icon check" 2>&1 | tee "$OUT/notification-icon.txt"
+sleep 3
+adb exec-out screencap -p > "$OUT/screens/android-notification.png" 2>/dev/null || true
+if adb logcat -d 2>/dev/null | grep -iE "couldn.t create icon|bad notification|Error inflating|ic_stat_remix" | tee -a "$OUT/notification-icon.txt" | grep -qi .; then
+  echo "::error title=Notification icon::The status bar could not draw ic_stat_remix; see notification-icon.txt"
+  status=1
+fi
 adb logcat -d -t 400 flutter:V AndroidRuntime:E '*:S' > "$OUT/logcat.txt" 2>/dev/null || true
 # Keep a handful of distinct frames rather than eighty near-duplicates.
 python3 - "$OUT/screens" <<'PY'
