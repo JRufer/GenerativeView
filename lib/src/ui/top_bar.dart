@@ -54,169 +54,176 @@ class TopBar extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, outer) {
         final twoRows = !focus && outer.maxWidth < oneRowWidth;
-        return Container(
-          key: const ValueKey<String>('top-bar'),
-          height: twoRows ? topBarHeight + _secondRow : topBarHeight,
-          decoration: const BoxDecoration(
-            color: Palette.panel,
-            border: Border(bottom: BorderSide(color: Palette.line)),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 760;
-              // Buttons, menus and the slider never hold keyboard focus (see
-              // ShortcutLayer); only the search field does.
-              final info = _BarButton(
-                icon: Icons.info_outline,
-                tooltip: 'Generation data (I)',
-                active: state.rightOpen,
-                onTap: state.toggleRight,
-              );
-              if (focus) {
-                return ExcludeFocus(
-                  child: Row(
-                    children: [
-                      _BarButton(
-                        icon: Icons.arrow_back,
-                        tooltip: 'Back to grid (Esc)',
-                        onTap: state.closeFocus,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(child: _FocusTitle(state: state)),
-                      ActivityButton(state: state, compact: true),
-                      const SizedBox(width: 4),
-                      info,
-                    ],
-                  ),
+        // A tap on the bar's empty space (or the folder's name) takes the
+        // grid back to its top, as a phone's title bar does. The buttons,
+        // search box and slider sit deeper and win their own taps.
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: focus ? null : state.scrollToTop,
+          child: Container(
+            key: const ValueKey<String>('top-bar'),
+            height: twoRows ? topBarHeight + _secondRow : topBarHeight,
+            decoration: const BoxDecoration(
+              color: Palette.panel,
+              border: Border(bottom: BorderSide(color: Palette.line)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 760;
+                // Buttons, menus and the slider never hold keyboard focus (see
+                // ShortcutLayer); only the search field does.
+                final info = _BarButton(
+                  icon: Icons.info_outline,
+                  tooltip: 'Generation data (I)',
+                  active: state.rightOpen,
+                  onTap: state.toggleRight,
                 );
-              }
-              final folders = ExcludeFocus(
-                child: _BarButton(
-                  icon: Icons.folder_outlined,
-                  tooltip: 'Folders ([)',
-                  active: state.leftOpen,
-                  onTap: state.toggleLeft,
-                ),
-              );
-              final buttons = <Widget>[
-                _FilterButton(state: state),
-                _SortMenu(state: state, withStats: !wide),
-                _BarButton(
-                  icon: Icons.account_tree_outlined,
-                  tooltip: state.recursive
-                      ? 'Sub-folders are included'
-                      : 'Sub-folders are not included',
-                  active: state.recursive,
-                  onTap: () => state.setRecursive(!state.recursive),
-                ),
-                _BarButton(
-                  icon: Icons.crop,
-                  tooltip: state.cropTiles
-                      ? 'Thumbnails are cropped to fill (C)'
-                      : 'Thumbnails show the whole image (C)',
-                  active: state.cropTiles,
-                  onTap: state.toggleCrop,
-                ),
-              ];
-              Widget slider(double width) => ExcludeFocus(
+                if (focus) {
+                  return ExcludeFocus(
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const SizedBox(width: _sliderGap),
-                        const Icon(
-                          Icons.photo_size_select_small,
-                          size: _sliderIcon,
-                          color: Palette.faint,
+                        _BarButton(
+                          icon: Icons.arrow_back,
+                          tooltip: 'Back to grid (Esc)',
+                          onTap: state.closeFocus,
                         ),
-                        SizedBox(
-                          key: const ValueKey<String>('tile-size-slider'),
-                          width: width,
-                          child: Slider(
-                            value: state.tileSize,
-                            min: minTileSize,
-                            max: maxTileSize,
-                            onChanged: state.setTileSize,
-                          ),
-                        ),
+                        const SizedBox(width: 6),
+                        Expanded(child: _FocusTitle(state: state)),
+                        ActivityButton(state: state, compact: true),
+                        const SizedBox(width: 4),
+                        info,
                       ],
                     ),
                   );
-              if (twoRows) {
-                final width = constraints.maxWidth;
-                return Column(
-                  children: [
-                    SizedBox(
-                      height: topBarHeight,
+                }
+                final folders = ExcludeFocus(
+                  child: _BarButton(
+                    icon: Icons.folder_outlined,
+                    tooltip: 'Folders ([)',
+                    active: state.leftOpen,
+                    onTap: state.toggleLeft,
+                  ),
+                );
+                final buttons = <Widget>[
+                  _FilterButton(state: state),
+                  _SortMenu(state: state, withStats: !wide),
+                  _BarButton(
+                    icon: Icons.account_tree_outlined,
+                    tooltip: state.recursive
+                        ? 'Sub-folders are included'
+                        : 'Sub-folders are not included',
+                    active: state.recursive,
+                    onTap: () => state.setRecursive(!state.recursive),
+                  ),
+                  _BarButton(
+                    icon: Icons.crop,
+                    tooltip: state.cropTiles
+                        ? 'Thumbnails are cropped to fill (C)'
+                        : 'Thumbnails show the whole image (C)',
+                    active: state.cropTiles,
+                    onTap: state.toggleCrop,
+                  ),
+                ];
+                Widget slider(double width) => ExcludeFocus(
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          folders,
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: ExcludeFocus(
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: _FolderTitle(state: state),
-                              ),
-                            ),
+                          const SizedBox(width: _sliderGap),
+                          const Icon(
+                            Icons.photo_size_select_small,
+                            size: _sliderIcon,
+                            color: Palette.faint,
                           ),
-                          const SizedBox(width: 4),
-                          ExcludeFocus(
-                            child: Row(
-                              key: const ValueKey<String>('bar-tools'),
-                              mainAxisSize: MainAxisSize.min,
-                              children: [...buttons, info, _MoreMenu(state: state)],
+                          SizedBox(
+                            key: const ValueKey<String>('tile-size-slider'),
+                            width: width,
+                            child: Slider(
+                              value: state.tileSize,
+                              min: minTileSize,
+                              max: maxTileSize,
+                              onChanged: state.setTileSize,
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    // What is left under the top row, its bottom border aside.
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 4, bottom: 6),
+                    );
+                if (twoRows) {
+                  final width = constraints.maxWidth;
+                  return Column(
+                    children: [
+                      SizedBox(
+                        height: topBarHeight,
                         child: Row(
                           children: [
+                            folders,
+                            const SizedBox(width: 6),
                             Expanded(
-                              child: _SearchField(
-                                key: const ValueKey<String>('bar-search'),
-                                state: state,
-                                pinsWidth: math.min(width, _TitleSearchAndTools._widest),
+                              child: ExcludeFocus(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: _FolderTitle(state: state),
+                                ),
                               ),
                             ),
-                            slider(math.min(_sliderWidth * 1.4, math.max(96.0, width * 0.3))),
+                            const SizedBox(width: 4),
+                            ExcludeFocus(
+                              child: Row(
+                                key: const ValueKey<String>('bar-tools'),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [...buttons, info, _MoreMenu(state: state)],
+                              ),
+                            ),
                           ],
                         ),
+                      ),
+                      // What is left under the top row, its bottom border aside.
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 4, bottom: 6),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: _SearchField(
+                                  key: const ValueKey<String>('bar-search'),
+                                  state: state,
+                                  pinsWidth: math.min(width, _TitleSearchAndTools._widest),
+                                ),
+                              ),
+                              slider(math.min(_sliderWidth * 1.4, math.max(96.0, width * 0.3))),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    folders,
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _TitleSearchAndTools(
+                        state: state,
+                        wide: wide,
+                        tools: [
+                          ...buttons,
+                          if (wide) slider(_sliderWidth),
+                          if (wide && state.folder != null)
+                            _BarButton(
+                              icon: Icons.bar_chart,
+                              tooltip: 'Usage stats',
+                              onTap: () => openStats(context, state),
+                            ),
+                          info,
+                          _MoreMenu(state: state),
+                        ],
                       ),
                     ),
                   ],
                 );
-              }
-              return Row(
-                children: [
-                  folders,
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _TitleSearchAndTools(
-                      state: state,
-                      wide: wide,
-                      tools: [
-                        ...buttons,
-                        if (wide) slider(_sliderWidth),
-                        if (wide && state.folder != null)
-                          _BarButton(
-                            icon: Icons.bar_chart,
-                            tooltip: 'Usage stats',
-                            onTap: () => openStats(context, state),
-                          ),
-                        info,
-                        _MoreMenu(state: state),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
+              },
+            ),
           ),
         );
       },
