@@ -17,28 +17,40 @@ Future<T?> showContextMenu<T>(
   BuildContext context,
   Offset position,
   List<MenuEntry<T>> entries,
+) => showGroupedContextMenu<T>(context, position, [entries]);
+
+/// A [showContextMenu] menu with a line between its [groups]. A group with
+/// nothing in it leaves no line behind.
+Future<T?> showGroupedContextMenu<T>(
+  BuildContext context,
+  Offset position,
+  List<List<MenuEntry<T>>> groups,
 ) {
   final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
+  final shown = groups.where((g) => g.isNotEmpty).toList();
   return showMenu<T>(
     context: context,
     position: RelativeRect.fromRect(
       position & Size.zero,
       Offset.zero & overlay.size,
     ),
-    items: [
-      for (final entry in entries)
-        PopupMenuItem<T>(
-          value: entry.value,
-          height: 38,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(entry.icon, size: 16, color: Palette.muted),
-              const SizedBox(width: 10),
-              Flexible(child: Text(entry.label)),
-            ],
+    items: <PopupMenuEntry<T>>[
+      for (var i = 0; i < shown.length; i++) ...[
+        if (i > 0) const PopupMenuDivider(height: 9),
+        for (final entry in shown[i])
+          PopupMenuItem<T>(
+            value: entry.value,
+            height: 38,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(entry.icon, size: 16, color: Palette.muted),
+                const SizedBox(width: 10),
+                Flexible(child: Text(entry.label)),
+              ],
+            ),
           ),
-        ),
+      ],
     ],
   );
 }

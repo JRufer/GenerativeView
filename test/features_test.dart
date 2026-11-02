@@ -1426,6 +1426,21 @@ void main() {
     expect(find.text('Remix… (R)'), findsNothing);
     expect(find.text('More like this (L)'), findsNothing);
     expect(find.text('Copy prompt'), findsNothing);
+    // Related actions sit together, in the single-picture menu's order,
+    // with Delete last and away from Clear.
+    final order = [
+      'Upscale 2 images… (Shift U)',
+      'Rate…',
+      'Add to collection… (B)',
+      'Copy 2 images',
+      'Paste into this folder',
+      'Move 2 images to… (M)',
+      'Clear the selection (Esc)',
+      'Delete 2 images…',
+    ];
+    final rows = [for (final label in order) tester.getTopLeft(find.text(label)).dy];
+    expect(rows, orderedEquals([...rows]..sort()), reason: 'the menu runs ${order.join(', ')}');
+    expect(find.byType(PopupMenuDivider), findsNWidgets(4));
     await screenshot(tester, boundary, '49-many-menu');
     // Close the menu (leaving the ticks alone), then flag both with the key.
     Navigator.of(tester.element(find.text('Rate…'))).pop();
