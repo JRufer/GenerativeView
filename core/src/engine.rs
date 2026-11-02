@@ -403,13 +403,15 @@ impl Engine {
         let change = args.get("change").and_then(Value::as_f64).unwrap_or(0.35) as f32;
         let count = args.get("count").and_then(Value::as_u64).unwrap_or(6).clamp(1, 12) as usize;
         let seed = args.get("seed").and_then(Value::as_u64).unwrap_or(1);
-        // New phrases come from what the user's liked pictures share.
-        let recipes = self.all_recipes();
+        // New phrases come only from what the rated pictures in the parents'
+        // folders, the folders above and the folders below them say.
+        let recipes = crate::works::rated_near(self.all_recipes(), &paths);
         let model = model_key(&infos[0].model);
         let works = crate::works::what_works(&recipes, &model);
         let mut fresh: Vec<String> = works["groups"][0]["items"].as_array().map(|a| a.iter().filter_map(|i| i["label"].as_str().map(str::to_string)).collect()).unwrap_or_default();
         if fresh.len() < 6 {
-            let more: Vec<String> = Self::own_phrases(&recipes, 40).into_iter().filter(|p| !fresh.contains(p)).take(12).collect();
+            let liked: Vec<crate::works::Recipe> = recipes.iter().filter(|r| r.liked()).cloned().collect();
+            let more: Vec<String> = Self::own_phrases(&liked, 40).into_iter().filter(|p| !fresh.contains(p)).take(12).collect();
             fresh.extend(more);
         }
         // Make more than asked for, and keep the likeliest liked.
