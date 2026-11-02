@@ -42,7 +42,7 @@ impl Recipe {
             .collect()
     }
 
-    fn liked(&self) -> bool {
+    pub fn liked(&self) -> bool {
         self.target.is_some_and(is_liked)
     }
 
@@ -250,6 +250,29 @@ fn item_json(table: &Table, c: &Count, recipes: &[Recipe], toward_liked: bool) -
         "query": c.query,
         "samples": samples,
     })
+}
+
+/// The folder a path is in.
+fn folder_of(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(0) => "/",
+        Some(i) => &path[..i],
+        None => "",
+    }
+}
+
+/// Whether one of the folders holds the other, or they are the same.
+fn folders_related(a: &str, b: &str) -> bool {
+    let holds = |above: &str, below: &str| above == "/" || below.strip_prefix(above).is_some_and(|rest| rest.starts_with('/'));
+    a == b || holds(a, b) || holds(b, a)
+}
+
+/// The recipes with stars in a folder of the pictures at `paths`, or in a
+/// folder above or below one: what may decide the words Breed adds. Ratings
+/// in unrelated folders say nothing about these pictures.
+pub fn rated_near(recipes: Vec<Recipe>, paths: &[String]) -> Vec<Recipe> {
+    let folders: Vec<&str> = paths.iter().map(|p| folder_of(p)).collect();
+    recipes.into_iter().filter(|r| r.rating > 0 && folders.iter().any(|f| folders_related(f, folder_of(&r.path)))).collect()
 }
 
 /// What the Usage page's What Works view shows: the phrases most common in
@@ -715,6 +738,29 @@ mod tests {
         let weighted = doctor("a fox, (golden hour:1.4)", &check, &[], "");
         assert!(weighted["suggestions"].as_array().unwrap().is_empty(), "{weighted}");
         assert_eq!(written_weight("a, (Golden Hour:1.25), b", "golden hour"), 1.25);
+    }
+
+    #[test]
+    fn only_nearby_rated_pictures_decide_breed_words() {
+        let recipe = |path: &str, rating: u8, flag: u8| Recipe { path: path.into(), prompt: "a fox".into(), rating, target: crate::taste::target(rating, flag), ..Default::default() };
+        let all = vec![
+            recipe("/art/foxes/here.png", 5, 0),
+            recipe("/art/up.png", 4, 0),
+            recipe("/top.png", 3, 0),
+            recipe("/art/foxes/winter/down.png", 1, 0),
+            recipe("/art/birds/sibling.png", 5, 0),
+            recipe("/art/foxes-old/lookalike.png", 5, 0),
+            recipe("/other/far.png", 5, 0),
+            recipe("/art/foxes/unrated.png", 0, 0),
+            recipe("/art/foxes/flag-only.png", 0, 1),
+        ];
+        let near = rated_near(all.clone(), &["/art/foxes/parent.png".to_string()]);
+        let names: Vec<&str> = near.iter().map(|r| r.path.rsplit('/').next().unwrap()).collect();
+        assert_eq!(names, ["here.png", "up.png", "top.png", "down.png"]);
+        // Parents from two places: both folders' relatives count.
+        let both = rated_near(all, &["/art/foxes/a.png".to_string(), "/other/b.png".to_string()]);
+        assert!(both.iter().any(|r| r.path == "/other/far.png"));
+        assert!(both.iter().all(|r| r.path != "/art/birds/sibling.png"));
     }
 
     #[test]

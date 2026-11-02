@@ -971,3 +971,42 @@ fn moved_pictures_keep_their_notes() {
     h.expect_names(&root, false, "name:=a.png", &["a.png"]);
     assert_eq!(h.call("notes_get", json!({ "path": path("a.png") }))["rating"], 5);
 }
+
+#[test]
+fn breed_words_come_only_from_nearby_rated_folders() {
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    for folder in ["foxes/winter", "birds"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+    write_png(&root.join("foxes/a.png"), 1, &[("prompt", &comfy_prompt("a fox, snow", 1, "flux.safetensors"))]);
+    write_png(&root.join("foxes/b.png"), 2, &[("prompt", &comfy_prompt("a wolf, moon", 2, "flux.safetensors"))]);
+    let mut below = Vec::new();
+    let mut unrelated = Vec::new();
+    for i in 0..4u32 {
+        let near = format!("foxes/winter/near{i}.png");
+        let far = format!("birds/far{i}.png");
+        write_png(&root.join(&near), i * 2 + 3, &[("prompt", &comfy_prompt(&format!("a hare {i}, rim lighting"), i as u64, "flux.safetensors"))]);
+        write_png(&root.join(&far), i * 2 + 4, &[("prompt", &comfy_prompt(&format!("a crow {i}, violet haze"), i as u64, "flux.safetensors"))]);
+        below.push(path(&near));
+        unrelated.push(path(&far));
+    }
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let breed = || h.call("breed", json!({ "paths": [path("foxes/a.png"), path("foxes/b.png")], "count": 12, "seed": 5, "change": 1.0 }));
+    let prompts = |bred: &Value| bred["children"].as_array().unwrap().iter().map(|c| c["prompt"].as_str().unwrap().to_string()).collect::<Vec<_>>().join("\n");
+
+    // Only the unrelated folder is rated: no word of it is offered.
+    h.call("notes_set", json!({ "paths": unrelated, "rating": 5 }));
+    let bred = prompts(&breed());
+    assert!(!bred.contains("violet haze"), "{bred}");
+
+    // A rated child folder is used; the unrelated one still is not.
+    h.call("notes_set", json!({ "paths": below, "rating": 5 }));
+    let bred = prompts(&breed());
+    assert!(bred.contains("rim lighting"), "{bred}");
+    assert!(!bred.contains("violet haze"), "{bred}");
+}
