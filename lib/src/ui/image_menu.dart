@@ -40,24 +40,32 @@ Future<void> showImageMenu(
   // without waiting.)
   final remakeable = state.canRemakeNow(item) || await state.canRemake(item);
   if (!context.mounted) return;
-  final choice = await showContextMenu<String>(context, position, [
-    MenuEntry(
-      'file',
-      item.isVideo ? 'Copy video' : 'Copy image',
-      Icons.content_copy,
-    ),
-    const MenuEntry('prompt', 'Copy prompt', Icons.notes),
-    const MenuEntry('path', 'Copy file path', Icons.link),
-    if (canShareFiles) MenuEntry('share', item.isVideo ? 'Share video…' : 'Share image…', Icons.share_outlined),
-    const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
-    const MenuEntry('similar', 'More like this (L)', Icons.image_search),
-    if (remakeable) const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
-    if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
-    const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
-    const MenuEntry('move', 'Move to… (M)', Icons.drive_file_move_outline),
-    if (shownCollection != null)
-      MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
-    MenuEntry('delete', item.isVideo ? 'Delete video…' : 'Delete image…', Icons.delete_outline),
+  final choice = await showGroupedContextMenu<String>(context, position, [
+    // Make and explore
+    [
+      const MenuEntry('similar', 'More like this (L)', Icons.image_search),
+      if (remakeable) const MenuEntry('remix', 'Remix… (R)', Icons.auto_fix_high),
+      if (!item.isVideo) const MenuEntry('upscale', 'Upscale… (Shift U)', Icons.photo_size_select_large),
+    ],
+    // Organize
+    [
+      const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+      if (shownCollection != null)
+        MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
+    ],
+    // The file itself
+    [
+      MenuEntry('file', item.isVideo ? 'Copy video' : 'Copy image', Icons.content_copy),
+      const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
+      const MenuEntry('move', 'Move to… (M)', Icons.drive_file_move_outline),
+      if (canShareFiles) MenuEntry('share', item.isVideo ? 'Share video…' : 'Share image…', Icons.share_outlined),
+    ],
+    // Text about it
+    [
+      const MenuEntry('prompt', 'Copy prompt', Icons.notes),
+      const MenuEntry('path', 'Copy file path', Icons.link),
+    ],
+    [MenuEntry('delete', item.isVideo ? 'Delete video…' : 'Delete image…', Icons.delete_outline)],
   ]);
   if (choice == null || !context.mounted) return;
   switch (choice) {
@@ -99,21 +107,38 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
   final canCompare = images >= compareMin && images <= compareMax;
   final canBreed = state.canBreedNow(targets) || await state.canBreed(targets);
   if (!context.mounted) return;
-  final choice = await showContextMenu<String>(context, position, [
-    if (canCompare) MenuEntry('compare', 'Compare $images side by side (V)', Icons.compare),
-    if (canBreed) MenuEntry('breed', 'Breed new pictures from $images… (G)', Icons.hub_outlined),
-    if (images >= 2) const MenuEntry('best', 'Tick all but the best', Icons.workspace_premium_outlined),
-    MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
-    if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
-    const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
-    const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
-    MenuEntry('move', 'Move $n $things to… (M)', Icons.drive_file_move_outline),
-    if (shownCollection != null)
-      MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
-    if (images > 0)
-      MenuEntry('upscale', images == n ? 'Upscale $n images… (Shift U)' : 'Upscale the $images images… (Shift U)', Icons.photo_size_select_large),
-    MenuEntry('delete', 'Delete $n $things…', Icons.delete_outline),
-    const MenuEntry('clear', 'Clear the selection (Esc)', Icons.deselect),
+  // "This folder" only means something when they all share one.
+  final folders = {for (final t in targets) t.dir};
+  final pasteFolder = folders.length == 1 ? folders.single : null;
+  // The same groups in the same order as the menu for one picture.
+  final choice = await showGroupedContextMenu<String>(context, position, [
+    // Make and explore
+    [
+      if (canCompare) MenuEntry('compare', 'Compare $images side by side (V)', Icons.compare),
+      if (canBreed) MenuEntry('breed', 'Breed new pictures from $images… (G)', Icons.hub_outlined),
+      if (images > 0)
+        MenuEntry('upscale', images == n ? 'Upscale $n images… (Shift U)' : 'Upscale the $images images… (Shift U)', Icons.photo_size_select_large),
+    ],
+    // Organize
+    [
+      const MenuEntry('rate', 'Rate…', Icons.star_outline_rounded),
+      const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+      if (shownCollection != null)
+        MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
+    ],
+    // The files themselves
+    [
+      MenuEntry('copy', 'Copy $n $things', Icons.content_copy),
+      if (pasteFolder != null) const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
+      MenuEntry('move', 'Move $n $things to… (M)', Icons.drive_file_move_outline),
+      if (canShareFiles) MenuEntry('share', 'Share $n $things…', Icons.share_outlined),
+    ],
+    // The selection
+    [
+      if (images >= 2) const MenuEntry('best', 'Tick all but the best', Icons.workspace_premium_outlined),
+      const MenuEntry('clear', 'Clear the selection (Esc)', Icons.deselect),
+    ],
+    [MenuEntry('delete', 'Delete $n $things…', Icons.delete_outline)],
   ]);
   if (choice == null || !context.mounted) return;
   switch (choice) {
@@ -128,6 +153,8 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
       if (context.mounted) toast(context, ticked == 0 ? 'Could not tell which to keep' : '$ticked ticked; the best of them is left unticked');
     case 'copy':
       await copyItems(context, targets);
+    case 'paste':
+      await pasteInto(context, state, pasteFolder!);
     case 'share':
       await shareItems(context, targets);
     case 'rate':
