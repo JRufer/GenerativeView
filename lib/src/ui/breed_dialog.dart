@@ -445,6 +445,24 @@ class _BreedPanelState extends State<BreedPanel> {
           _aimAll();
         },
       ),
+      const PanelHeading('Size'),
+      // Set up again for a new first parent, whose shape the lock keeps to.
+      KeyedSubtree(
+        key: ObjectKey(_parents.first),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizeField(key: const ValueKey<String>('breed-size'), width: _width, height: _height, aspect: _aspect, expand: true),
+            SizeSlider(key: const ValueKey<String>('breed-size-slider'), width: _width, height: _height, original: _original),
+          ],
+        ),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 4),
+        child: Text('Every picture rendered is made at this size.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
+      ),
+      // Last on this side: on a narrow screen the candidates come straight
+      // after it, so what the slider does to their stars stays in view.
       const SizedBox(height: 14),
       Row(
         children: [
@@ -468,22 +486,6 @@ class _BreedPanelState extends State<BreedPanel> {
             Text('Adventurous', style: TextStyle(fontSize: 11, color: Palette.faint)),
           ],
         ),
-      ),
-      const PanelHeading('Size'),
-      // Set up again for a new first parent, whose shape the lock keeps to.
-      KeyedSubtree(
-        key: ObjectKey(_parents.first),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizeField(key: const ValueKey<String>('breed-size'), width: _width, height: _height, aspect: _aspect, expand: true),
-            SizeSlider(key: const ValueKey<String>('breed-size-slider'), width: _width, height: _height, original: _original),
-          ],
-        ),
-      ),
-      const Padding(
-        padding: EdgeInsets.only(top: 4),
-        child: Text('Every picture rendered is made at this size.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
       ),
     ];
     final children = _children;
