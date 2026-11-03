@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:generativeview/src/core/media_image.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/wallpaper.dart';
 import 'package:generativeview/src/theme.dart';
@@ -136,9 +135,12 @@ void main() {
         ),
       ),
     );
-    final page = tester.element(find.byType(WallpaperPage));
-    await tester.runAsync(() => precacheImage(mediaImage(item), page));
-    await tester.pump();
+    // The picture decodes on real time but its steps run on the test's
+    // clock, so the two take turns.
+    for (var i = 0; i < 12; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 40)));
+      await tester.pump();
+    }
     await act?.call();
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pump();
