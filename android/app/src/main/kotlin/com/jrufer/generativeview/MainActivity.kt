@@ -1,8 +1,10 @@
 package com.jrufer.generativeview
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.NotificationManager
+import android.app.WallpaperManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentUris
@@ -16,6 +18,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import io.flutter.embedding.android.FlutterActivity
@@ -124,6 +128,8 @@ class MainActivity : FlutterActivity() {
                     "openUrl" -> result.success(openUrl(call.argument<String>("url")))
                     "trashFile" -> trashFile(call.argument<String>("path"), result)
                     "pasteSource" -> pasteSource(result)
+                    "wallpaperScreens" -> result.success(wallpaperScreens())
+                    "setWallpaper" -> setWallpaper(call, result)
                     "scanFiles" -> {
                         scanFiles(call.argument<List<String>>("paths") ?: emptyList())
                         result.success(null)
@@ -140,6 +146,99 @@ class MainActivity : FlutterActivity() {
                 }
             }
     }
+
+    // A Samsung foldable has a separate wallpaper on each screen. Flips are
+    // left out: their cover screen has not been tried.
+    private fun hasCoverScreen(): Boolean {
+        if (!Build.MANUFACTURER.equals("samsung", ignoreCase = true)) return false
+        if (Build.MODEL.startsWith("SM-F7")) return false
+        return Build.MODEL.startsWith("SM-F9") ||
+            packageManager.hasSystemFeature("android.hardware.sensor.hinge_angle")
+    }
+
+    private fun displaySize(): Pair<Int, Int> {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val bounds = windowManager.maximumWindowMetrics.bounds
+            return bounds.width() to bounds.height()
+        }
+        val metrics = resources.displayMetrics
+        return metrics.widthPixels to metrics.heightPixels
+    }
+
+    // The screens' sizes. Only the lit one can be measured, so each is
+    // remembered when seen, with the Fold 8's until then.
+    private fun wallpaperScreens(): Map<String, Any> {
+        val (width, height) = displaySize()
+        if (!hasCoverScreen()) return mapOf("current" to "screen", "width" to width, "height" to height)
+        val short = minOf(width, height)
+        val long = maxOf(width, height)
+        val isCover = short.toDouble() / long < 0.70
+        val saved = getSharedPreferences("wallpaper", Context.MODE_PRIVATE)
+        saved.edit()
+            .putInt(if (isCover) "coverWidth" else "mainWidth", short)
+            .putInt(if (isCover) "coverHeight" else "mainHeight", long)
+            .apply()
+        return mapOf(
+            "current" to if (isCover) "cover" else "main",
+            "mainWidth" to saved.getInt("mainWidth", 1848),
+            "mainHeight" to saved.getInt("mainHeight", 2448),
+            "coverWidth" to saved.getInt("coverWidth", 1248),
+            "coverHeight" to saved.getInt("coverHeight", 1972),
+        )
+    }
+
+    private fun setWallpaper(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")
+        val writes = call.argument<List<Map<String, Any>>>("writes") ?: emptyList()
+        workers.execute {
+            val done = try {
+                writeWallpapers(path, writes)
+            } catch (e: Exception) {
+                emptyList<Boolean>()
+            } catch (e: OutOfMemoryError) {
+                emptyList<Boolean>()
+            }
+            runOnUiThread { result.success(done) }
+        }
+    }
+
+    private fun writeWallpapers(path: String?, writes: List<Map<String, Any>>): List<Boolean> {
+        if (path == null) return emptyList()
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 8192) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bitmap = BitmapFactory.decodeFile(path, options) ?: return emptyList()
+        val manager = WallpaperManager.getInstance(applicationContext)
+        val done = writes.map { write ->
+            val crop = Rect(
+                ((write["left"] as Number).toInt() / sample).coerceIn(0, bitmap.width),
+                ((write["top"] as Number).toInt() / sample).coerceIn(0, bitmap.height),
+                ((write["right"] as Number).toInt() / sample).coerceIn(0, bitmap.width),
+                ((write["bottom"] as Number).toInt() / sample).coerceIn(0, bitmap.height),
+            )
+            val which = (write["which"] as Number).toInt()
+            var id = setBitmap(manager, bitmap, crop, which)
+            // The screen bits are undocumented. If they are ever refused, a
+            // plain call still reaches the screen that is lit.
+            if (id == 0 && which > 3 && write["active"] == true) {
+                id = setBitmap(manager, bitmap, crop, which and 3)
+            }
+            id != 0
+        }
+        bitmap.recycle()
+        return done
+    }
+
+    // One UI's screen bits are outside the values lint knows.
+    @SuppressLint("WrongConstant")
+    private fun setBitmap(manager: WallpaperManager, bitmap: Bitmap, crop: Rect, which: Int): Int =
+        try {
+            manager.setBitmap(bitmap, crop, false, which)
+        } catch (e: Exception) {
+            0
+        }
 
     // Files moved by the app: tell the media store, so gallery apps drop
     // the old place and find the new one (a path that is gone is removed).
