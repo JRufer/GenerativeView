@@ -4,7 +4,7 @@
 name: ci-report
 on:
   push:
-    branches: [feature/ratings-filters-upscale]
+    branches: [feat/set-as-wallpaper]
 permissions:
   contents: write
 env:

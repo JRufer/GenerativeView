@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'core/wallpaper.dart';
+
 class AppDirs {
   const AppDirs(this.data, this.cache);
 
@@ -286,6 +288,39 @@ Future<bool> shareFiles(List<String> paths) async {
     return false;
   } on MissingPluginException {
     return false;
+  }
+}
+
+/// Whether the system can be asked to set a wallpaper from here.
+bool get canSetWallpaper => Platform.isAndroid;
+
+/// This device's screens. Null where wallpapers cannot be set.
+Future<WallpaperDevice?> wallpaperDevice() async {
+  if (!canSetWallpaper) return null;
+  try {
+    final map = await _media.invokeMapMethod<Object?, Object?>('wallpaperScreens');
+    return map == null ? null : WallpaperDevice.fromMap(map);
+  } on PlatformException {
+    return null;
+  } on MissingPluginException {
+    return null;
+  }
+}
+
+/// Set the picture at [path] as wallpaper, one write per screen. Says for
+/// each write whether it worked.
+Future<List<bool>> setWallpaper(String path, List<WallpaperWrite> writes) async {
+  try {
+    final done = await _media.invokeListMethod<bool>('setWallpaper', {
+      'path': path,
+      'writes': [for (final w in writes) w.toMap()],
+    });
+    return done ?? const [];
+  } on PlatformException catch (e) {
+    debugPrint('wallpaper failed: $e');
+    return const [];
+  } on MissingPluginException {
+    return const [];
   }
 }
 

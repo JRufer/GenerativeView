@@ -15,6 +15,7 @@ import 'notes_widgets.dart';
 import 'remix_dialog.dart';
 import 'sheet.dart';
 import 'upscale_dialog.dart';
+import 'wallpaper_view.dart';
 
 /// The collection being looked at, if the grid is narrowed to one: every
 /// picture shown is in it, so the menu can take pictures out again.
@@ -59,6 +60,7 @@ Future<void> showImageMenu(
       const MenuEntry('paste', 'Paste into this folder', Icons.content_paste),
       const MenuEntry('move', 'Move to… (M)', Icons.drive_file_move_outline),
       if (canShareFiles) MenuEntry('share', item.isVideo ? 'Share video…' : 'Share image…', Icons.share_outlined),
+      if (canSetWallpaper && !item.isVideo) const MenuEntry('wallpaper', 'Set as wallpaper…', Icons.wallpaper_outlined),
     ],
     // Text about it
     [
@@ -87,6 +89,8 @@ Future<void> showImageMenu(
       copyText(context, item.path, 'file path');
     case 'share':
       await shareItems(context, [item]);
+    case 'wallpaper':
+      await openWallpaper(context, state, item);
     case 'paste':
       await pasteInto(context, state, item.dir);
     case 'uncollect':

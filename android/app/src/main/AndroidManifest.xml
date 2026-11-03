@@ -22,6 +22,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- "Set as wallpaper" in the image menu. Granted at install, no prompt. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <application
         android:label="GenerativeView"
         android:name="${applicationName}"
