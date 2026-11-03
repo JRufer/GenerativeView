@@ -12,6 +12,7 @@ app and are shown in full under **More (⋮) → About → Open-source licences*
 | Flutter engine and framework, Dart packages | BSD-3-Clause, MIT, Apache-2.0, MPL-2.0 (`dbus`, unmodified, from pub.dev) | Collected by Flutter itself |
 | Rust crates in the core (`core/Cargo.lock`) | MIT, Apache-2.0, BSD, ISC, Zlib, BSL-1.0, CC0-1.0, Unicode-3.0, IJG | `assets/licenses/rust.txt.gz` |
 | SQLite (bundled by `rusqlite`) | Public domain | `assets/licenses/other.txt.gz` |
+| libjxl, Brotli, Highway, skcms (JPEG XL encoder, through `gamut-jxl`) | BSD-3-Clause, MIT | `assets/licenses/other.txt.gz` |
 | English word list (pyspellchecker) | MIT | `assets/spelling/LICENSE-pyspellchecker.txt` |
 
 `assets/licenses/rust.txt.gz` is generated from `core/Cargo.lock` by
