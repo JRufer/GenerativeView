@@ -355,13 +355,26 @@ class _ScreenHints extends StatelessWidget {
       child: FractionallySizedBox(
         widthFactor: 0.76,
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
+            // Each takes its share, up to a set size, so they fit a narrow
+            // frame and do not balloon in a wide one.
             for (var i = 0; i < 4; i++)
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(color: Palette.text, borderRadius: BorderRadius.circular(8)),
+              Expanded(
+                child: Center(
+                  heightFactor: 1,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 26),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: AspectRatio(
+                        aspectRatio: 1,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(color: Palette.text, borderRadius: BorderRadius.circular(7)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
           ],
         ),
