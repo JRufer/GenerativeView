@@ -10,6 +10,7 @@ pub mod engine;
 pub mod ffi;
 pub mod fsnav;
 pub mod index;
+pub mod jxl;
 pub mod meta;
 pub mod notes;
 pub mod sr;
