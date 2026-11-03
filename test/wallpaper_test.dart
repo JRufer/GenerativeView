@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:generativeview/src/core/media_image.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/wallpaper.dart';
 import 'package:generativeview/src/theme.dart';
@@ -34,7 +35,14 @@ MediaItem _picture(String path) {
 
 Future<String> _writePicture() async {
   final dir = Directory.systemTemp.createTempSync('gv-wallpaper');
-  addTearDown(() => dir.deleteSync(recursive: true));
+  addTearDown(() {
+    try {
+      dir.deleteSync(recursive: true);
+    } on FileSystemException {
+      // Windows keeps a file open while its picture is decoded; the system
+      // clears its temp folder itself.
+    }
+  });
   const w = 64, h = 96;
   final rows = Uint8List((w * 3 + 1) * h);
   for (var y = 0; y < h; y++) {
@@ -50,6 +58,8 @@ Future<String> _writePicture() async {
 }
 
 void main() {
+  setUpAll(loadAppFonts);
+
   group('crop', () {
     test('a narrower screen takes the whole height', () {
       final crop = wallpaperCrop(1024, 1536, _cover, const WallpaperView());
@@ -112,6 +122,7 @@ void main() {
       RepaintBoundary(
         key: boundary,
         child: MaterialApp(
+          debugShowCheckedModeBanner: false,
           theme: buildTheme(),
           home: WallpaperPage(
             item: item,
@@ -125,7 +136,8 @@ void main() {
         ),
       ),
     );
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+    final page = tester.element(find.byType(WallpaperPage));
+    await tester.runAsync(() => precacheImage(mediaImage(item), page));
     await tester.pump();
     await act?.call();
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
