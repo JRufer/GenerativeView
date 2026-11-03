@@ -13,7 +13,7 @@ import 'package:generativeview/src/ui/wallpaper_view.dart';
 import 'support.dart';
 
 const _cover = WallpaperScreen(coverScreen, 'Cover', 1248, 1972);
-const _main = WallpaperScreen(mainScreen, 'Main', 1848, 2448);
+const _main = WallpaperScreen(mainScreen, 'Main', 2448, 1848);
 const _fold = WallpaperDevice([_main, _cover], coverScreen);
 const _tablet = WallpaperDevice([WallpaperScreen(onlyScreen, 'Screen', 2960, 1848)], onlyScreen);
 
@@ -70,7 +70,7 @@ void main() {
     test('a wider screen takes the whole width', () {
       final crop = wallpaperCrop(1024, 1536, _main, const WallpaperView());
       expect(crop.width, 1024);
-      expect(crop.height, closeTo(1356, 1));
+      expect(crop.height, closeTo(773, 1));
     });
 
     test('stays inside the picture however far it is dragged', () {
@@ -93,7 +93,7 @@ void main() {
 
   test('device reports are read, and nonsense is not', () {
     final fold = WallpaperDevice.fromMap({
-      'current': 'cover', 'mainWidth': 1848, 'mainHeight': 2448, 'coverWidth': 1248, 'coverHeight': 1972,
+      'current': 'cover', 'mainWidth': 2448, 'mainHeight': 1848, 'coverWidth': 1248, 'coverHeight': 1972,
     })!;
     expect(fold.hasCover, isTrue);
     expect(fold.current, coverScreen);
@@ -201,7 +201,7 @@ void main() {
     await tester.tap(find.text('Set wallpaper'));
     await tester.pump();
     expect(written.single.which, 6);
-    expect(written.single.crop.top, greaterThan(90));
+    expect(written.single.crop.top, greaterThan(381));
   });
 
   testWidgets('a tablet has no screen choice, and a sideways side panel', (tester) async {

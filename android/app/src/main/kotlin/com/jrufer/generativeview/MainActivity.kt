@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.view.Surface
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect
@@ -165,25 +166,28 @@ class MainActivity : FlutterActivity() {
         return metrics.widthPixels to metrics.heightPixels
     }
 
-    // The screens' sizes. Only the lit one can be measured, so each is
-    // remembered when seen, with the Fold 8's until then.
+    // The screens' sizes, the way each panel sits when it is not turned (the
+    // Fold 8's main screen is wider than tall). Only the lit one can be
+    // measured, so each is remembered when seen, with the Fold 8's until then.
     private fun wallpaperScreens(): Map<String, Any> {
-        val (width, height) = displaySize()
-        if (!hasCoverScreen()) return mapOf("current" to "screen", "width" to width, "height" to height)
-        val short = minOf(width, height)
-        val long = maxOf(width, height)
-        val isCover = short.toDouble() / long < 0.70
+        val (seenWidth, seenHeight) = displaySize()
+        if (!hasCoverScreen()) return mapOf("current" to "screen", "width" to seenWidth, "height" to seenHeight)
+        val rotation = if (Build.VERSION.SDK_INT >= 30) display?.rotation ?: Surface.ROTATION_0 else Surface.ROTATION_0
+        val turned = rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270
+        val width = if (turned) seenHeight else seenWidth
+        val height = if (turned) seenWidth else seenHeight
+        val isCover = minOf(width, height).toDouble() / maxOf(width, height) < 0.70
         val saved = getSharedPreferences("wallpaper", Context.MODE_PRIVATE)
         saved.edit()
-            .putInt(if (isCover) "coverWidth" else "mainWidth", short)
-            .putInt(if (isCover) "coverHeight" else "mainHeight", long)
+            .putInt(if (isCover) "coverPanelWidth" else "mainPanelWidth", width)
+            .putInt(if (isCover) "coverPanelHeight" else "mainPanelHeight", height)
             .apply()
         return mapOf(
             "current" to if (isCover) "cover" else "main",
-            "mainWidth" to saved.getInt("mainWidth", 1848),
-            "mainHeight" to saved.getInt("mainHeight", 2448),
-            "coverWidth" to saved.getInt("coverWidth", 1248),
-            "coverHeight" to saved.getInt("coverHeight", 1972),
+            "mainWidth" to saved.getInt("mainPanelWidth", 2448),
+            "mainHeight" to saved.getInt("mainPanelHeight", 1848),
+            "coverWidth" to saved.getInt("coverPanelWidth", 1248),
+            "coverHeight" to saved.getInt("coverPanelHeight", 1972),
         )
     }
 
