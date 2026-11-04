@@ -433,6 +433,8 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
     await settle(tester);
     expect(find.text('Keyboard shortcuts'), findsOneWidget);
+    await tester.dragUntilVisible(find.text('Rate it (the same number again clears)'), find.byType(ListView).last, const Offset(0, -200));
+    await settle(tester);
     expect(find.text('Rate it (the same number again clears)'), findsOneWidget);
     await screenshot(tester, boundary, '24-shortcuts');
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);

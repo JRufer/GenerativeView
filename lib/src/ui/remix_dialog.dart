@@ -2005,7 +2005,7 @@ Future<void> openBackendSettings(BuildContext context, AppState state, {String? 
 }
 
 class BackendSettings extends StatefulWidget {
-  const BackendSettings({required this.state, this.focus});
+  const BackendSettings({super.key, required this.state, this.focus});
   final AppState state;
   final String? focus;
 
