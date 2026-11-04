@@ -886,6 +886,16 @@ impl Engine {
                 })
                 .to_string())
             }
+            "thumbs_size" => Ok(json!({ "bytes": self.thumbs.disk_size() }).to_string()),
+            "thumbs_clear" => {
+                self.thumbs.clear_disk()?;
+                Ok("{}".to_string())
+            }
+            "notes_prune" => {
+                let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(false);
+                let (entries, folders) = self.notes.prune(&self.db, apply)?;
+                Ok(json!({ "entries": entries, "folders": folders }).to_string())
+            }
             "jxl_convert" => {
                 let quality = crate::jxl::quality(args.get("quality").and_then(Value::as_str));
                 crate::jxl::convert(Path::new(str_arg(args, "path")?), Path::new(str_arg(args, "dest")?), quality)?;

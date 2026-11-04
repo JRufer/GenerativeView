@@ -167,6 +167,24 @@ impl Thumbs {
         }
     }
 
+    /// How many bytes of thumbnails are cached.
+    pub fn disk_size(&self) -> u64 {
+        fn walk(dir: &Path) -> u64 {
+            std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| match e.metadata() {
+                Ok(md) if md.is_dir() => walk(&e.path()),
+                Ok(md) => md.len(),
+                Err(_) => 0,
+            }).sum()
+        }
+        walk(&self.dir)
+    }
+
+    /// Delete the cached thumbnails; they are made again as needed.
+    pub fn clear_disk(&self) -> Result<(), String> {
+        std::fs::remove_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())
+    }
+
     /// Cached thumbnail bytes, generating them if needed.
     pub fn get(&self, path: &str, mtime: i64, size: i64, tier: u8) -> ThumbResult {
         let tier = tier.min(TIERS.len() as u8 - 1);

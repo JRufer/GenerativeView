@@ -258,6 +258,7 @@ class _BreedPanelState extends State<BreedPanel> {
     try {
       final bred = await widget.state.breed(
         List.of(_parents),
+        count: widget.state.prefNumber('pref_breed_count', 6).round(),
         phrases: _phrases,
         loras: _loras,
         settings: _settings,

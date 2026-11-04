@@ -429,6 +429,17 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('settings-servers')));
     await settle(tester);
     expect(find.text('Address'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey<String>('settings-back')));
+    await settle(tester);
+    // A section further down the list, and a setting that sticks and resets.
+    await tester.scrollUntilVisible(find.byKey(const ValueKey<String>('settings-storage')), 80, scrollable: find.byType(Scrollable).last);
+    await tester.tap(find.byKey(const ValueKey<String>('settings-storage')));
+    await pumpUntil(tester, () => find.textContaining(' MB').evaluate().isNotEmpty, what: 'the thumbnail cache size');
+    state.setPref('pref_gap', 8);
+    expect(gridGap, 8);
+    state.resetPrefs();
+    expect(gridGap, 3);
+    expect(state.prefFlag('pref_reopen', true), isTrue);
   });
 
   testWidgets('about, on a phone-sized screen', (tester) async {
