@@ -23,6 +23,7 @@ import 'package:generativeview/src/core/civitai.dart';
 import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
+import 'package:generativeview/src/core/presets.dart';
 import 'package:generativeview/src/core/prompt_weights.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
 import 'package:generativeview/src/licenses.dart';
@@ -380,6 +381,32 @@ void main() {
       File('${library.path}/$name').deleteSync();
     }
     await pumpUntil(tester, () => state.items.length == 6, what: 'gone again');
+    await close(tester, state);
+  });
+
+  testWidgets('a preset applied in Remix, and taken off', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    state.savePreset(const Preset(id: 'ink', name: 'Ink wash', prompt: 'ink wash painting', steps: 28));
+    final item = state.items[indexOf(state, 'fox_03.png')];
+    unawaited(openRemix(tester.element(find.byType(MediaGrid)), state, item));
+    await settle(tester);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('preset-strip')).evaluate().isNotEmpty, what: 'the Remix panel');
+    PromptController prompt() => tester.widget<PromptEditor>(find.byKey(const ValueKey('remix-prompt'))).controller;
+    final before = prompt().text;
+    await tester.ensureVisible(find.byKey(const ValueKey('preset-chip-Ink wash')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('preset-chip-Ink wash')));
+    await settle(tester);
+    expect(prompt().text, '$before, ink wash painting');
+    expect(prompt().added, ['ink wash painting']);
+    await tester.tap(find.byKey(const ValueKey('preset-chip-Ink wash')));
+    await settle(tester);
+    expect(prompt().text, before);
+    expect(prompt().added, isEmpty);
+    state.deletePreset(state.presets.single);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle(tester);
     await close(tester, state);
   });
 

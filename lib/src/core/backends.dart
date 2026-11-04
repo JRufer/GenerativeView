@@ -85,6 +85,13 @@ class Remix {
             if (c.enabled) c.ref,
         ];
 
+  /// Whether [loras] has one the picture was not made with. A picture's own
+  /// graph has no place for it, so a graph is built from its settings.
+  bool get addsLoras {
+    final own = {for (final l in info.loras) modelKey(l.name)};
+    return loras?.any((c) => !own.contains(c.key)) ?? false;
+  }
+
   int seedFor(int run, math.Random random) =>
       randomSeed ? random.nextInt(1 << 32) : seed + run;
 }
@@ -470,7 +477,7 @@ void _requirePrompt(int found, Remix remix) {
 }
 
 Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
-  final raw = carriesGraph('comfyui', remix.info) ? rawBlock(remix.info, 'prompt') : null;
+  final raw = carriesGraph('comfyui', remix.info) && !remix.addsLoras ? rawBlock(remix.info, 'prompt') : null;
   final random = math.Random();
   final ids = <String>[];
   final skipped = <String>[];
@@ -818,7 +825,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   // names the right loaders for any kind of model (Krea 2's separate VAE
   // and text encoder, say), which a graph built from settings cannot.
   final init = remix.init;
-  final raw = carriesGraph('invokeai', remix.info) ? rawBlock(remix.info, 'invokeai_graph') : null;
+  final raw = carriesGraph('invokeai', remix.info) && !remix.addsLoras ? rawBlock(remix.info, 'invokeai_graph') : null;
   final random = math.Random();
   final ids = <int>[];
   final skipped = <String>[];

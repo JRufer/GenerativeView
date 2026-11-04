@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/backends.dart';
+import '../core/presets.dart';
 import '../core/civitai.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
@@ -15,6 +16,7 @@ import '../theme.dart';
 import 'audience_widgets.dart' show RemixAudienceSection;
 import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
+import 'presets_ui.dart';
 import 'prompt_editor.dart';
 import 'kit.dart';
 import 'sheet.dart';
@@ -125,6 +127,89 @@ class _RemixPanelState extends State<RemixPanel> {
   late final List<LoraChoice> _loras = [for (final l in widget.info.loras) LoraChoice(l)];
   bool _random = false;
   int _count = 1;
+
+  /// The preset applied, and everything as it was before it.
+  Preset? _preset;
+  ({
+    TextEditingValue prompt,
+    TextEditingValue negative,
+    String width,
+    String height,
+    int? steps,
+    double? cfg,
+    List<LoraChoice> loras,
+  })? _beforePreset;
+
+  /// Moves on with each preset, so the fields that keep their own copy of a
+  /// value start again from the new one.
+  int _presetTick = 0;
+
+  void _applyPreset(Preset preset) {
+    if (_preset != null) _undoPreset();
+    setState(() {
+      _beforePreset = (
+        prompt: _prompt.value,
+        negative: _negative.value,
+        width: _width.text,
+        height: _height.text,
+        steps: _sampling.steps,
+        cfg: _sampling.cfg,
+        loras: [for (final l in _loras) l.copy()],
+      );
+      _preset = preset;
+      _presetTick++;
+      if (preset.prompt case final text?) {
+        _prompt.added = addedPresetPhrases(_prompt.text, text, replace: preset.replacePrompt);
+        _prompt.text = applyPresetText(_prompt.text, text, replace: preset.replacePrompt);
+      }
+      if (preset.negative case final text?) {
+        _negative.added = addedPresetPhrases(_negative.text, text, replace: preset.replaceNegative);
+        _negative.text = applyPresetText(_negative.text, text, replace: preset.replaceNegative);
+      }
+      if (preset.width case final w?) _width.text = '$w';
+      if (preset.height case final h?) _height.text = '$h';
+      if (preset.steps case final steps?) _sampling.steps = steps;
+      if (preset.cfg case final cfg?) _sampling.cfg = cfg;
+      applyPresetLoras(_loras, preset.loras);
+    });
+  }
+
+  void _undoPreset() {
+    final before = _beforePreset;
+    if (before == null) return;
+    setState(() {
+      _prompt
+        ..added = const []
+        ..value = before.prompt;
+      _negative
+        ..added = const []
+        ..value = before.negative;
+      _width.text = before.width;
+      _height.text = before.height;
+      _sampling
+        ..steps = before.steps
+        ..cfg = before.cfg;
+      _loras
+        ..clear()
+        ..addAll(before.loras);
+      _preset = null;
+      _beforePreset = null;
+      _presetTick++;
+    });
+  }
+
+  /// A preset of what is in the panel now, to pick from in the Save panel.
+  Preset _draft({String? prompt}) => Preset(
+    id: '',
+    name: '',
+    prompt: prompt ?? _prompt.text,
+    negative: prompt != null ? null : _negative.text,
+    loras: prompt != null ? const [] : [for (final l in _loras) if (l.enabled) PresetLora(l.original.name, l.weight)],
+    steps: _sampling.steps,
+    cfg: _sampling.cfg,
+    width: int.tryParse(_width.text),
+    height: int.tryParse(_height.text),
+  );
 
   /// Start from the picture itself (image to image) rather than from noise.
   /// Only when the user picks it.
@@ -309,7 +394,15 @@ Widget build(BuildContext context) {
         ),
       ),
       if (_imageToImage) _imageSection(),
-      const SizedBox(height: 14),
+      const SizedBox(height: 12),
+      PresetStrip(
+        state: widget.state,
+        active: _preset,
+        onApply: _applyPreset,
+        onClear: _undoPreset,
+        onSave: () => openSavePreset(context, widget.state, _draft()),
+      ),
+      const SizedBox(height: 12),
       PromptEditor(
         key: const ValueKey<String>('remix-prompt'),
         controller: _prompt,
@@ -317,6 +410,7 @@ Widget build(BuildContext context) {
         label: 'Prompt',
         minLines: 4,
         onAddWord: widget.state.addUserWord,
+        onSaveSelection: (words) => openSavePreset(context, widget.state, _draft(prompt: words)),
       ),
       const SizedBox(height: 4),
       const Text(
@@ -408,8 +502,8 @@ Widget build(BuildContext context) {
           padding: EdgeInsets.only(top: 6),
           child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
         ),
-      SamplingSection(key: const ValueKey<String>('remix-sampling'), choice: _sampling),
-      if (_loras.isNotEmpty) LoraSection(loras: _loras, prompt: _prompt),
+      SamplingSection(key: ValueKey<String>('remix-sampling-$_presetTick'), choice: _sampling),
+      if (_loras.isNotEmpty) LoraSection(key: ValueKey<String>('remix-loras-$_presetTick'), loras: _loras, prompt: _prompt),
       if (_backend != null && (urls[_backend] ?? '').isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 10),

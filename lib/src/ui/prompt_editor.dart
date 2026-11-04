@@ -13,6 +13,15 @@ class PromptController extends TextEditingController {
   PromptController({super.text});
 
   Spelling? _spelling;
+
+  /// Text to show as new, in the accent colour: what a preset added.
+  List<String> get added => _added;
+  List<String> _added = const [];
+  set added(List<String> value) {
+    _added = value;
+    notifyListeners();
+  }
+
   final Set<String> _ignored = {};
 
   Spelling? get spelling => _spelling;
@@ -65,18 +74,25 @@ class PromptController extends TextEditingController {
         }
       }
     }
+    final fresh = List<bool>.filled(t.length, false);
+    for (final phrase in _added) {
+      for (var at = t.indexOf(phrase); at >= 0 && phrase.isNotEmpty; at = t.indexOf(phrase, at + 1)) {
+        fresh.fillRange(at, at + phrase.length, true);
+      }
+    }
     final spans = <TextSpan>[];
     var from = 0;
     for (var i = 1; i <= t.length; i++) {
-      if (i < t.length && tints[i] == tints[from] && wrong[i] == wrong[from]) continue;
+      if (i < t.length && tints[i] == tints[from] && wrong[i] == wrong[from] && fresh[i] == fresh[from]) continue;
       spans.add(
         TextSpan(
           text: t.substring(from, i),
           style: TextStyle(
             backgroundColor: tints[from],
-            decoration: wrong[from] ? TextDecoration.underline : null,
+            color: fresh[from] ? Palette.accent : null,
+            decoration: wrong[from] || fresh[from] ? TextDecoration.underline : null,
             decorationStyle: wrong[from] ? TextDecorationStyle.wavy : null,
-            decorationColor: wrong[from] ? Palette.danger : null,
+            decorationColor: wrong[from] ? Palette.danger : (fresh[from] ? Palette.accent : null),
           ),
         ),
       );
@@ -104,8 +120,12 @@ class PromptEditor extends StatefulWidget {
     this.onAddWord,
     this.autofocus = false,
     this.focusNode,
+    this.onSaveSelection,
   });
   final PromptController controller;
+
+  /// Save the words selected as a preset; null to not offer it.
+  final ValueChanged<String>? onSaveSelection;
 
   /// Its focus, when the panel around it needs to move the caret into it.
   final FocusNode? focusNode;
@@ -398,6 +418,19 @@ class _PromptEditorState extends State<PromptEditor> {
 
   Widget _contextMenu(BuildContext context, EditableTextState editable) {
     final items = [...editable.contextMenuButtonItems];
+    final selected = _c.selection.isValid && !_c.selection.isCollapsed ? _c.selection.textInside(_c.text) : '';
+    final save = widget.onSaveSelection;
+    if (save != null && selected.trim().isNotEmpty) {
+      items.add(
+        ContextMenuButtonItem(
+          label: 'Save selection as preset…',
+          onPressed: () {
+            ContextMenuController.removeAny();
+            save(selected.trim());
+          },
+        ),
+      );
+    }
     final wrong = _c.misspelledAt(_c.selection.baseOffset);
     if (wrong != null) {
       final fixes = _c.spelling?.suggest(wrong.$2, count: 3) ?? const [];

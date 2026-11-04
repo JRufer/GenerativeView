@@ -7,6 +7,7 @@ import '../core/media_image.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show toast;
+import 'presets_ui.dart';
 import 'remix_dialog.dart' show BackendSettings;
 import 'sheet.dart';
 
@@ -29,6 +30,7 @@ enum _Section {
   general('General', Icons.tune),
   grid('Grid', Icons.grid_view),
   saved('Saved images', Icons.save_outlined),
+  presets('Presets', Icons.bookmarks_outlined),
   servers('Servers', Icons.dns_outlined),
   search('Search and AI', Icons.auto_awesome_outlined);
 
@@ -66,6 +68,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
       _Section.general => _General(state: widget.state),
       _Section.grid => _Grid(state: widget.state),
       _Section.saved => _Saved(state: widget.state),
+      _Section.presets => PresetSettings(state: widget.state),
       _Section.servers => BackendSettings(state: widget.state),
       _Section.search => _Search(state: widget.state),
     },

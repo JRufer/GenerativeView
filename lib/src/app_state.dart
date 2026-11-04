@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 import 'core/audience.dart';
 import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
 import 'core/media_image.dart';
+import 'core/presets.dart';
 import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
@@ -396,6 +397,10 @@ class AppState extends ChangeNotifier {
   /// Whether grid tiles show their audience level.
   bool audienceBadges = true;
 
+  /// Saved parts of recipes, kept with the app's settings rather than in any
+  /// picture folder. Uninstalling the app takes them too: see Export.
+  List<Preset> presets = const [];
+
   /// How Remixes and Breeds are kept: 'png' (as the server sent them) or 'jxl'.
   String remixFormat = 'png';
 
@@ -542,6 +547,10 @@ class AppState extends ChangeNotifier {
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
     audienceSource = (saved['audience_source'] as String?) ?? audienceSource;
+    presets = [
+      for (final entry in _savedList(saved['presets']))
+        if (entry is Map<String, dynamic>) Preset.fromJson(entry),
+    ];
     remixFormat = (saved['remix_format'] as String?) ?? remixFormat;
     upscaleFormat = (saved['upscale_format'] as String?) ?? upscaleFormat;
     jxlQuality = (saved['jxl_quality'] as String?) ?? jxlQuality;
@@ -1423,6 +1432,41 @@ class AppState extends ChangeNotifier {
   Future<AudienceSteer> steerAudience(String prompt, String negative, int target) async {
     final json = await core.call('audience_steer', {'prompt': prompt, 'negative': negative, 'target': target});
     return AudienceSteer.fromJson(json as Map<String, dynamic>);
+  }
+
+  void _keepPresets(List<Preset> list) {
+    presets = list;
+    _save('presets', jsonEncode([for (final p in list) p.toJson()]));
+    notifyListeners();
+  }
+
+  String newPresetId() => '${DateTime.now().microsecondsSinceEpoch}';
+
+  /// Add [preset], or change the one with its id.
+  void savePreset(Preset preset) {
+    final at = presets.indexWhere((p) => p.id == preset.id);
+    _keepPresets(at < 0 ? [...presets, preset] : ([...presets]..[at] = preset));
+  }
+
+  void deletePreset(Preset preset) => _keepPresets([
+    for (final p in presets)
+      if (p.id != preset.id) p,
+  ]);
+
+  void movePreset(int from, int to) {
+    final list = [...presets];
+    list.insert(to > from ? to - 1 : to, list.removeAt(from));
+    _keepPresets(list);
+  }
+
+  /// Write every preset to the file at [path].
+  Future<void> exportPresets(String path) => File(path).writeAsString(presetsToFile(presets), flush: true);
+
+  /// Add the presets in the file at [path]; answers with how many were new.
+  Future<int> importPresets(String path) async {
+    final before = presets.length;
+    _keepPresets(mergePresets(presets, presetsFromFile(await File(path).readAsString()), newPresetId));
+    return presets.length - before;
   }
 
   void setRemixFormat(String value) {

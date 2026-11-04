@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../core/models.dart';
+import '../core/presets.dart';
 import '../core/taste.dart';
 import '../theme.dart';
 import 'audience_widgets.dart' show AudienceRow;
@@ -11,6 +12,7 @@ import 'civitai_sheet.dart';
 import 'context_menu.dart';
 import 'notes_widgets.dart';
 import 'describe_card.dart';
+import 'presets_ui.dart';
 import 'prompt_check.dart';
 import 'remix_dialog.dart';
 import 'upscale_dialog.dart';
@@ -151,10 +153,14 @@ class _MetaPanelState extends State<MetaPanel> {
         Icons.filter_alt_outlined,
       ),
       const MenuEntry('remix', 'Edit and remix… (R)', Icons.auto_fix_high),
+      const MenuEntry('preset', 'Save as preset…', Icons.bookmark_add_outlined),
     ]);
     if (!mounted) return;
     if (choice == 'filter') widget.state.applyFilter(exactTerm(field, text));
     if (choice == 'remix') await openRemix(context, widget.state, item);
+    if (choice == 'preset') {
+      await openSavePreset(context, widget.state, Preset(id: '', name: '', prompt: negative ? null : text, negative: negative ? text : null));
+    }
   }
 
   /// The hash saved with the model called [name], if any.
