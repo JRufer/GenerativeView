@@ -251,6 +251,11 @@ class NativeCore {
     return jsonDecode(reply as String);
   }
 
+  /// The picture in a `.jxl` file: its width and height (four bytes each,
+  /// little endian), then RGBA.
+  Future<Uint8List> jxlPixels(String path) async =>
+      await _request('jxl_pixels', {'path': path}) as Uint8List;
+
   /// The items of a folder view, in the packed layout described in
   /// `core/src/db.rs` (decode with `ItemList.parse`). With [sort]
   /// 'relevance' the best matches for [text] come first, and equally good

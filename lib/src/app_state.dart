@@ -162,6 +162,7 @@ class AppState extends ChangeNotifier {
     this.contentBar,
   }) {
     _events = core.events.listen(_onEvent);
+    jxlPixels = core.jxlPixels;
   }
 
   final NativeCore core;

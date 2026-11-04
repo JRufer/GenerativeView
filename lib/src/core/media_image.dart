@@ -1,9 +1,52 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
+
+/// Flutter's image codecs cannot read JPEG XL, so those come from the core.
+bool isJxl(String path) => path.toLowerCase().endsWith('.jxl');
+
+/// The core's `jxl_pixels`, set when the app starts.
+Future<Uint8List> Function(String path)? jxlPixels;
+
+/// The picture at [path], whatever its format, ready to draw.
+Future<ui.Codec> pictureCodec(String path) async {
+  if (!isJxl(path)) return ui.instantiateImageCodec(await File(path).readAsBytes());
+  final read = jxlPixels;
+  if (read == null) throw StateError('no core to read $path');
+  final reply = await read(path);
+  final head = ByteData.sublistView(reply, 0, 8);
+  final buffer = await ui.ImmutableBuffer.fromUint8List(Uint8List.sublistView(reply, 8));
+  final descriptor = ui.ImageDescriptor.raw(
+    buffer,
+    width: head.getUint32(0, Endian.little),
+    height: head.getUint32(4, Endian.little),
+    pixelFormat: ui.PixelFormat.rgba8888,
+  );
+  return descriptor.instantiateCodec();
+}
+
+/// A file other programs can open with the picture at [path]: the file itself
+/// unless it is a `.jxl`, which is written out as a temporary PNG.
+Future<String> readablePath(String path) async {
+  if (!isJxl(path)) return path;
+  final codec = await pictureCodec(path);
+  final frame = await codec.getNextFrame();
+  try {
+    final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+    final dir = await getTemporaryDirectory();
+    final out = File('${dir.path}/generativeview_${DateTime.now().microsecondsSinceEpoch}.png');
+    await out.writeAsBytes(data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+    return out.path;
+  } finally {
+    frame.image.dispose();
+    codec.dispose();
+  }
+}
 
 /// A [FileImage] that knows which version of the file it shows.
 ///
@@ -19,6 +62,12 @@ class VersionedFileImage extends FileImage {
 
   /// What changes whenever the file's contents may have.
   final String version;
+
+  @override
+  ImageStreamCompleter loadImage(FileImage key, ImageDecoderCallback decode) {
+    if (!isJxl(file.path)) return super.loadImage(key, decode);
+    return MultiFrameImageStreamCompleter(codec: pictureCodec(file.path), scale: key.scale, debugLabel: file.path);
+  }
 
   @override
   bool operator ==(Object other) {

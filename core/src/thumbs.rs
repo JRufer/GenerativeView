@@ -221,6 +221,9 @@ fn load(path: &Path) -> Result<image::DynamicImage, ThumbError> {
         return video_frame(path);
     }
     let fail = |e: &dyn std::fmt::Display| ThumbError::Failed(e.to_string());
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("jxl")) {
+        return crate::jxl::open(path).map_err(|e| fail(&e));
+    }
     let mut reader = image::ImageReader::open(path).map_err(|e| fail(&e))?.with_guessed_format().map_err(|e| fail(&e))?;
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(1 << 30);

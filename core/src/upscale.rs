@@ -34,6 +34,7 @@ enum Format {
     Png,
     Jpeg,
     WebP,
+    Jxl,
 }
 
 fn sniff(bytes: &[u8]) -> Option<Format> {
@@ -43,6 +44,8 @@ fn sniff(bytes: &[u8]) -> Option<Format> {
         Some(Format::Jpeg)
     } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Some(Format::WebP)
+    } else if crate::jxl::is_jxl(bytes) {
+        Some(Format::Jxl)
     } else {
         None
     }
@@ -55,11 +58,15 @@ fn sniff(bytes: &[u8]) -> Option<Format> {
 pub fn save(source: &Path, picture: &DynamicImage, metadata: Metadata) -> Result<PathBuf, String> {
     let original = std::fs::read(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
     let format = sniff(&original).ok_or("the original is not a PNG, JPEG or WebP picture")?;
-    let (ow, _) = image::ImageReader::new(std::io::Cursor::new(&original))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok())
-        .unwrap_or((0, 0));
+    let (ow, _) = if format == Format::Jxl {
+        crate::jxl::dimensions(&original).unwrap_or((0, 0))
+    } else {
+        image::ImageReader::new(std::io::Cursor::new(&original))
+            .with_guessed_format()
+            .ok()
+            .and_then(|r| r.into_dimensions().ok())
+            .unwrap_or((0, 0))
+    };
     let bytes = encode(format, picture, &original, metadata)?;
     let dest = destination(source, ow, picture.width(), format);
     std::fs::write(&dest, bytes).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
@@ -80,6 +87,7 @@ fn destination(source: &Path, from_width: u32, to_width: u32, format: Format) ->
         Format::Png => "png",
         Format::Jpeg => "jpg",
         Format::WebP => "webp",
+        Format::Jxl => "jxl",
     });
     let factor = if from_width > 0 { to_width as f64 / from_width as f64 } else { 0.0 };
     let tag = if factor <= 0.0 {
@@ -132,6 +140,13 @@ fn encode(format: Format, picture: &DynamicImage, original: &[u8], metadata: Met
                 Metadata::Strip => out,
                 Metadata::Copy => jpeg_with_segments(&out, &jpeg_meta_segments(original)),
             })
+        }
+        Format::Jxl => {
+            let meta = match metadata {
+                Metadata::Strip => &[][..],
+                Metadata::Copy => crate::jxl::metadata(original).unwrap_or(&[]),
+            };
+            crate::jxl::encode(picture, crate::jxl::Quality::Lossless, meta)
         }
         Format::WebP => {
             let rgba = picture.to_rgba8();
@@ -338,6 +353,22 @@ mod tests {
         let mut out = Vec::new();
         picture(w, h).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
         out
+    }
+
+    #[test]
+    fn a_jxl_upscales_to_a_jxl_with_its_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("fox.jxl");
+        let texts = vec![("parameters".to_string(), "a fox\nSteps: 20".to_string())];
+        let packed = crate::jxl::pack_texts(&texts).unwrap();
+        std::fs::write(&source, crate::jxl::encode(&picture(16, 12), crate::jxl::Quality::Lossless, &packed).unwrap()).unwrap();
+        let kept = save(&source, &picture(32, 24), Metadata::Copy).unwrap();
+        assert_eq!(kept.file_name().unwrap(), "fox_up2x.jxl");
+        let read = crate::meta::container::read_raw(&kept).unwrap();
+        assert_eq!(read.texts, texts);
+        assert_eq!((read.width, read.height), (32, 24));
+        let bare = save(&source, &picture(32, 24), Metadata::Strip).unwrap();
+        assert!(crate::meta::container::read_raw(&bare).unwrap().texts.is_empty());
     }
 
     #[test]

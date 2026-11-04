@@ -35,6 +35,8 @@ pub fn read_raw(path: &Path) -> io::Result<RawMeta> {
         read_jpeg(&mut r, &mut out)?;
     } else if n >= 12 && &magic[0..4] == b"RIFF" && &magic[8..12] == b"WEBP" {
         read_webp(&mut r, len, &mut out)?;
+    } else if crate::jxl::is_jxl(magic) {
+        read_jxl(&mut r, len, &mut out)?;
     } else if magic.starts_with(b"GIF8") && n >= 10 {
         out.width = u16::from_le_bytes([magic[6], magic[7]]) as u32;
         out.height = u16::from_le_bytes([magic[8], magic[9]]) as u32;
@@ -104,6 +106,59 @@ const GEN_KEYS: &[&str] = &[
 
 fn has_gen_key(out: &RawMeta) -> bool {
     out.texts.iter().any(|(k, _)| GEN_KEYS.iter().any(|g| k.eq_ignore_ascii_case(g)))
+}
+
+/// A `.jxl`: its size from the start of the file, and its text from the boxes
+/// of the container, stepped over rather than read.
+fn read_jxl(r: &mut Rd, file_len: u64, out: &mut RawMeta) -> io::Result<()> {
+    r.seek(SeekFrom::Start(0))?;
+    let mut head = vec![0u8; file_len.min(256 * 1024) as usize];
+    let n = read_some(r, &mut head)?;
+    head.truncate(n);
+    if let Ok((width, height)) = crate::jxl::dimensions(&head) {
+        out.width = width;
+        out.height = height;
+    }
+    if !head.starts_with(b"\0\0\0\x0cJXL ") {
+        return Ok(());
+    }
+    let mut at = 0u64;
+    while at + 8 <= file_len {
+        r.seek(SeekFrom::Start(at))?;
+        let mut header = [0u8; 8];
+        r.read_exact(&mut header)?;
+        let mut start = at + 8;
+        let size = match u32::from_be_bytes([header[0], header[1], header[2], header[3]]) {
+            0 => file_len - at,
+            1 => {
+                let mut long = [0u8; 8];
+                r.read_exact(&mut long)?;
+                start += 8;
+                u64::from_be_bytes(long)
+            }
+            n => u64::from(n),
+        };
+        let Some(end) = at.checked_add(size).filter(|e| *e > at && *e >= start && *e <= file_len) else { break };
+        match &header[4..8] {
+            kind if kind == crate::jxl::META_BOX => {
+                let body = read_vec(r, end - start)?;
+                out.texts.extend(crate::jxl::unpack_texts(&body));
+            }
+            b"Exif" => {
+                let body = read_vec(r, end - start)?;
+                // Four bytes say where in the box the TIFF stream starts.
+                if body.len() >= 4 {
+                    let skip = u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize;
+                    if let Some(tiff) = body.get(4 + skip..) {
+                        parse_exif(tiff, &mut out.texts);
+                    }
+                }
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    Ok(())
 }
 
 fn read_png(r: &mut Rd, out: &mut RawMeta) -> io::Result<()> {

@@ -145,8 +145,7 @@ Future<ImageInput> prepareImageInput({
   required double strength,
   required List<MaskOp> ops,
 }) async {
-  final bytes = await File(path).readAsBytes();
-  final codec = await ui.instantiateImageCodec(bytes);
+  final codec = await pictureCodec(path);
   final frame = await codec.getNextFrame();
   final source = frame.image;
   final full = Size(source.width.toDouble(), source.height.toDouble());

@@ -375,7 +375,7 @@ pub fn media_kind(path: &Path) -> Option<bool> {
     lower.copy_from_slice(ext.as_bytes());
     lower.make_ascii_lowercase();
     match &*lower {
-        b"png" | b"jpg" | b"jpeg" | b"webp" | b"gif" | b"bmp" => Some(false),
+        b"png" | b"jpg" | b"jpeg" | b"webp" | b"gif" | b"bmp" | b"jxl" => Some(false),
         b"mp4" | b"webm" | b"mov" | b"mkv" | b"m4v" => Some(true),
         _ => None,
     }
