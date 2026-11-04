@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/media_image.dart';
 import '../core/models.dart';
 import '../platform.dart';
 import 'breed_dialog.dart';
@@ -187,14 +188,14 @@ Future<void> _showManyMenu(BuildContext context, AppState state, List<MediaItem>
 /// and all.
 Future<void> copyItems(BuildContext context, List<MediaItem> items) async {
   if (items.length == 1) return copyImage(context, items.single);
-  final copied = await copyFilesToClipboard([for (final i in items) i.path]);
+  final copied = await copyFilesToClipboard(await Future.wait([for (final i in items) outgoingPath(i.path)]));
   if (!context.mounted) return;
   toast(context, copied ? 'Copied ${items.length} files' : 'Could not copy these files');
 }
 
 /// Hand [items] to another app through the system's share sheet.
 Future<void> shareItems(BuildContext context, List<MediaItem> items) async {
-  final shared = await shareFiles([for (final i in items) i.path]);
+  final shared = await shareFiles(await Future.wait([for (final i in items) outgoingPath(i.path)]));
   if (!shared && context.mounted) toast(context, 'Could not share ${items.length == 1 ? 'this file' : 'these files'}');
 }
 
@@ -348,7 +349,7 @@ Future<void> deleteFile(BuildContext context, AppState state, MediaItem item) as
 /// Copy the file itself, so whatever it is pasted into gets the generation
 /// data along with the picture.
 Future<void> copyImage(BuildContext context, MediaItem item) async {
-  final copied = await copyFileToClipboard(item.path);
+  final copied = await copyFileToClipboard(await outgoingPath(item.path));
   if (!context.mounted) return;
   final what = item.isVideo ? 'video' : 'image';
   toast(context, copied ? 'Copied $what' : 'Could not copy this $what');

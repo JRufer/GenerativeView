@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
+import 'package:generativeview/src/core/backends.dart' show RemixImage, RemixTicket;
 import 'package:generativeview/src/core/media_image.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/thumb_cache.dart';
@@ -67,6 +68,23 @@ void main() {
       () => prepareImageInput(path: item.path, width: 320, height: 320, strength: 0.5, ops: const []),
     ))!;
     expect(input.image.sublist(0, 4), [0x89, 0x50, 0x4E, 0x47]);
+
+    // Leaving the app it is a PNG, generation data and all.
+    final out = (await tester.runAsync(() async {
+      final dest = '${scratch.path}/out.png';
+      await core.call('jxl_png', {'path': item.path, 'dest': dest});
+      return File(dest).readAsBytes();
+    }))!;
+    expect(out.sublist(0, 4), [0x89, 0x50, 0x4E, 0x47]);
+    expect(String.fromCharCodes(out), contains('a red fox in the snow'));
+
+    // With JXL chosen, a Remix is kept as one, in the Remixes collection.
+    state.setRemixFormat('jxl');
+    final png = pngWithText(64, 64, 9, {'prompt': comfyGraph(prompt: 'a remix of the fox', seed: 8)});
+    state.collectRemix(item, RemixTicket('', 1, Stream.value(RemixImage(png))));
+    await pumpUntil(tester, () => File('${library.path}/fox_remix1.jxl').existsSync(), what: 'the remix saved as JXL');
+    await pumpUntil(tester, () => state.items.length == 2, what: 'the remix listed');
+    state.setRemixFormat('png');
 
     await tester.pumpWidget(const SizedBox());
     state.dispose();

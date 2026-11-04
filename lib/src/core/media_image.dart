@@ -30,23 +30,28 @@ Future<ui.Codec> pictureCodec(String path) async {
   return descriptor.instantiateCodec();
 }
 
-/// A file other programs can open with the picture at [path]: the file itself
-/// unless it is a `.jxl`, which is written out as a temporary PNG.
+/// The core's `jxl_png`, set when the app starts.
+Future<void> Function(String path, String dest)? jxlToPng;
+
+/// Whether a `.jxl` leaves the app as a PNG on copy and share.
+bool sendJxlAsPng = true;
+
+/// A file other programs can open with the picture at [path], generation
+/// data and all: the file itself unless it is a `.jxl`, which is written out
+/// as a temporary PNG.
 Future<String> readablePath(String path) async {
   if (!isJxl(path)) return path;
-  final codec = await pictureCodec(path);
-  final frame = await codec.getNextFrame();
-  try {
-    final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
-    final dir = await getTemporaryDirectory();
-    final out = File('${dir.path}/generativeview_${DateTime.now().microsecondsSinceEpoch}.png');
-    await out.writeAsBytes(data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
-    return out.path;
-  } finally {
-    frame.image.dispose();
-    codec.dispose();
-  }
+  final write = jxlToPng;
+  if (write == null) return path;
+  final dir = await getTemporaryDirectory();
+  final name = path.split(RegExp(r'[/\\]')).last;
+  final dest = '${dir.path}/${name.substring(0, name.length - 4)}.png';
+  await write(path, dest);
+  return dest;
 }
+
+/// The file to hand over when [path] is copied or shared.
+Future<String> outgoingPath(String path) async => sendJxlAsPng ? readablePath(path) : path;
 
 /// A [FileImage] that knows which version of the file it shows.
 ///

@@ -41,6 +41,16 @@ pub fn dimensions(head: &[u8]) -> Result<(u32, u32), String> {
     Ok((info.dimensions.width, info.dimensions.height))
 }
 
+/// The width and height of the picture at `path`, whatever its format.
+pub fn size(path: &Path) -> Result<(u32, u32), String> {
+    let mut head = vec![0u8; 256 * 1024];
+    let n = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)).map_err(|e| e.to_string())?;
+    if is_jxl(&head[..n]) {
+        return dimensions(&head[..n]);
+    }
+    image::image_dimensions(path).map_err(|e| e.to_string())
+}
+
 /// The text a file's metadata is made of, as the box holds it.
 pub fn pack_texts(texts: &[(String, String)]) -> Result<Vec<u8>, String> {
     let json = serde_json::to_vec(texts).map_err(|e| e.to_string())?;
@@ -85,6 +95,10 @@ pub fn convert(source: &Path, dest: &Path, quality: Quality) -> Result<(), Strin
     let texts = crate::meta::container::read_raw(source).map_err(|e| e.to_string())?.texts;
     let meta = if texts.is_empty() { Vec::new() } else { pack_texts(&texts)? };
     let bytes = encode(&picture, quality, &meta)?;
+    // The original may go in the trash on the strength of this.
+    if quality == Quality::Lossless && decode(&bytes)?.to_rgba8() != picture.to_rgba8() {
+        return Err("the JXL does not match the original".into());
+    }
     let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("picture.jxl");
     let part = dest.with_file_name(format!(".{name}.part"));
     std::fs::write(&part, bytes).map_err(|e| format!("cannot write {}: {e}", part.display()))?;
@@ -175,6 +189,25 @@ pub fn metadata(bytes: &[u8]) -> Option<&[u8]> {
     None
 }
 
+/// Quality as the app names it.
+pub fn quality(name: Option<&str>) -> Quality {
+    match name {
+        Some("high") => Quality::Distance(0.5),
+        _ => Quality::Lossless,
+    }
+}
+
+/// Save the picture at `source` as a PNG at `dest` with its metadata, for
+/// programs that cannot open a `.jxl`.
+pub fn to_png(source: &Path, dest: &Path) -> Result<(), String> {
+    let picture = open(source)?;
+    let texts = crate::meta::container::read_raw(source).map_err(|e| e.to_string())?.texts;
+    let mut png = Vec::new();
+    picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    let chunks: Vec<Vec<u8>> = texts.iter().map(|(key, value)| crate::upscale::itxt_chunk(key, value)).collect();
+    std::fs::write(dest, crate::upscale::png_with_chunks(&png, &chunks)).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +275,10 @@ mod tests {
         assert!(!after.texts.is_empty());
         assert_eq!((after.width, after.height), (48, 32));
         assert_eq!(open(&jxl).unwrap().to_rgba8(), open(&png).unwrap().to_rgba8());
+        let back = tmp.path().join("back.png");
+        to_png(&jxl, &back).unwrap();
+        assert_eq!(crate::meta::container::read_raw(&back).unwrap().texts, before.texts);
+        assert_eq!(open(&back).unwrap().to_rgba8(), open(&png).unwrap().to_rgba8());
         let px = pixels(&jxl).unwrap();
         assert_eq!(px.len(), 8 + 48 * 32 * 4);
         assert_eq!(&px[..4], &48u32.to_le_bytes());
