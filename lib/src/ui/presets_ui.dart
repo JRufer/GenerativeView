@@ -367,7 +367,7 @@ class PresetSettings extends StatelessWidget {
                   )
                 : ReorderableListView(
                     buildDefaultDragHandles: true,
-                    onReorder: state.movePreset,
+                    onReorderItem: state.movePreset,
                     children: [
                       for (final preset in presets)
                         ListTile(

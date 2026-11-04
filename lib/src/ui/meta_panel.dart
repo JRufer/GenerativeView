@@ -157,8 +157,9 @@ class _MetaPanelState extends State<MetaPanel> {
     ]);
     if (!mounted) return;
     if (choice == 'filter') widget.state.applyFilter(exactTerm(field, text));
-    if (choice == 'remix') await openRemix(context, widget.state, item);
-    if (choice == 'preset') {
+    if (choice == 'remix') {
+      await openRemix(context, widget.state, item);
+    } else if (choice == 'preset') {
       await openSavePreset(context, widget.state, Preset(id: '', name: '', prompt: negative ? null : text, negative: negative ? text : null));
     }
   }

@@ -1455,7 +1455,7 @@ class AppState extends ChangeNotifier {
 
   void movePreset(int from, int to) {
     final list = [...presets];
-    list.insert(to > from ? to - 1 : to, list.removeAt(from));
+    list.insert(to, list.removeAt(from));
     _keepPresets(list);
   }
 
