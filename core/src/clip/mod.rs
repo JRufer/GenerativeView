@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use store::{Key, Vectors};
@@ -126,6 +126,8 @@ struct Inner {
     thumbs: Arc<Thumbs>,
     sink: EventSink,
     generation: AtomicU64,
+    /// The app is closing: stop whatever is under way.
+    closed: AtomicBool,
     progress: Mutex<Progress>,
     text: Mutex<Option<Arc<TextSide>>>,
     /// The last few descriptions searched for, with their vectors.
@@ -173,6 +175,7 @@ impl ContentSearch {
             thumbs,
             sink,
             generation: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
             progress: Mutex::new(Progress::default()),
             text: Mutex::new(None),
             recent: Mutex::new(Vec::new()),
@@ -200,6 +203,7 @@ impl ContentSearch {
     }
 
     pub fn close(&self) {
+        self.inner.closed.store(true, Ordering::SeqCst);
         self.inner.generation.fetch_add(1, Ordering::SeqCst);
         let _ = self.tx.send(Job::Close);
     }
@@ -1128,8 +1132,9 @@ impl Inner {
     /// on its own (`"t": "judged"`), so the open folder's progress is left
     /// alone; a folder pass asked for meanwhile goes first next time.
     fn embed_judged(&self, vision: &mut Option<model::Vision>) {
-        let generation = self.generation.load(Ordering::SeqCst);
-        let cancelled = || self.generation.load(Ordering::SeqCst) != generation;
+        // Someone is waiting on the end of this pass, and a new folder pass
+        // queues behind it, so only closing stops it.
+        let cancelled = || self.closed.load(Ordering::SeqCst);
         let report = |state: &str, done: usize, total: usize, error: Option<&str>| {
             let mut event = json!({ "t": "judged", "state": state, "done": done, "total": total });
             if let Some(error) = error {
