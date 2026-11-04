@@ -19,7 +19,7 @@ Each feature is tried on four pictures:
   family when the server has it under another name)
 
 Features covered: edited prompt, seed and one more per picture, size, steps
-and CFG, the model, a LoRA reweighted, a LoRA switched off, image to image,
+and CFG, the model, another model chosen, a LoRA added, a LoRA reweighted, a LoRA switched off, image to image,
 a painted area redrawn, and hires fix.
 
 **Adding a feature:** add a `Feature` to the `features` list. It then runs

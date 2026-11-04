@@ -30,7 +30,7 @@ const comfyCheckpoints = ['SDXL/juggernautXL_v9.safetensors'];
 const comfyUnets = ['krea2_turbo_fp8_scaled.safetensors'];
 const comfyEncoders = ['qwen3vl_4b_fp8_scaled.safetensors', 'clip_l.safetensors'];
 const comfyVaes = ['qwen_image_vae.safetensors', 'sdxl_vae.safetensors'];
-const comfyLoras = ['xl/fur_detail.safetensors', 'krea2/krea2_style.safetensors'];
+const comfyLoras = ['xl/fur_detail.safetensors', 'krea2/krea2_style.safetensors', 'xl/grain.safetensors', 'krea2/krea2_grain.safetensors'];
 
 /// What InvokeAI has installed: the same models, under InvokeAI's names.
 final invokeMains = [
@@ -40,6 +40,8 @@ final invokeMains = [
 final invokeLoras = [
   model('l1', 'fur_detail', 'sdxl', 'lora'),
   model('l2', 'krea2_style', 'krea-2', 'lora'),
+  model('l3', 'grain', 'sdxl', 'lora'),
+  model('l4', 'krea2_grain', 'krea-2', 'lora'),
 ];
 
 InvokeModel model(String key, String name, String base, String type, {String format = 'checkpoint', String variant = ''}) =>
@@ -91,6 +93,12 @@ class FakeServer {
   void _json(HttpRequest request, Object body) {
     request.response.headers.contentType = ContentType.json;
     request.response.write(jsonEncode(body));
+  }
+
+  void _jsonList(HttpRequest request, List<Object?> body) {
+    request.response
+      ..headers.contentType = ContentType.json
+      ..write(jsonEncode(body));
   }
 
   Future<Map<String, dynamic>> _body(HttpRequest request) async =>
@@ -160,6 +168,10 @@ class FakeServer {
           if (payload['init_images'] != null) uploads++;
           if (payload['mask'] != null) uploads++;
           _json(request, {'images': [], 'info': '{}'});
+        } else if (path == '/sdapi/v1/sd-models') {
+          _jsonList(request, [
+            {'title': 'juggernautXL_v9.safetensors [abc]', 'model_name': 'juggernautXL_v9'},
+          ]);
         } else {
           request.response.statusCode = 404;
         }
@@ -495,6 +507,23 @@ final List<Feature> features = [
     (info, all) => expect(all.single.model, info.model.toLowerCase().contains('krea') ? contains('krea') : 'juggernautxl_v9'),
   ),
   Feature(
+    'text to image: another model chosen in Remix',
+    (info) => remixOf(withModel(info, 'juggernautXL_v9')),
+    (info, all) => expect(all.single.model.toLowerCase(), contains('juggernaut')),
+  ),
+  Feature(
+    'LoRA: one the picture was not made with, added by a preset',
+    (info) {
+      final krea = info.model.toLowerCase().contains('krea');
+      return remixOf(info, loras: [...loraSet(info), LoraChoice(LoraRef(krea ? 'krea2_grain' : 'grain', 0.7, null, ''))]);
+    },
+    (info, all) {
+      final krea = info.model.toLowerCase().contains('krea');
+      expect(all.single.loras[krea ? 'krea2_grain' : 'grain'], 0.7);
+      expect(all.single.prompts, contains(info.prompt.split(' <').first));
+    },
+  ),
+  Feature(
     'LoRA: its weight moved',
     (info) => remixOf(info, loras: loraSet(info, weight: 1.25)),
     (info, all) => expect(all.single.loras[modelKey(info.loras.first.name)], 1.25),
@@ -587,6 +616,37 @@ void main() {
       }
     });
   }
+
+  group('a LoRA the server does not have', () {
+    for (final kind in ['comfyui', 'invokeai']) {
+      test('${backendNames[kind]} skips it and says so', () async {
+        final server = await FakeServer.start(kind);
+        addTearDown(server.close);
+        final info = picture(kind, Picture.own);
+        final remix = remixOf(info, loras: [...loraSet(info), LoraChoice(const LoraRef('never_installed', 0.5, null, ''))]);
+        final ticket = await sendRemix(kind, server.base, remix);
+        expect(server.sent, isNotEmpty, reason: 'the rest still goes');
+        expect(read(kind, server.sent.single).loras.keys, isNot(contains('never_installed')));
+        expect(ticket.message, contains('never_installed'));
+      });
+    }
+  });
+
+  group('the models a server lists', () {
+    for (final kind in servers) {
+      test(backendNames[kind]!, () async {
+        final server = await FakeServer.start(kind);
+        addTearDown(server.close);
+        final names = await serverModels(kind, server.base);
+        expect(matchServerModel('juggernautXL_v9', names), isNotNull, reason: '$names');
+      });
+    }
+    test('ComfyUI lists models loaded on their own too', () async {
+      final server = await FakeServer.start('comfyui');
+      addTearDown(server.close);
+      expect(await serverModels('comfyui', server.base), contains(comfyUnets.single));
+    });
+  });
 
   test('every server is in the table', () {
     expect(servers.toSet(), backendNames.keys.toSet(), reason: 'a new server needs its fake and its reader here');

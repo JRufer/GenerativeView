@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../core/backends.dart';
+import '../core/presets.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
 import '../core/prompt_edits.dart' show weightUp;
@@ -12,6 +13,7 @@ import '../core/audience.dart';
 import 'audience_widgets.dart' show AudienceBadge, BreedAudienceSection;
 import 'kit.dart';
 import 'meta_panel.dart' show toast;
+import 'presets_ui.dart';
 import 'remix_dialog.dart' show SizeField, SizeSlider, cfgText, openBackendSettings, remixTwoColumns, snapSize;
 import 'sheet.dart';
 import 'thumb_image.dart' show ThumbImage;
@@ -82,6 +84,9 @@ class _BreedPanelState extends State<BreedPanel> {
   bool _model = false;
   double _change = 0.35;
   int _seed = 1;
+
+  /// Applied to each picture as it is sent.
+  Preset? _preset;
 
   List<BredChild>? _children;
   bool _rated = false;
@@ -319,6 +324,13 @@ class _BreedPanelState extends State<BreedPanel> {
     _height.text = '$height';
     var sent = 0;
     try {
+      // A preset's model, when the server has it; otherwise each picture's own.
+      String? model;
+      if (_preset?.model case final wanted?) {
+        try {
+          model = matchServerModel(wanted, await serverModels(kind, widget.state.backendUrls[kind]!));
+        } catch (_) {}
+      }
       for (final i in _ticked.toList()..sort()) {
         final child = children[i];
         final base = _parents[child.base];
@@ -330,24 +342,31 @@ class _BreedPanelState extends State<BreedPanel> {
           for (final l in info.loras)
             LoraChoice(l, weight: child.loras.where((c) => c.$1 == l.name).map((c) => c.$2).firstOrNull ?? l.weight),
         ];
+        final preset = _preset;
+        if (preset != null) applyPresetLoras(loras, preset.loras);
         final aimed = _audience != 0 && i < _steers.length ? _steers[i] : null;
         final ticket = await sendRemix(
           kind,
           widget.state.backendUrls[kind]!,
           Remix(
-            info: info,
+            info: model == null ? info : withModel(info, model),
             prompt: () {
-              final text = aimed == null ? child.prompt : weightUp(aimed.prompt, aimed.emphasize);
+              var text = aimed == null ? child.prompt : weightUp(aimed.prompt, aimed.emphasize);
+              if (preset?.prompt case final add?) text = applyPresetText(text, add, replace: preset!.replacePrompt);
               return tags.isEmpty ? text : '$text $tags';
             }(),
-            negative: aimed?.negative ?? info.negative,
+            negative: () {
+              final text = aimed?.negative ?? info.negative;
+              final add = preset?.negative;
+              return add == null ? text : applyPresetText(text, add, replace: preset!.replaceNegative);
+            }(),
             seed: 0,
             randomSeed: true,
             count: 1,
             width: width,
             height: height,
-            steps: child.steps,
-            cfg: child.cfg,
+            steps: preset?.steps ?? child.steps,
+            cfg: preset?.cfg ?? child.cfg,
             loras: loras.isEmpty ? null : loras,
           ),
         );
@@ -402,6 +421,25 @@ class _BreedPanelState extends State<BreedPanel> {
           ),
         ],
       ),
+      const SizedBox(height: 10),
+      PresetStrip(
+        state: widget.state,
+        active: _preset,
+        onApply: (preset) => setState(() {
+          _preset = preset;
+          if (preset.width case final w?) _width.text = '$w';
+          if (preset.height case final h?) _height.text = '$h';
+        }),
+        onClear: () => setState(() => _preset = null),
+      ),
+      if (_preset != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            '${_preset!.name} is applied to each picture as it is sent.',
+            style: const TextStyle(fontSize: 11.5, color: Palette.faint),
+          ),
+        ),
       const PanelHeading('Mix'),
       Wrap(
         spacing: 6,

@@ -13,6 +13,7 @@ import 'filter_sheet.dart' show FilterSet;
 import 'meta_panel.dart';
 import 'move_ui.dart';
 import 'notes_widgets.dart';
+import 'presets_ui.dart';
 import 'remix_dialog.dart';
 import 'sheet.dart';
 import 'upscale_dialog.dart';
@@ -52,6 +53,7 @@ Future<void> showImageMenu(
     // Organize
     [
       const MenuEntry('collection', 'Add to collection… (B)', Icons.collections_bookmark_outlined),
+      if (!item.isVideo) const MenuEntry('preset', 'Save as preset…', Icons.bookmark_add_outlined),
       if (shownCollection != null)
         MenuEntry('uncollect', 'Remove from "$shownCollection"', Icons.bookmark_remove_outlined),
     ],
@@ -80,6 +82,9 @@ Future<void> showImageMenu(
       await openUpscale(context, state, item);
     case 'collection':
       await showCollectionPicker(context, state, [item]);
+    case 'preset':
+      final info = await state.metadata(item);
+      if (context.mounted) await openSavePreset(context, state, presetOf(info));
     case 'move':
       await openMoveTo(context, state, [item]);
     case 'file':
