@@ -324,6 +324,13 @@ class _BreedPanelState extends State<BreedPanel> {
     _height.text = '$height';
     var sent = 0;
     try {
+      // A preset's model, when the server has it; otherwise each picture's own.
+      String? model;
+      if (_preset?.model case final wanted?) {
+        try {
+          model = matchServerModel(wanted, await serverModels(kind, widget.state.backendUrls[kind]!));
+        } catch (_) {}
+      }
       for (final i in _ticked.toList()..sort()) {
         final child = children[i];
         final base = _parents[child.base];
@@ -342,7 +349,7 @@ class _BreedPanelState extends State<BreedPanel> {
           kind,
           widget.state.backendUrls[kind]!,
           Remix(
-            info: info,
+            info: model == null ? info : withModel(info, model),
             prompt: () {
               var text = aimed == null ? child.prompt : weightUp(aimed.prompt, aimed.emphasize);
               if (preset?.prompt case final add?) text = applyPresetText(text, add, replace: preset!.replacePrompt);

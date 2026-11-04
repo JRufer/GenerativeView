@@ -33,6 +33,7 @@ class Preset {
     this.cfg,
     this.width,
     this.height,
+    this.model,
   });
 
   final String id;
@@ -49,6 +50,9 @@ class Preset {
   final int? width;
   final int? height;
 
+  /// Used when the server has it; otherwise the picture's own model stays.
+  final String? model;
+
   /// What it carries, for a list.
   List<String> get parts => [
     if (prompt != null) 'Prompt',
@@ -56,6 +60,7 @@ class Preset {
     if (loras.isNotEmpty) loras.length == 1 ? '1 LoRA' : '${loras.length} LoRAs',
     if (steps != null || cfg != null) 'Steps, CFG',
     if (width != null && height != null) 'Size',
+    if (model != null) 'Model',
   ];
 
   bool get isEmpty => parts.isEmpty;
@@ -72,6 +77,7 @@ class Preset {
     cfg: cfg,
     width: width,
     height: height,
+    model: model,
   );
 
   Map<String, Object?> toJson() => {
@@ -86,6 +92,7 @@ class Preset {
     if (cfg != null) 'cfg': cfg,
     if (width != null) 'width': width,
     if (height != null) 'height': height,
+    if (model != null) 'model': model,
   };
 
   factory Preset.fromJson(Map<String, dynamic> j) => Preset(
@@ -103,6 +110,7 @@ class Preset {
     cfg: (j['cfg'] as num?)?.toDouble(),
     width: (j['width'] as num?)?.toInt(),
     height: (j['height'] as num?)?.toInt(),
+    model: j['model'] as String?,
   );
 }
 

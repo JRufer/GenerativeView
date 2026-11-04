@@ -23,6 +23,7 @@ Preset presetOf(GenInfo info) => Preset(
   cfg: recipeCfg(info),
   width: info.width > 0 ? info.width : null,
   height: info.height > 0 ? info.height : null,
+  model: info.model.isEmpty ? null : info.model,
 );
 
 /// The preset chips of Remix and Breed. Tap one to apply it; its cross takes
@@ -92,7 +93,7 @@ class PresetStrip extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.only(top: 4),
               child: Text(
-                'A LoRA the server does not have is left out, and you are told when it is sent.',
+                'A LoRA or model the server does not have is left out, and you are told.',
                 style: TextStyle(fontSize: 11.5, color: Palette.faint),
               ),
             ),
@@ -134,6 +135,7 @@ class _SavePresetState extends State<_SavePreset> {
   late bool _useLoras = widget.draft.loras.isNotEmpty;
   late bool _useSampling = widget.editing != null && (widget.draft.steps != null || widget.draft.cfg != null);
   late bool _useSize = widget.editing != null && widget.draft.width != null;
+  late bool _useModel = widget.editing != null && widget.draft.model != null;
   late bool _replacePrompt = widget.draft.replacePrompt;
   late bool _replaceNegative = widget.draft.replaceNegative;
 
@@ -147,7 +149,7 @@ class _SavePresetState extends State<_SavePreset> {
 
   bool get _ready =>
       _name.text.trim().isNotEmpty &&
-      ((_usePrompt && _prompt.text.trim().isNotEmpty) || (_useNegative && _negative.text.trim().isNotEmpty) || _useLoras || _useSampling || _useSize);
+      ((_usePrompt && _prompt.text.trim().isNotEmpty) || (_useNegative && _negative.text.trim().isNotEmpty) || _useLoras || _useSampling || _useSize || _useModel);
 
   void _save() {
     final d = widget.draft;
@@ -164,6 +166,7 @@ class _SavePresetState extends State<_SavePreset> {
         cfg: _useSampling ? d.cfg : null,
         width: _useSize ? d.width : null,
         height: _useSize ? d.height : null,
+        model: _useModel ? d.model : null,
       ),
     );
     Navigator.of(context).maybePop();
@@ -241,6 +244,8 @@ class _SavePresetState extends State<_SavePreset> {
             _tick('sampling', 'Steps and CFG', '${d.steps ?? '–'} steps, CFG ${d.cfg ?? '–'}', _useSampling, (v) => setState(() => _useSampling = v)),
           if (d.width != null && d.height != null)
             _tick('size', 'Size', '${d.width} × ${d.height}', _useSize, (v) => setState(() => _useSize = v)),
+          if (d.model != null)
+            _tick('model', 'Model', d.model, _useModel, (v) => setState(() => _useModel = v)),
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerRight,

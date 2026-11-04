@@ -219,6 +219,66 @@ const Map<String, String> backendDefaults = {
   'forge': 'http://127.0.0.1:7860',
 };
 
+/// The main models the server at [base] has, by name.
+Future<List<String>> serverModels(String kind, String base) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  try {
+    switch (kind) {
+      case 'invokeai':
+        final reply = await _get(client, '$base/api/v2/models/?model_type=main');
+        return [
+          for (final m in (reply['models'] as List? ?? const []))
+            if (m is Map<String, dynamic>) InvokeModel.fromJson(m).name,
+        ];
+      case 'comfyui':
+        final names = <String>[
+          ...ComfyModels.options(await _get(client, '$base/object_info/CheckpointLoaderSimple'), 'CheckpointLoaderSimple', 'ckpt_name'),
+        ];
+        for (final node in const ['UNETLoader', 'UnetLoaderGGUF']) {
+          try {
+            names.addAll(ComfyModels.options(await _get(client, '$base/object_info/$node'), node, ComfyModels.splitLoaders[node]!));
+          } on BackendException {
+            // A loader this ComfyUI lacks lists nothing.
+          }
+        }
+        return names;
+      default:
+        final reply = await _get(client, '$base/sdapi/v1/sd-models');
+        return [
+          for (final m in (reply['value'] as List? ?? const []))
+            if (m is Map<String, dynamic>) (m['title'] ?? m['model_name'] ?? '').toString(),
+        ];
+    }
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// [names]' entry for the model called [wanted], whatever its folder or
+/// extension; null if there is none.
+String? matchServerModel(String wanted, List<String> names) => findModel(wanted, names, (n) => [n]);
+
+/// [info] to be made with [model] instead: its own graph names the model it
+/// was made with, so it goes and a graph is built from the settings.
+GenInfo withModel(GenInfo info, String model) => GenInfo(
+  source: info.source,
+  prompt: info.prompt,
+  negative: info.negative,
+  seed: info.seed,
+  model: model,
+  models: const [],
+  loras: info.loras,
+  params: info.params,
+  nodes: const [],
+  raw: [
+    for (final r in info.raw)
+      if (r.key != 'prompt' && r.key != 'invokeai_graph') r,
+  ],
+  width: info.width,
+  height: info.height,
+  durationMs: info.durationMs,
+);
+
 /// The raw text block a picture saved under [key], if any.
 String? rawBlock(GenInfo info, String key) {
   for (final r in info.raw) {

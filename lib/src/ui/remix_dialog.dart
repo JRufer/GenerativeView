@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/backends.dart';
 import '../core/presets.dart';
+import '../core/recipe_graphs.dart' show modelKey;
 import '../core/civitai.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
@@ -128,6 +129,49 @@ class _RemixPanelState extends State<RemixPanel> {
   bool _random = false;
   int _count = 1;
 
+  /// The models on the chosen server; null while asking or if it cannot say.
+  List<String>? _serverModels;
+
+  /// The model to use instead of the picture's, as the server names it.
+  String? _model;
+
+  /// A model a preset asked for that the server does not have.
+  String? _presetModelMissing;
+
+  Future<void> _listModels() async {
+    final kind = _backend;
+    final base = kind == null ? '' : (widget.state.backendUrls[kind] ?? '');
+    setState(() {
+      _serverModels = null;
+      _model = null;
+    });
+    if (kind == null || base.isEmpty) return;
+    try {
+      final names = await serverModels(kind, base);
+      if (!mounted || kind != _backend) return;
+      setState(() {
+        _serverModels = names;
+        _takePresetModel();
+      });
+    } catch (_) {
+      // Not reachable: Send will say so.
+    }
+  }
+
+  /// Use the model of the preset on, if the server has it.
+  void _takePresetModel() {
+    final wanted = _preset?.model;
+    final names = _serverModels;
+    _presetModelMissing = null;
+    if (wanted == null || names == null) return;
+    final found = matchServerModel(wanted, names);
+    if (found == null) {
+      _presetModelMissing = wanted;
+    } else if (matchServerModel(info.model, [found]) == null) {
+      _model = found;
+    }
+  }
+
   /// The preset applied, and everything as it was before it.
   Preset? _preset;
   ({
@@ -138,6 +182,7 @@ class _RemixPanelState extends State<RemixPanel> {
     int? steps,
     double? cfg,
     List<LoraChoice> loras,
+    String? model,
   })? _beforePreset;
 
   /// Moves on with each preset, so the fields that keep their own copy of a
@@ -155,8 +200,10 @@ class _RemixPanelState extends State<RemixPanel> {
         steps: _sampling.steps,
         cfg: _sampling.cfg,
         loras: [for (final l in _loras) l.copy()],
+        model: _model,
       );
       _preset = preset;
+      _takePresetModel();
       _presetTick++;
       if (preset.prompt case final text?) {
         _prompt.added = addedPresetPhrases(_prompt.text, text, replace: preset.replacePrompt);
@@ -192,6 +239,8 @@ class _RemixPanelState extends State<RemixPanel> {
       _loras
         ..clear()
         ..addAll(before.loras);
+      _model = before.model;
+      _presetModelMissing = null;
       _preset = null;
       _beforePreset = null;
       _presetTick++;
@@ -209,7 +258,55 @@ class _RemixPanelState extends State<RemixPanel> {
     cfg: _sampling.cfg,
     width: int.tryParse(_width.text),
     height: int.tryParse(_height.text),
+    model: prompt != null ? null : (_model ?? (info.model.isEmpty ? null : info.model)),
   );
+
+  /// Choose the model, with a warning when the picture's is not on the server.
+  Widget _modelRow() {
+    final names = _serverModels;
+    if (names == null) return const SizedBox.shrink();
+    final own = matchServerModel(info.model, names);
+    final missing = own == null && _model == null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Model', style: TextStyle(fontSize: 12, color: Palette.muted)),
+          DropdownButton<String?>(
+            key: const ValueKey<String>('remix-model'),
+            isExpanded: true,
+            value: names.contains(_model) ? _model : null,
+            items: [
+              DropdownMenuItem<String?>(
+                value: null,
+                child: Text('The picture\'s: ${info.model.isEmpty ? 'not recorded' : modelKey(info.model)}', overflow: TextOverflow.ellipsis),
+              ),
+              for (final name in names)
+                if (name != own) DropdownMenuItem<String?>(value: name, child: Text(modelKey(name), overflow: TextOverflow.ellipsis)),
+            ],
+            onChanged: (value) => setState(() => _model = value),
+          ),
+          if (missing)
+            Text(
+              '${backendNames[_backend] ?? 'The server'} does not have this picture\'s model. Pick another to send it.',
+              key: const ValueKey<String>('remix-model-missing'),
+              style: const TextStyle(fontSize: 12, color: Palette.danger, height: 1.35),
+            ),
+          if (_model != null)
+            const Text(
+              'A graph is built from the picture\'s settings. Its own workflow is left out, and LoRAs made for another kind of model are skipped.',
+              style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+            ),
+          if (_presetModelMissing != null)
+            Text(
+              '${_preset?.name} asks for ${modelKey(_presetModelMissing!)}, which this server does not have. The rest of the preset is applied.',
+              style: const TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+            ),
+        ],
+      ),
+    );
+  }
 
   /// Start from the picture itself (image to image) rather than from noise.
   /// Only when the user picks it.
@@ -260,6 +357,9 @@ class _RemixPanelState extends State<RemixPanel> {
     ];
     final pool = ready.isNotEmpty ? ready : usable;
     _backend = pool.contains(made) ? made : (pool.isEmpty ? null : pool.first);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _listModels();
+    });
     _loadSpelling();
     _loadAdvice();
     final up = widget.weightUp;
@@ -331,7 +431,7 @@ class _RemixPanelState extends State<RemixPanel> {
         kind,
         widget.state.backendUrls[kind]!,
         Remix(
-          info: info,
+          info: _model == null ? info : withModel(info, _model!),
           prompt: _prompt.text,
           negative: _negative.text,
           seed: int.tryParse(_seed.text.trim()) ?? 0,
@@ -503,6 +603,7 @@ Widget build(BuildContext context) {
           child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
         ),
       SamplingSection(key: ValueKey<String>('remix-sampling-$_presetTick'), choice: _sampling),
+      _modelRow(),
       if (_loras.isNotEmpty) LoraSection(key: ValueKey<String>('remix-loras-$_presetTick'), loras: _loras, prompt: _prompt),
       if (_backend != null && (urls[_backend] ?? '').isNotEmpty)
         Padding(
@@ -584,9 +685,12 @@ Widget build(BuildContext context) {
           state: widget.state,
           backend: _backend,
           support: support,
-          onBackend: (kind) => setState(() => _backend = kind),
+          onBackend: (kind) {
+            setState(() => _backend = kind);
+            _listModels();
+          },
           onServersChanged: () {
-            if (mounted) setState(() {});
+            if (mounted) _listModels();
           },
           chipKey: (kind) => ValueKey<String>('remix-server-$kind'),
           action: _backend == null ? 'No server can take this' : 'Send to ${backendNames[_backend]}',

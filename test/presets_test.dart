@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:generativeview/src/core/backends.dart';
 import 'package:generativeview/src/core/lora_edits.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/presets.dart';
@@ -19,6 +20,30 @@ void main() {
     expect(back.toJson(), ink.toJson());
     expect(back.parts, ['Prompt', 'Negative', '1 LoRA', 'Steps, CFG']);
     expect(() => presetsFromFile('{"images":{}}'), throwsFormatException);
+  });
+
+  test('another model drops the picture\'s own graph and finds its name', () {
+    final info = GenInfo(
+      source: 'invokeai',
+      prompt: 'a fox',
+      negative: '',
+      seed: '1',
+      model: 'gone.safetensors',
+      models: const [],
+      loras: const [],
+      params: const [],
+      nodes: const [],
+      raw: const [MapEntry('invokeai_graph', '{}'), MapEntry('invokeai_metadata', '{}')],
+      width: 64,
+      height: 64,
+      durationMs: 0,
+    );
+    final swapped = withModel(info, 'krea2');
+    expect(swapped.model, 'krea2');
+    expect(carriesGraph('invokeai', swapped), isFalse);
+    expect([for (final r in swapped.raw) r.key], ['invokeai_metadata']);
+    expect(matchServerModel('models/Krea2.safetensors', ['krea2.safetensors']), 'krea2.safetensors');
+    expect(matchServerModel('gone', ['krea2']), isNull);
   });
 
   test('text is added phrase by phrase, or replaces', () {
