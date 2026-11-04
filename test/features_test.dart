@@ -383,6 +383,27 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('settings, from the More menu, on a phone-sized screen', (tester) async {
+    final state = await launch(tester, size: const Size(412, 915));
+    await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
+    await tester.tap(find.byKey(const ValueKey<String>('more-menu')));
+    await settle(tester);
+    await tester.tap(find.textContaining('Settings…'));
+    await settle(tester);
+    // The sections first, then one at a time.
+    await tester.tap(find.byKey(const ValueKey<String>('settings-grid')));
+    await settle(tester);
+    final crop = state.cropTiles;
+    await tester.tap(find.byKey(const ValueKey<String>('settings-crop')));
+    await settle(tester);
+    expect(state.cropTiles, !crop);
+    await tester.tap(find.byKey(const ValueKey<String>('settings-back')));
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('settings-servers')));
+    await settle(tester);
+    expect(find.text('Address'), findsWidgets);
+  });
+
   testWidgets('about, on a phone-sized screen', (tester) async {
     final state = await launch(tester, size: const Size(412, 915));
     await pumpUntil(tester, () => state.items.length == 6, what: 'the listing');
