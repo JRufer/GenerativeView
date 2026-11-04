@@ -32,6 +32,12 @@ status=${PIPESTATUS[0]}
 
 kill "$sampler" 2>/dev/null || true
 
+# The test ran and failed: that is the app, not the emulator, and it blocks
+# the build. A hosted emulator that never got this far only warns.
+if [ "$status" -ne 0 ] && grep -qE '[0-9]+ tests? passed, [0-9]+ failed|^[0-9:]+ \+[0-9]+ -[0-9]+:' "$OUT/integration-android.log"; then
+  touch "$OUT/app-failed"
+fi
+
 # The notification icon must be one the status bar can draw: a bad one
 # crashes the app as soon as a remix posts its "waiting" notification.
 adb logcat -c 2>/dev/null || true
