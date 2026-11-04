@@ -7,8 +7,8 @@ import '../theme.dart';
 import 'about_panel.dart';
 import 'context_menu.dart';
 import 'filter_sheet.dart';
-import 'remix_dialog.dart';
 import 'remix_status.dart';
+import 'settings_panel.dart';
 import 'shortcuts_overlay.dart';
 import 'stats_page.dart';
 
@@ -1131,8 +1131,8 @@ class _MoreMenu extends StatelessWidget {
         switch (value) {
           case 'follow':
             state.toggleFollowNew();
-          case 'servers':
-            openBackendSettings(context, state);
+          case 'settings':
+            openSettings(context, state);
           case 'keys':
             showShortcuts(context);
           case 'about':
@@ -1142,7 +1142,7 @@ class _MoreMenu extends StatelessWidget {
       itemBuilder: (context) => [
         item('follow', Icons.fiber_new, 'Follow new pictures (N)', checked: state.followNew),
         const PopupMenuDivider(height: 8),
-        item('servers', Icons.dns_outlined, 'Generation servers…'),
+        item('settings', Icons.settings_outlined, 'Settings… (Ctrl ,)'),
         item('keys', Icons.keyboard_outlined, 'Keyboard shortcuts (?)'),
         const PopupMenuDivider(height: 8),
         item('about', Icons.info_outline, 'About GenerativeView'),

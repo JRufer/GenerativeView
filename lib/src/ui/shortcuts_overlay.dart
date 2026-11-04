@@ -10,6 +10,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
     'Anywhere',
     [
       ('?  or  F1', 'Show these shortcuts'),
+      ('Ctrl ,', 'Settings'),
       ('Ctrl F  or  /', 'Search'),
       ('F', 'Filters'),
       ('I  or  ]', 'Show or hide the generation data'),

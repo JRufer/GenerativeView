@@ -15,6 +15,7 @@ import 'meta_panel.dart' show toast;
 import 'move_ui.dart';
 import 'notes_widgets.dart';
 import 'remix_dialog.dart';
+import 'settings_panel.dart';
 import 'shortcuts_overlay.dart';
 import 'upscale_dialog.dart';
 
@@ -197,6 +198,11 @@ class ShortcutLayer extends StatelessWidget {
         (key == LogicalKeyboardKey.slash && keyboard.isShiftPressed)) {
       final panel = _panelContext;
       if (panel != null) showShortcuts(panel);
+      return KeyEventResult.handled;
+    }
+    if (ctrl && key == LogicalKeyboardKey.comma) {
+      final panel = _panelContext;
+      if (panel != null) openSettings(panel, state);
       return KeyEventResult.handled;
     }
     if ((ctrl && key == LogicalKeyboardKey.keyF) ||

@@ -2000,20 +2000,20 @@ Future<void> openBackendSettings(BuildContext context, AppState state, {String? 
     title: 'Generation servers',
     icon: Icons.dns_outlined,
     width: 520,
-    builder: (context) => _BackendSettings(state: state, focus: focus),
+    builder: (context) => BackendSettings(state: state, focus: focus),
   );
 }
 
-class _BackendSettings extends StatefulWidget {
-  const _BackendSettings({required this.state, this.focus});
+class BackendSettings extends StatefulWidget {
+  const BackendSettings({super.key, required this.state, this.focus});
   final AppState state;
   final String? focus;
 
   @override
-  State<_BackendSettings> createState() => _BackendSettingsState();
+  State<BackendSettings> createState() => BackendSettingsState();
 }
 
-class _BackendSettingsState extends State<_BackendSettings> {
+class BackendSettingsState extends State<BackendSettings> {
   late final Map<String, TextEditingController> _urls = {
     for (final k in backendNames.keys) k: TextEditingController(text: widget.state.backendUrls[k] ?? ''),
   };

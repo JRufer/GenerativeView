@@ -1406,6 +1406,23 @@ class AppState extends ChangeNotifier {
     return AudienceSteer.fromJson(json as Map<String, dynamic>);
   }
 
+  /// Load the pictures around those on screen ahead of scrolling to them.
+  void setPrewarm(bool value) {
+    if (prewarm == value) return;
+    prewarm = value;
+    _save('prewarm', '$value');
+    notifyListeners();
+  }
+
+  /// The order of a folder, whether or not a search is showing just now.
+  void setFolderSort(String value) {
+    if (sort == value || value == 'relevance') return;
+    sort = value;
+    _save('sort', value);
+    notifyListeners();
+    if (!searching) _reload();
+  }
+
   void toggleCrop() {
     cropTiles = !cropTiles;
     _save('crop_tiles', '$cropTiles');
