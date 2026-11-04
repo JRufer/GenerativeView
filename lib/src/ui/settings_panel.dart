@@ -7,6 +7,7 @@ import '../core/media_image.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show toast;
+import '../platform.dart' show trashAsksFirst;
 import 'presets_ui.dart';
 import 'remix_dialog.dart' show BackendSettings;
 import 'sheet.dart';
@@ -29,10 +30,16 @@ const Map<String, String> _sorts = {
 enum _Section {
   general('General', Icons.tune),
   grid('Grid', Icons.grid_view),
+  viewer('Viewer', Icons.fullscreen),
   saved('Saved images', Icons.save_outlined),
   presets('Presets', Icons.bookmarks_outlined),
+  remix('Remix and Breed', Icons.auto_fix_high),
+  upscale('Upscale', Icons.photo_size_select_large),
   servers('Servers', Icons.dns_outlined),
-  search('Search and AI', Icons.auto_awesome_outlined);
+  search('Search and AI', Icons.auto_awesome_outlined),
+  notifications('Notifications', Icons.notifications_outlined),
+  appearance('Appearance', Icons.palette_outlined),
+  storage('Storage', Icons.storage_outlined);
 
   const _Section(this.label, this.icon);
   final String label;
@@ -67,6 +74,12 @@ class _SettingsPanelState extends State<SettingsPanel> {
     builder: (context, _) => switch (_open) {
       _Section.general => _General(state: widget.state),
       _Section.grid => _Grid(state: widget.state),
+      _Section.viewer => _Viewer(state: widget.state),
+      _Section.remix => _Remix(state: widget.state),
+      _Section.upscale => _Upscale(state: widget.state),
+      _Section.notifications => _Notifications(state: widget.state),
+      _Section.appearance => _Appearance(state: widget.state),
+      _Section.storage => _Storage(state: widget.state),
       _Section.saved => _Saved(state: widget.state),
       _Section.presets => PresetSettings(state: widget.state),
       _Section.servers => BackendSettings(state: widget.state),
@@ -167,6 +180,9 @@ class _General extends StatelessWidget {
           },
         ),
       ),
+      _Pref(state, 'pref_reopen', 'Reopen last folder on start', true),
+      if (!trashAsksFirst)
+        _Pref(state, 'pref_confirm_delete', 'Confirm before delete', true),
       _Switch(
         id: 'follow',
         title: 'Follow new pictures',
@@ -199,6 +215,8 @@ class _Grid extends StatelessWidget {
           ),
         ),
       ),
+      _Slide(state, 'pref_gap', 'Gap between tiles', 3, 0, 12, 12, ' px'),
+      _Pref(state, 'pref_dim_rejected', 'Fade rejected pictures', true),
       _Switch(
         id: 'crop',
         title: 'Crop tiles to fill',
@@ -222,6 +240,168 @@ class _Grid extends StatelessWidget {
       ),
     ],
   );
+}
+
+class _Viewer extends StatelessWidget {
+  const _Viewer({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => _Page(
+    children: [
+      _Slide(state, 'pref_max_zoom', 'Highest zoom', 400, 100, 800, 14, '%'),
+      _Slide(state, 'pref_swipe', 'Swipe distance to turn the page', 18, 5, 40, 7, '% of the width'),
+      _Pref(state, 'pref_zoom_chip', 'Show the zoom percentage', true),
+    ],
+  );
+}
+
+class _Remix extends StatelessWidget {
+  const _Remix({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => _Page(
+    children: [
+      _Pref(state, 'pref_random_seed', 'Random seed each time', false),
+      _Slide(state, 'pref_remix_count', 'Remix count', 1, 1, 8, 7, ''),
+      _Slide(state, 'pref_breed_count', 'Breed candidates', 6, 1, 12, 11, ''),
+      _Slide(state, 'pref_strength', 'Starting denoise strength', 0.6, 0.05, 1, 19, '', digits: 2),
+      _Slide(state, 'pref_poll', 'Check servers for results every', 2, 1, 30, 29, ' s'),
+      _Slide(state, 'pref_patience', 'Give up on a job after', 3, 1, 24, 23, ' h'),
+      _Slide(state, 'pref_keep_days', 'Keep waiting for unfinished jobs for', 7, 1, 30, 29, ' days'),
+    ],
+  );
+}
+
+class _Upscale extends StatelessWidget {
+  const _Upscale({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => _Page(
+    children: [
+      _Slide(state, 'pref_upscale_size', 'Default size', 2, 1.5, 4, 5, '×', digits: 1),
+      _Pref(state, 'pref_keep_metadata', 'Keep metadata', true),
+      _Pref(state, 'pref_refine', 'Refine on a server by default', false),
+    ],
+  );
+}
+
+class _Notifications extends StatelessWidget {
+  const _Notifications({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => _Page(
+    children: [
+      _Pref(state, 'pref_notify_remix', 'Notify when a remix finishes', true, detail: 'While the app is in the background.'),
+      _Pref(state, 'pref_saved_note', 'Say when a file is saved', true),
+    ],
+  );
+}
+
+class _Appearance extends StatelessWidget {
+  const _Appearance({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => _Page(
+    children: [
+      _Slide(state, 'pref_text_size', 'Text size', 100, 80, 150, 14, '%'),
+      _Pref(state, 'pref_reduce_motion', 'Reduce animations', false),
+    ],
+  );
+}
+
+class _Storage extends StatefulWidget {
+  const _Storage({required this.state});
+  final AppState state;
+
+  @override
+  State<_Storage> createState() => _StorageState();
+}
+
+class _StorageState extends State<_Storage> {
+  int? _bytes;
+  ({int entries, int folders})? _stale;
+
+  AppState get state => widget.state;
+
+  @override
+  void initState() {
+    super.initState();
+    _measure();
+  }
+
+  Future<void> _measure() async {
+    final size = await state.core.call('thumbs_size');
+    final stale = await state.core.call('notes_prune', {'apply': false});
+    if (!mounted) return;
+    setState(() {
+      _bytes = ((size as Map)['bytes'] as num).toInt();
+      _stale = (entries: ((stale as Map)['entries'] as num).toInt(), folders: (stale['folders'] as num).toInt());
+    });
+  }
+
+  Future<void> _clear() async {
+    await state.core.call('thumbs_clear');
+    state.thumbs.clear();
+    await _measure();
+    state.rescan();
+  }
+
+  Future<void> _prune() async {
+    await state.core.call('notes_prune', {'apply': true});
+    state.notesTick.value++;
+    await _measure();
+    if (mounted) toast(context, 'Cleaned up');
+  }
+
+  Future<void> _reset() async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset all settings?'),
+        content: const Text('Your presets, servers, pins and ratings are kept.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Reset')),
+        ],
+      ),
+    );
+    if (yes == true) state.resetPrefs();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mb = _bytes == null ? '…' : '${(_bytes! / 1000000).toStringAsFixed(0)} MB';
+    final stale = _stale;
+    return _Page(
+      children: [
+        _Line(
+          title: 'Thumbnail cache',
+          detail: mb,
+          child: OutlinedButton(key: const ValueKey<String>('settings-clear-thumbs'), onPressed: _bytes == null ? null : _clear, child: const Text('Clear')),
+        ),
+        _Line(
+          title: 'Clean up data for missing files',
+          detail: stale == null
+              ? 'Checking…'
+              : stale.entries == 0
+              ? 'Nothing to clean up.'
+              : '${stale.entries} ${stale.entries == 1 ? 'entry' : 'entries'} in ${stale.folders} ${stale.folders == 1 ? 'folder' : 'folders'} for files that are gone. '
+                    'A folder with none of its files is left alone, in case a drive is unplugged or a sync is under way.',
+          child: OutlinedButton(key: const ValueKey<String>('settings-prune'), onPressed: stale == null || stale.entries == 0 ? null : _prune, child: const Text('Clean up')),
+        ),
+        _Line(
+          title: 'Reset all settings',
+          detail: 'Presets, servers, pins and ratings are kept.',
+          child: OutlinedButton(key: const ValueKey<String>('settings-reset'), onPressed: _reset, child: const Text('Reset…')),
+        ),
+      ],
+    );
+  }
 }
 
 class _Saved extends StatelessWidget {
@@ -522,6 +702,59 @@ class _Line extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// A saved on-or-off setting.
+class _Pref extends StatelessWidget {
+  const _Pref(this.state, this.prefKey, this.title, this.fallback, {this.detail});
+  final AppState state;
+  final String prefKey;
+  final String title;
+  final bool fallback;
+  final String? detail;
+
+  @override
+  Widget build(BuildContext context) => _Switch(
+    id: prefKey,
+    title: title,
+    detail: detail,
+    value: state.prefFlag(prefKey, fallback),
+    onChanged: (v) => state.setPref(prefKey, v),
+  );
+}
+
+/// A saved number on a slider.
+class _Slide extends StatelessWidget {
+  const _Slide(this.state, this.prefKey, this.title, this.fallback, this.min, this.max, this.divisions, this.unit, {this.digits = 0});
+  final AppState state;
+  final String prefKey;
+  final String title;
+  final double fallback;
+  final double min;
+  final double max;
+  final int divisions;
+  final String unit;
+  final int digits;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = state.prefNumber(prefKey, fallback).clamp(min, max).toDouble();
+    return _Line(
+      title: title,
+      detail: '${value.toStringAsFixed(digits)}$unit',
+      child: SizedBox(
+        width: 170,
+        child: Slider(
+          key: ValueKey<String>('settings-$prefKey'),
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          onChanged: (v) => state.setPref(prefKey, v),
+        ),
+      ),
+    );
+  }
 }
 
 /// A setting with a choice of a few: the choice under it, where long labels

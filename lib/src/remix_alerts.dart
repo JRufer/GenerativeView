@@ -48,6 +48,7 @@ class RemixAlerts with WidgetsBindingObserver {
       if (job.running || job.saved.isEmpty || !_told.add(job.id)) continue;
       // On screen, the app's own "Remix Done" chip says it.
       if (_life == AppLifecycleState.resumed) continue;
+      if (!state.prefFlag('pref_notify_remix', true)) continue;
       final n = job.saved.length;
       unawaited(notifyRemixDone(
         'Remix of ${job.name} is done',

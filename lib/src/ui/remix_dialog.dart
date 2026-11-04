@@ -126,8 +126,8 @@ class _RemixPanelState extends State<RemixPanel> {
 
   /// The picture's LoRAs, as the user sets them.
   late final List<LoraChoice> _loras = [for (final l in widget.info.loras) LoraChoice(l)];
-  bool _random = false;
-  int _count = 1;
+  late bool _random = widget.state.prefFlag('pref_random_seed', false);
+  late int _count = widget.state.prefNumber('pref_remix_count', 1).round();
 
   /// The models on the chosen server; null while asking or if it cannot say.
   List<String>? _serverModels;
@@ -313,7 +313,7 @@ class _RemixPanelState extends State<RemixPanel> {
   late bool _imageToImage = widget.imageToImage && !widget.item.isVideo;
 
   /// How much of the picture image to image redraws, 0 to 1.
-  double _strength = 0.6;
+  late double _strength = widget.state.prefNumber('pref_strength', 0.6);
 
   /// Where image to image redraws; nothing painted means all of it.
   List<MaskOp> _mask = const [];

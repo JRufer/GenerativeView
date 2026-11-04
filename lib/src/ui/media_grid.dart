@@ -22,7 +22,7 @@ import 'notes_widgets.dart';
 import 'remix_status.dart' show HighlightPulse;
 import 'thumb_image.dart';
 
-const double _gap = 3;
+double get _gap => gridGap;
 
 /// The resizable thumbnail grid.
 ///
@@ -200,11 +200,11 @@ class _MediaGridState extends State<MediaGrid> {
               ),
             ),
           ),
-          SliverPadding(padding: const EdgeInsets.symmetric(horizontal: _gap), sliver: tiles(start, count)),
+          SliverPadding(padding: EdgeInsets.symmetric(horizontal: _gap), sliver: tiles(start, count)),
         ],
         if (last < state.items.length)
-          SliverPadding(padding: const EdgeInsets.all(_gap), sliver: tiles(last, state.items.length - last)),
-        const SliverToBoxAdapter(child: SizedBox(height: _gap)),
+          SliverPadding(padding: EdgeInsets.all(_gap), sliver: tiles(last, state.items.length - last)),
+        SliverToBoxAdapter(child: SizedBox(height: _gap)),
       ],
     );
   }
@@ -521,7 +521,7 @@ class _MediaGridState extends State<MediaGrid> {
               controller: _scroll,
               // With Ctrl held the wheel resizes tiles instead of scrolling.
               physics: _ctrl ? const NeverScrollableScrollPhysics() : null,
-              padding: const EdgeInsets.all(_gap),
+              padding: EdgeInsets.all(_gap),
               scrollCacheExtent: const ScrollCacheExtent.viewport(0.75),
               addAutomaticKeepAlives: false,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -842,7 +842,7 @@ class _Tile extends StatelessWidget {
                 children: [
                   // Rejected pictures fade back, as do cut ones, waiting to move.
                   Opacity(
-                    opacity: cut ? 0.35 : (item.flag == Flag.reject ? 0.4 : 1),
+                    opacity: cut ? 0.35 : (item.flag == Flag.reject && dimRejected ? 0.4 : 1),
                     child: _picture(),
                   ),
                   if (cut)

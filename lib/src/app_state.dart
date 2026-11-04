@@ -8,7 +8,7 @@ import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
-import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
+import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
 import 'core/media_image.dart';
 import 'core/presets.dart';
 import 'core/model_download.dart';
@@ -137,6 +137,11 @@ class DirNode {
   final String path;
   final bool hasChildren;
 }
+
+/// Values the settings give to code with no [AppState] to hand.
+double swipeShare = 0.18;
+double gridGap = 3;
+bool dimRejected = true;
 
 const double minTileSize = 72;
 const double maxTileSize = 520;
@@ -397,6 +402,49 @@ class AppState extends ChangeNotifier {
   /// Whether grid tiles show their audience level.
   bool audienceBadges = true;
 
+  /// Settings from Settings, by key, as saved. See [prefFlag].
+  Map<String, String> _prefs = {};
+
+  bool prefFlag(String key, bool fallback) {
+    final v = _prefs[key];
+    return v == null || v.isEmpty ? fallback : v == 'true';
+  }
+
+  double prefNumber(String key, double fallback) => double.tryParse(_prefs[key] ?? '') ?? fallback;
+
+  void setPref(String key, Object value) {
+    _prefs[key] = '$value';
+    _save(key, '$value');
+    _applyPrefs();
+    notifyListeners();
+  }
+
+  /// Put every setting back as it was, keeping presets, servers and pins.
+  void resetPrefs() {
+    for (final key in _prefs.keys) {
+      _save(key, '');
+    }
+    _prefs = {};
+    remixFormat = 'png';
+    upscaleFormat = 'same';
+    jxlQuality = 'lossless';
+    sendJxlAsPng = true;
+    _save('remix_format', 'png');
+    _save('upscale_format', 'same');
+    _save('jxl_quality', 'lossless');
+    _save('send_jxl_as_png', 'true');
+    _applyPrefs();
+    notifyListeners();
+  }
+
+  void _applyPrefs() {
+    swipeShare = prefNumber('pref_swipe', 18) / 100;
+    gridGap = prefNumber('pref_gap', 3);
+    dimRejected = prefFlag('pref_dim_rejected', true);
+    remixPollEvery = Duration(seconds: prefNumber('pref_poll', 2).round());
+    remixPatience = Duration(hours: prefNumber('pref_patience', 3).round());
+  }
+
   /// Saved parts of recipes, kept with the app's settings rather than in any
   /// picture folder. Uninstalling the app takes them too: see Export.
   List<Preset> presets = const [];
@@ -547,6 +595,11 @@ class AppState extends ChangeNotifier {
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
     audienceSource = (saved['audience_source'] as String?) ?? audienceSource;
+    _prefs = {
+      for (final e in saved.entries)
+        if (e.key.startsWith('pref_')) e.key: '${e.value}',
+    };
+    _applyPrefs();
     presets = [
       for (final entry in _savedList(saved['presets']))
         if (entry is Map<String, dynamic>) Preset.fromJson(entry),
@@ -584,13 +637,13 @@ class AppState extends ChangeNotifier {
     ];
 
     await loadPlaces();
-    final start = initialFolder ?? saved['folder'] as String?;
+    final start = initialFolder ?? (prefFlag('pref_reopen', true) ? saved['folder'] as String? : null);
     // Back to exactly what was showing last time: the folder, and the
     // search, filters or collection it was showing. A folder asked for by
     // name (on the command line) starts clean instead.
     final lastQuery = saved['query'] as String? ?? '';
     _rememberedQuery = lastQuery;
-    if (initialFolder == null && lastQuery.trim().isNotEmpty) {
+    if (initialFolder == null && prefFlag('pref_reopen', true) && lastQuery.trim().isNotEmpty) {
       query = lastQuery;
       searchText.value = TextEditingValue(
         text: lastQuery,
@@ -2415,7 +2468,7 @@ class AppState extends ChangeNotifier {
 
   /// How long a remix sent is waited for across runs of the app before it
   /// is given up on.
-  static const Duration _pendingKept = Duration(days: 7);
+  Duration get _pendingKept => Duration(days: prefNumber('pref_keep_days', 7).round());
 
   void _savePendingRemixes() {
     if (_disposed) return;
@@ -2505,7 +2558,7 @@ class AppState extends ChangeNotifier {
       _rescanSoon();
       return path;
     }
-    _notices.add('Saved $name');
+    if (prefFlag('pref_saved_note', true)) _notices.add('Saved $name');
     _rescanSoon();
     return path;
   }
@@ -2802,7 +2855,7 @@ class AppState extends ChangeNotifier {
           // What comes back is the upscale that goes in the collection.
           unawaited(_runUpscaleThen(then.$1, path, then.$2, then.$3, discard: true));
         } else if (path.isNotEmpty) {
-          _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}');
+          if (prefFlag('pref_saved_note', true)) _notices.add('Saved ${path.split(RegExp(r'[/\\]')).last}');
           _rescanSoon();
           unawaited(_addToUpscales(path));
         }

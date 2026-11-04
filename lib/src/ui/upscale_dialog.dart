@@ -68,13 +68,16 @@ class _UpscalePanelState extends State<UpscalePanel> {
 
   /// How much bigger the upscale here is; null when the pictures are
   /// already as large as one can be.
-  late double? _factor = _factors.contains(2.0) ? 2.0 : (_factors.isEmpty ? null : _factors.last);
-  bool _keepMetadata = true;
+  late double? _factor = () {
+    final wanted = widget.state.prefNumber('pref_upscale_size', 2);
+    return _factors.contains(wanted) ? wanted : (_factors.isEmpty ? null : _factors.last);
+  }();
+  late bool _keepMetadata = widget.state.prefFlag('pref_keep_metadata', true);
   bool _busy = false;
 
   /// Hires fix: after the upscale here, send it to a server to redraw
   /// lightly at the larger size, adding real detail.
-  bool _refine = false;
+  late bool _refine = widget.state.prefFlag('pref_refine', false);
 
   /// The server that refines, of those set up.
   String? _server;

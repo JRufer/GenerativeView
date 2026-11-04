@@ -175,7 +175,7 @@ RemixTicket resumeRemix(String kind, String base, List<String> jobs) {
 }
 
 /// How long to keep waiting for a backend to finish what was queued.
-const Duration remixPatience = Duration(hours: 3);
+Duration remixPatience = const Duration(hours: 3);
 
 /// How often to ask ComfyUI or InvokeAI whether it is done.
 Duration remixPollEvery = const Duration(seconds: 2);

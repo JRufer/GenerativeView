@@ -29,7 +29,6 @@ class FocusView extends StatefulWidget {
 /// How far a finger has to travel sideways, as a share of the view's width,
 /// before the pager takes it for a swipe. Until then the touch is left to the
 /// image, so a pinch has room to get going without turning the page.
-const double _swipeDeadZone = 0.18;
 
 /// The dead zone never shrinks below this, nor grows past the larger one, in
 /// logical pixels, so it stays usable on small phones and big unfolded ones.
@@ -37,7 +36,7 @@ const double _swipeDeadZoneMin = 64;
 const double _swipeDeadZoneMax = 200;
 
 /// The swipe dead zone for a view of this size, in logical pixels.
-double _swipeSlop(MediaQueryData media) => (media.size.width * _swipeDeadZone)
+double _swipeSlop(MediaQueryData media) => (media.size.width * swipeShare)
     .clamp(_swipeDeadZoneMin, _swipeDeadZoneMax)
     .toDouble();
 
@@ -348,7 +347,7 @@ class _FocusPageState extends State<_FocusPage>
   /// The furthest in the image goes: [maxZoomPercent], or the fitted size
   /// when that is further still.
   double get _maxScale =>
-      math.max(maxZoomPercent / _unit, _fitScale);
+      math.max(widget.state.prefNumber('pref_max_zoom', maxZoomPercent) / _unit, _fitScale);
 
   bool get _zoomed => _scale > _fitScale * 1.01;
 
@@ -612,6 +611,7 @@ class _FocusPageState extends State<_FocusPage>
   /// How far in the image is, shown while zooming and whenever it is at
   /// exactly 100 %. Small, and out of the way of the pointer.
   Widget _chip() {
+    if (!widget.state.prefFlag('pref_zoom_chip', true)) return const SizedBox.shrink();
     return ValueListenableBuilder<bool>(
       valueListenable: _chipShown,
       builder: (context, shown, _) => ValueListenableBuilder<Matrix4>(

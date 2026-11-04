@@ -209,7 +209,7 @@ Future<void> shareItems(BuildContext context, List<MediaItem> items) async {
 Future<void> deleteFiles(BuildContext context, AppState state, List<MediaItem> items) async {
   if (items.length == 1) return deleteFile(context, state, items.single);
   final n = items.length;
-  if (!trashAsksFirst) {
+  if (!trashAsksFirst && state.prefFlag('pref_confirm_delete', true)) {
     final yes = await confirmAction(
       context,
       title: 'Delete $n files?',
@@ -313,7 +313,7 @@ Future<void> pasteInto(BuildContext context, AppState state, String dir) async {
 Future<void> deleteFile(BuildContext context, AppState state, MediaItem item) async {
   final what = item.isVideo ? 'video' : 'image';
   // Android's media store shows its own prompt for the trash.
-  if (!trashAsksFirst) {
+  if (!trashAsksFirst && state.prefFlag('pref_confirm_delete', true)) {
     final yes = await confirmAction(
       context,
       title: 'Delete ${item.name}?',

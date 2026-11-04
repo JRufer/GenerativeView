@@ -106,7 +106,20 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
       navigatorObservers: [_routes],
       builder: (context, child) => state == null
           ? child!
-          : ShortcutLayer(state: state, routes: _routes, mouse: _mouse!, child: child!),
+          : ListenableBuilder(
+              listenable: state,
+              child: ShortcutLayer(state: state, routes: _routes, mouse: _mouse!, child: child!),
+              builder: (context, shortcuts) {
+                final media = MediaQuery.of(context);
+                return MediaQuery(
+                  data: media.copyWith(
+                    textScaler: TextScaler.linear(state.prefNumber('pref_text_size', 100) / 100),
+                    disableAnimations: media.disableAnimations || state.prefFlag('pref_reduce_motion', false),
+                  ),
+                  child: shortcuts!,
+                );
+              },
+            ),
       home: state == null
           ? _StartupFailure(failure: widget.failure)
           : HomePage(state: state),

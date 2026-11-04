@@ -382,6 +382,37 @@ impl Notes {
         Ok(true)
     }
 
+    /// Notes for files that are gone, across every folder that has a notes
+    /// file: how many, in how many folders, removed when `apply` says so.
+    /// A folder that is missing, unreadable, or has none of its files is left
+    /// alone: a drive not plugged in or a sync part way through looks the same.
+    pub fn prune(&self, db: &Db, apply: bool) -> Result<(usize, usize), String> {
+        let _guard = self.lock.lock();
+        let (mut entries, mut folders) = (0, 0);
+        for dir in db.note_dirs("", true).map_err(|e| e.to_string())? {
+            if !Path::new(&dir).is_dir() {
+                continue;
+            }
+            let path = join(&dir, FILE_NAME);
+            let Ok(mut file) = read_existing(&path) else { continue };
+            let Some(images) = file.get_mut("images").and_then(Value::as_object_mut) else { continue };
+            let gone: Vec<String> = images.keys().filter(|n| !join(&dir, n).exists()).cloned().collect();
+            if gone.is_empty() || gone.len() == images.len() {
+                continue;
+            }
+            entries += gone.len();
+            folders += 1;
+            if apply {
+                for name in &gone {
+                    images.remove(name);
+                }
+                save_file(&path, &mut file)?;
+                self.load_dir(db, &dir, true);
+            }
+        }
+        Ok((entries, folders))
+    }
+
     fn edit_smart(&self, dir: &str, edit: impl FnOnce(&mut Vec<Smart>)) -> Result<(), String> {
         let _guard = self.lock.lock();
         let path = join(dir, FILE_NAME);
@@ -521,6 +552,28 @@ mod tests {
         std::fs::write(&path, r#"{"generativeview":1,"images":{"a.png":{"rating":4}}}"#).unwrap();
         assert!(notes.load_dir(&db, &dir, false));
         assert_eq!(db.note(&dir, "a.png").rating, 4);
+    }
+
+    #[test]
+    fn prune_removes_only_what_is_gone_and_leaves_an_empty_looking_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(&tmp.path().join("data")).unwrap();
+        let notes = Notes::new();
+        let rate = Change { rating: Some(4), ..Default::default() };
+        let (kept, away) = (tmp.path().join("kept"), tmp.path().join("away"));
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(kept.join("here.png"), b"x").unwrap();
+        let (kept, away) = (kept.to_string_lossy().into_owned(), away.to_string_lossy().into_owned());
+        notes.change(&db, &kept, &["here.png".into(), "gone.png".into()], &rate).unwrap();
+        notes.change(&db, &away, &["a.png".into(), "b.png".into()], &rate).unwrap();
+
+        assert_eq!(notes.prune(&db, false).unwrap(), (1, 1), "only counted");
+        assert_eq!(db.note(&kept, "gone.png").rating, 4);
+        assert_eq!(notes.prune(&db, true).unwrap(), (1, 1));
+        assert_eq!(db.note(&kept, "gone.png").rating, 0);
+        assert_eq!(db.note(&kept, "here.png").rating, 4);
+        assert_eq!(db.note(&away, "a.png").rating, 4, "none of its files here: left alone");
     }
 
     #[test]
