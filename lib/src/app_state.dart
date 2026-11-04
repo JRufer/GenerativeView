@@ -8,7 +8,7 @@ import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
-import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix;
+import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
 import 'core/media_image.dart';
 import 'core/presets.dart';
 import 'core/model_download.dart';
@@ -141,6 +141,7 @@ class DirNode {
 /// Values the settings give to code with no [AppState] to hand.
 double swipeShare = 0.18;
 double gridGap = 3;
+bool dimRejected = true;
 
 const double minTileSize = 72;
 const double maxTileSize = 520;
@@ -439,6 +440,7 @@ class AppState extends ChangeNotifier {
   void _applyPrefs() {
     swipeShare = prefNumber('pref_swipe', 18) / 100;
     gridGap = prefNumber('pref_gap', 3);
+    dimRejected = prefFlag('pref_dim_rejected', true);
     remixPollEvery = Duration(seconds: prefNumber('pref_poll', 2).round());
     remixPatience = Duration(hours: prefNumber('pref_patience', 3).round());
   }

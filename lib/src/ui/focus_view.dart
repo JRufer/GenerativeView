@@ -347,7 +347,7 @@ class _FocusPageState extends State<_FocusPage>
   /// The furthest in the image goes: [maxZoomPercent], or the fitted size
   /// when that is further still.
   double get _maxScale =>
-      math.max(state.prefNumber('pref_max_zoom', maxZoomPercent) / _unit, _fitScale);
+      math.max(widget.state.prefNumber('pref_max_zoom', maxZoomPercent) / _unit, _fitScale);
 
   bool get _zoomed => _scale > _fitScale * 1.01;
 
@@ -611,7 +611,7 @@ class _FocusPageState extends State<_FocusPage>
   /// How far in the image is, shown while zooming and whenever it is at
   /// exactly 100 %. Small, and out of the way of the pointer.
   Widget _chip() {
-    if (!state.prefFlag('pref_zoom_chip', true)) return const SizedBox.shrink();
+    if (!widget.state.prefFlag('pref_zoom_chip', true)) return const SizedBox.shrink();
     return ValueListenableBuilder<bool>(
       valueListenable: _chipShown,
       builder: (context, shown, _) => ValueListenableBuilder<Matrix4>(

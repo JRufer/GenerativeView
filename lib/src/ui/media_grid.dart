@@ -842,7 +842,7 @@ class _Tile extends StatelessWidget {
                 children: [
                   // Rejected pictures fade back, as do cut ones, waiting to move.
                   Opacity(
-                    opacity: cut ? 0.35 : (item.flag == Flag.reject && state.prefFlag('pref_dim_rejected', true) ? 0.4 : 1),
+                    opacity: cut ? 0.35 : (item.flag == Flag.reject && dimRejected ? 0.4 : 1),
                     child: _picture(),
                   ),
                   if (cut)
