@@ -1047,8 +1047,20 @@ class AppState extends ChangeNotifier {
 
   // ================================================================ items
 
+  void _onJudgedEvent(Map<String, dynamic> e) {
+    judged.value = JudgedPass(
+      running: e['state'] == 'indexing',
+      done: (e['done'] as num?)?.toInt() ?? 0,
+      total: (e['total'] as num?)?.toInt() ?? 0,
+      error: e['state'] == 'error' ? (e['error'] as String? ?? 'could not look at them') : (e['state'] == 'no_model' ? 'the content search model is not installed' : null),
+      tick: judged.value.tick + 1,
+    );
+  }
+
   void _onEvent(Map<String, dynamic> e) {
     if (e['t'] == 'upscale') return _onUpscaleEvent(e);
+    // Not about the open folder: rated pictures are looked at wherever they are.
+    if (e['t'] == 'judged') return _onJudgedEvent(e);
     if (normalizePath(e['root'] as String? ?? '') !=
         normalizePath(folder ?? '')) {
       return;
@@ -1056,14 +1068,6 @@ class AppState extends ChangeNotifier {
     switch (e['t']) {
       case 'content':
         _onContentEvent(e);
-      case 'judged':
-        judged.value = JudgedPass(
-          running: e['state'] == 'indexing',
-          done: (e['done'] as num?)?.toInt() ?? 0,
-          total: (e['total'] as num?)?.toInt() ?? 0,
-          error: e['state'] == 'error' ? (e['error'] as String? ?? 'could not look at them') : (e['state'] == 'no_model' ? 'the content search model is not installed' : null),
-          tick: judged.value.tick + 1,
-        );
       case 'changed':
         _contentSoon();
         _smartSoon();
