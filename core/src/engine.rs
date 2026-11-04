@@ -558,12 +558,7 @@ impl Engine {
                 };
                 let run = || -> Result<std::path::PathBuf, String> {
                     let model = crate::sr::Upscaler::load(&model_path)?;
-                    let picture = image::ImageReader::open(&path)
-                        .map_err(|e| e.to_string())?
-                        .with_guessed_format()
-                        .map_err(|e| e.to_string())?
-                        .decode()
-                        .map_err(|e| format!("cannot read the picture: {e}"))?;
+                    let picture = crate::jxl::open(Path::new(&path))?;
                     let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
                     let big = crate::sr::upscale_picture(&model, &picture, factor, &mut |done, total| {
                         if last.elapsed().as_millis() >= 200 || done == total {
@@ -761,6 +756,9 @@ impl Engine {
             // The same packed rows as `query`.
             return Ok(Reply::Bytes(self.with_audience(self.content_query(args)?, "").pack()));
         }
+        if method == "jxl_pixels" {
+            return crate::jxl::pixels(Path::new(str_arg(args, "path")?)).map(Reply::Bytes);
+        }
         self.call(method, args).map(Reply::Json)
     }
 
@@ -886,6 +884,14 @@ impl Engine {
                     "max_factor": crate::sr::MAX_FACTOR,
                 })
                 .to_string())
+            }
+            "jxl_convert" => {
+                let quality = match args["distance"].as_f64() {
+                    Some(d) => crate::jxl::Quality::Distance(d as f32),
+                    None => crate::jxl::Quality::Lossless,
+                };
+                crate::jxl::convert(Path::new(str_arg(args, "path")?), Path::new(str_arg(args, "dest")?), quality)?;
+                Ok("{}".to_string())
             }
             "upscale" => self.start_upscale(args),
             "upscale_cancel" => {

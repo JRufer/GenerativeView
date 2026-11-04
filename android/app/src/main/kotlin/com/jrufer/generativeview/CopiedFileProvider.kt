@@ -27,6 +27,7 @@ class CopiedFileProvider : ContentProvider() {
             "jpg" to "image/jpeg",
             "jpeg" to "image/jpeg",
             "webp" to "image/webp",
+            "jxl" to "image/jxl",
             "gif" to "image/gif",
             "bmp" to "image/bmp",
             "mp4" to "video/mp4",

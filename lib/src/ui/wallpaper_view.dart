@@ -96,7 +96,7 @@ class _WallpaperPageState extends State<WallpaperPage> {
           active: screen.id == widget.device.current,
         ),
     ];
-    final results = await widget.write(widget.item.path, writes);
+    final results = await widget.write(await readablePath(widget.item.path), writes);
     if (!mounted) return;
     setState(() => _busy = false);
     final ok = [for (var i = 0; i < writes.length; i++) if (i < results.length && results[i]) writes[i].screenId];
