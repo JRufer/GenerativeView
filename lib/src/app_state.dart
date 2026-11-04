@@ -15,7 +15,7 @@ import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/taste.dart';
 import 'core/thumb_cache.dart';
-import 'platform.dart' show PasteSource, scanMediaFiles, sharedFiles;
+import 'platform.dart' show PasteSource, TrashOutcome, scanMediaFiles, sharedFiles, trashFiles;
 
 enum ViewMode { grid, focus }
 
@@ -163,6 +163,7 @@ class AppState extends ChangeNotifier {
   }) {
     _events = core.events.listen(_onEvent);
     jxlPixels = core.jxlPixels;
+    jxlToPng = (path, dest) => core.call('jxl_png', {'path': path, 'dest': dest});
   }
 
   final NativeCore core;
@@ -395,6 +396,15 @@ class AppState extends ChangeNotifier {
   /// Whether grid tiles show their audience level.
   bool audienceBadges = true;
 
+  /// How Remixes and Breeds are kept: 'png' (as the server sent them) or 'jxl'.
+  String remixFormat = 'png';
+
+  /// How Upscales and hires fixes are kept: 'same' as the original or 'jxl'.
+  String upscaleFormat = 'same';
+
+  /// 'lossless' or 'high'.
+  String jxlQuality = 'lossless';
+
   // ---------------------------------------------------------------- folders
 
   List<Place> places = const [];
@@ -532,6 +542,10 @@ class AppState extends ChangeNotifier {
     prewarm = flag('prewarm', prewarm);
     cropTiles = flag('crop_tiles', cropTiles);
     audienceSource = (saved['audience_source'] as String?) ?? audienceSource;
+    remixFormat = (saved['remix_format'] as String?) ?? remixFormat;
+    upscaleFormat = (saved['upscale_format'] as String?) ?? upscaleFormat;
+    jxlQuality = (saved['jxl_quality'] as String?) ?? jxlQuality;
+    sendJxlAsPng = flag('send_jxl_as_png', true);
     audienceBadges = flag('audience_badges', audienceBadges);
     sort = (saved['sort'] as String?) ?? sort;
     searchSort = (saved['search_sort'] as String?) ?? searchSort;
@@ -1409,6 +1423,73 @@ class AppState extends ChangeNotifier {
   Future<AudienceSteer> steerAudience(String prompt, String negative, int target) async {
     final json = await core.call('audience_steer', {'prompt': prompt, 'negative': negative, 'target': target});
     return AudienceSteer.fromJson(json as Map<String, dynamic>);
+  }
+
+  void setRemixFormat(String value) {
+    remixFormat = value;
+    _save('remix_format', value);
+    notifyListeners();
+  }
+
+  void setUpscaleFormat(String value) {
+    upscaleFormat = value;
+    _save('upscale_format', value);
+    notifyListeners();
+  }
+
+  void setJxlQuality(String value) {
+    jxlQuality = value;
+    _save('jxl_quality', value);
+    notifyListeners();
+  }
+
+  void setSendJxlAsPng(bool value) {
+    sendJxlAsPng = value;
+    _save('send_jxl_as_png', '$value');
+    notifyListeners();
+  }
+
+  /// The pictures Convert can work on: PNG and WebP, among those a search
+  /// of the open folder finds.
+  Future<List<MediaItem>> convertible(String search) async {
+    final dir = folder;
+    if (dir == null) return const [];
+    final list = ItemList.parse(await core.query(dir: dir, recursive: recursive, text: search));
+    return [
+      for (var i = 0; i < list.length; i++)
+        if (RegExp(r'\.(png|webp)$', caseSensitive: false).hasMatch(list[i].name)) list[i],
+    ];
+  }
+
+  /// Save [item] as a `.jxl` beside it, with its stars, flags and collections.
+  /// Answers with the bytes saved. See [trashConverted] for the original.
+  Future<int> convertToJxl(MediaItem item) async {
+    final original = File(item.path);
+    final before = await original.length();
+    final made = await original.lastModified();
+    final stem = item.path.substring(0, item.path.lastIndexOf('.'));
+    var dest = '$stem.jxl';
+    for (var n = 2; await File(dest).exists(); n++) {
+      dest = '$stem-$n.jxl';
+    }
+    await core.call('jxl_convert', {'path': item.path, 'dest': dest, 'quality': jxlQuality});
+    final done = File(dest);
+    // Keeps its place in date order.
+    await done.setLastModified(made);
+    final after = await done.length();
+    await core.call('notes_transfer', {'from': item.path, 'to': dest});
+    _rescanSoon();
+    return before - after;
+  }
+
+  /// Put the originals of pictures converted in the trash, together, so
+  /// Android asks once. Answers with why not, if they stayed.
+  Future<String?> trashConverted(List<MediaItem> items) async {
+    if (items.isEmpty) return null;
+    final (outcome, why) = await trashFiles([for (final i in items) i.path]);
+    if (outcome != TrashOutcome.trashed) return why ?? 'the originals were kept';
+    await forgetFiles(items);
+    return null;
   }
 
   /// Load the pictures around those on screen ahead of scrolling to them.
@@ -2327,8 +2408,8 @@ class AppState extends ChangeNotifier {
   /// (a hires fix: the upscale collection); answers with where it went, or
   /// null if it could not be saved.
   Future<String?> _saveRemix(String dir, String stem, RemixImage image, {String label = 'remix'}) async {
-    late final String path;
-    late final String name;
+    late String path;
+    late String name;
     try {
       final sep = dir.contains('/') ? '/' : Platform.pathSeparator;
       final base = (dir.endsWith('/') || dir.endsWith(r'\')) ? dir : '$dir$sep';
@@ -2343,7 +2424,26 @@ class AppState extends ChangeNotifier {
       // picture.
       final part = File('$base.$name.part');
       await part.writeAsBytes(image.bytes, flush: true);
-      await part.rename(path);
+      final jxl = label == 'hires' ? upscaleFormat == 'jxl' : remixFormat == 'jxl';
+      if (jxl && !isJxl(path)) {
+        final stem = path.substring(0, path.lastIndexOf('.'));
+        var dest = '$stem.jxl';
+        for (var n = 2; await File(dest).exists(); n++) {
+          dest = '$stem-$n.jxl';
+        }
+        try {
+          // The core tells the format by the bytes, so the name can stay.
+          await core.call('jxl_convert', {'path': part.path, 'dest': dest, 'quality': jxlQuality});
+          await part.delete();
+          path = dest;
+          name = dest.split(RegExp(r'[/\\]')).last;
+        } catch (e) {
+          _notices.add('Kept $name as it came: could not save it as JXL ($e)');
+          await part.rename(path);
+        }
+      } else {
+        await part.rename(path);
+      }
     } catch (e) {
       if (!_disposed) _notices.add('Could not save the remix: $e');
       return null;
@@ -2614,6 +2714,8 @@ class AppState extends ChangeNotifier {
         'model': model,
         'factor': factor,
         'metadata': keepMetadata ? 'copy' : 'strip',
+        // A hires fix's first step is thrown away: no time spent on it.
+        if (then == null && upscaleFormat == 'jxl') 'jxl': jxlQuality,
       });
       final job = ((reply as Map)['job'] as num).toInt();
       if (then != null) _upscaleThen[job] = (item, then, thenLabel);

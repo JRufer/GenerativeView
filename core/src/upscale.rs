@@ -56,6 +56,11 @@ fn sniff(bytes: &[u8]) -> Option<Format> {
 /// Returns where it went: the original's name with `_up2x` (or whatever the
 /// factor is) added, never over an existing file.
 pub fn save(source: &Path, picture: &DynamicImage, metadata: Metadata) -> Result<PathBuf, String> {
+    save_as(source, picture, metadata, None)
+}
+
+/// [`save`], as a `.jxl` when `jxl` says how, whatever the original is.
+pub fn save_as(source: &Path, picture: &DynamicImage, metadata: Metadata, jxl: Option<crate::jxl::Quality>) -> Result<PathBuf, String> {
     let original = std::fs::read(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
     let format = sniff(&original).ok_or("the original is not a PNG, JPEG or WebP picture")?;
     let (ow, _) = if format == Format::Jxl {
@@ -67,7 +72,17 @@ pub fn save(source: &Path, picture: &DynamicImage, metadata: Metadata) -> Result
             .and_then(|r| r.into_dimensions().ok())
             .unwrap_or((0, 0))
     };
-    let bytes = encode(format, picture, &original, metadata)?;
+    let (bytes, format) = match jxl {
+        Some(quality) => {
+            let texts = match metadata {
+                Metadata::Strip => Vec::new(),
+                Metadata::Copy => crate::meta::container::read_raw(source).map_err(|e| e.to_string())?.texts,
+            };
+            let meta = if texts.is_empty() { Vec::new() } else { crate::jxl::pack_texts(&texts)? };
+            (crate::jxl::encode(picture, quality, &meta)?, Format::Jxl)
+        }
+        None => (encode(format, picture, &original, metadata)?, format),
+    };
     let dest = destination(source, ow, picture.width(), format);
     std::fs::write(&dest, bytes).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
     Ok(dest)
@@ -83,7 +98,7 @@ pub fn save_bytes(source: &Path, result: &[u8], metadata: Metadata) -> Result<Pa
 /// taken.
 fn destination(source: &Path, from_width: u32, to_width: u32, format: Format) -> PathBuf {
     let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("upscaled");
-    let ext = source.extension().and_then(|s| s.to_str()).unwrap_or(match format {
+    let ext = source.extension().and_then(|s| s.to_str()).filter(|_| format != Format::Jxl).unwrap_or(match format {
         Format::Png => "png",
         Format::Jpeg => "jpg",
         Format::WebP => "webp",
@@ -162,6 +177,22 @@ fn encode(format: Format, picture: &DynamicImage, original: &[u8], metadata: Met
     }
 }
 
+/// An iTXt chunk, ready for [`png_with_chunks`]: text of any language, not
+/// compressed.
+pub(crate) fn itxt_chunk(key: &str, value: &str) -> Vec<u8> {
+    let mut data = key.as_bytes().to_vec();
+    data.extend_from_slice(&[0, 0, 0, 0, 0]);
+    data.extend_from_slice(value.as_bytes());
+    let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+    chunk.extend_from_slice(b"iTXt");
+    chunk.extend_from_slice(&data);
+    let mut crc = flate2::Crc::new();
+    crc.update(b"iTXt");
+    crc.update(&data);
+    chunk.extend_from_slice(&crc.sum().to_be_bytes());
+    chunk
+}
+
 fn has_alpha(picture: &DynamicImage) -> bool {
     picture.color().has_alpha() && picture.to_rgba8().pixels().any(|p| p.0[3] != 255)
 }
@@ -198,7 +229,7 @@ fn png_meta_chunks(bytes: &[u8]) -> Vec<Vec<u8>> {
 
 /// `png` with its own metadata chunks dropped and `chunks` put in right
 /// after the header, where readers look first.
-fn png_with_chunks(png: &[u8], chunks: &[Vec<u8>]) -> Vec<u8> {
+pub(crate) fn png_with_chunks(png: &[u8], chunks: &[Vec<u8>]) -> Vec<u8> {
     let mut out = png[..8].to_vec();
     for (kind, chunk) in png_chunks(png) {
         if matches!(&kind, b"tEXt" | b"zTXt" | b"iTXt" | b"eXIf") {
@@ -367,6 +398,11 @@ mod tests {
         let read = crate::meta::container::read_raw(&kept).unwrap();
         assert_eq!(read.texts, texts);
         assert_eq!((read.width, read.height), (32, 24));
+        let png = tmp.path().join("up.png");
+        std::fs::write(&png, png_with_chunks(&super::tests::png(16, 12), &[itxt_chunk("parameters", "a fox\nSteps: 20")])).unwrap();
+        let converted = save_as(&png, &picture(32, 24), Metadata::Copy, Some(crate::jxl::Quality::Lossless)).unwrap();
+        assert_eq!(converted.extension().unwrap(), "jxl");
+        assert_eq!(crate::meta::container::read_raw(&converted).unwrap().texts, texts);
         let bare = save(&source, &picture(32, 24), Metadata::Strip).unwrap();
         assert!(crate::meta::container::read_raw(&bare).unwrap().texts.is_empty());
     }

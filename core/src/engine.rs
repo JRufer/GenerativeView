@@ -538,8 +538,9 @@ impl Engine {
         let info = crate::sr::model_info(str_arg(args, "model")?).ok_or("unknown upscale model")?;
         let factor = args.get("factor").and_then(Value::as_f64).unwrap_or(4.0);
         // Too large is said now, not after the model has run.
-        let (w, h) = image::image_dimensions(&path).map_err(|e| format!("cannot read the picture: {e}"))?;
+        let (w, h) = crate::jxl::size(&path).map_err(|e| format!("cannot read the picture: {e}"))?;
         crate::sr::upscaled_size(w, h, factor)?;
+        let jxl = args.get("jxl").and_then(Value::as_str).map(|q| crate::jxl::quality(Some(q)));
         let metadata = crate::upscale::Metadata::parse(args.get("metadata").and_then(Value::as_str).unwrap_or("copy")).ok_or("metadata is strip or copy")?;
         let model_path = crate::sr::model_dir(&self.data_dir).join(info.file);
         let job = NEXT_JOB.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -567,7 +568,7 @@ impl Engine {
                         }
                         jobs.lock().contains(&job)
                     })?;
-                    crate::upscale::save(&path, &big, metadata)
+                    crate::upscale::save_as(&path, &big, metadata, jxl)
                 };
                 match run() {
                     Ok(dest) => emit("done", json!({ "path": dest.to_string_lossy() })),
@@ -886,11 +887,23 @@ impl Engine {
                 .to_string())
             }
             "jxl_convert" => {
-                let quality = match args["distance"].as_f64() {
-                    Some(d) => crate::jxl::Quality::Distance(d as f32),
-                    None => crate::jxl::Quality::Lossless,
-                };
+                let quality = crate::jxl::quality(args.get("quality").and_then(Value::as_str));
                 crate::jxl::convert(Path::new(str_arg(args, "path")?), Path::new(str_arg(args, "dest")?), quality)?;
+                Ok("{}".to_string())
+            }
+            "jxl_png" => {
+                crate::jxl::to_png(Path::new(str_arg(args, "path")?), Path::new(str_arg(args, "dest")?))?;
+                Ok("{}".to_string())
+            }
+            "notes_transfer" => {
+                let (from, to) = (str_arg(args, "from")?, str_arg(args, "to")?);
+                let split = |p: &str| {
+                    let path = Path::new(p);
+                    Some((path.parent()?.to_string_lossy().into_owned(), path.file_name()?.to_string_lossy().into_owned()))
+                };
+                let ((from_dir, from_name), (to_dir, to_name)) =
+                    (split(from).ok_or("bad path")?, split(to).ok_or("bad path")?);
+                self.notes.transfer(&self.db, &from_dir, &from_name, &to_dir, &to_name)?;
                 Ok("{}".to_string())
             }
             "upscale" => self.start_upscale(args),
