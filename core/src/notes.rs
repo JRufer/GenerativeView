@@ -178,16 +178,27 @@ fn stamp(path: &Path) -> Option<(i64, i64)> {
 }
 
 /// Read a folder's notes file as JSON; an empty object when there is none
-/// or it cannot be read.
+/// or it cannot be read. For showing what is there: anything that will write
+/// the file back goes through [`read_existing`].
 fn read_file(path: &Path) -> Map<String, Value> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|v| match v {
-            Value::Object(map) => Some(map),
-            _ => None,
-        })
-        .unwrap_or_default()
+    read_existing(path).unwrap_or_default()
+}
+
+/// Read a folder's notes file as JSON; an empty object only when there is no
+/// file. A file that is there but cannot be read (storage access not in force
+/// yet, a sync half done) is an error, because treating it as empty would
+/// forget what it holds, and writing that back would destroy it.
+fn read_existing(path: &Path) -> Result<Map<String, Value>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => Err(format!("{} is not a notes file", path.display())),
+        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+    }
 }
 
 /// Every note in a folder's notes file, by file name.
@@ -227,7 +238,16 @@ impl Notes {
         if !force && now == known {
             return false;
         }
-        let notes = if now.is_some() { parse(&read_file(&path)) } else { Vec::new() };
+        let notes = if now.is_some() {
+            // Not read: keep what the index has and leave the stamp alone, so
+            // the next scan tries again rather than taking this as read.
+            match read_existing(&path) {
+                Ok(file) => parse(&file),
+                Err(_) => return false,
+            }
+        } else {
+            Vec::new()
+        };
         let before = db.notes_in(dir).unwrap_or_default();
         let mut after = notes.clone();
         after.sort_by(|a, b| a.0.cmp(&b.0));
@@ -246,7 +266,7 @@ impl Notes {
         let path = join(dir, FILE_NAME);
         // Start from what is on disk now, which another machine may have
         // changed since it was last read.
-        let mut file = read_file(&path);
+        let mut file = read_existing(&path)?;
         file.insert("generativeview".into(), json!(1));
         let images = file.entry("images").or_insert_with(|| Value::Object(Map::new()));
         if !images.is_object() {
@@ -329,7 +349,7 @@ impl Notes {
     pub fn transfer(&self, db: &Db, from_dir: &str, from_name: &str, to_dir: &str, to_name: &str) -> Result<bool, String> {
         let _guard = self.lock.lock();
         let from_path = join(from_dir, FILE_NAME);
-        let mut from = read_file(&from_path);
+        let mut from = read_existing(&from_path)?;
         let entry = from.get_mut("images").and_then(Value::as_object_mut).and_then(|images| images.remove(from_name));
         let Some(entry) = entry.filter(|e| e.as_object().is_some_and(|m| !m.is_empty())) else {
             return Ok(false);
@@ -342,7 +362,7 @@ impl Notes {
             save_file(&from_path, &mut from)?;
         } else {
             let to_path = join(to_dir, FILE_NAME);
-            let mut to = read_file(&to_path);
+            let mut to = read_existing(&to_path)?;
             let images = to.entry("images").or_insert_with(|| Value::Object(Map::new()));
             if !images.is_object() {
                 *images = Value::Object(Map::new());
@@ -365,7 +385,7 @@ impl Notes {
     fn edit_smart(&self, dir: &str, edit: impl FnOnce(&mut Vec<Smart>)) -> Result<(), String> {
         let _guard = self.lock.lock();
         let path = join(dir, FILE_NAME);
-        let mut file = read_file(&path);
+        let mut file = read_existing(&path)?;
         let mut list = parse_smart(&file);
         edit(&mut list);
         if list.is_empty() {
@@ -477,6 +497,31 @@ fn write_atomic(path: &Path, file: &Map<String, Value>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_retried_and_never_overwritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_string_lossy().into_owned();
+        let db = Db::open(&tmp.path().join("data")).unwrap();
+        let notes = Notes::new();
+        let path = Path::new(&dir).join(FILE_NAME);
+
+        // Half a file, as a sync part way through would leave.
+        std::fs::write(&path, r#"{"generativeview":1,"images":{"a.png":"#).unwrap();
+        assert!(!notes.load_dir(&db, &dir, false));
+        assert_eq!(db.notes_stamp(&dir), None, "not taken as read");
+
+        // Writing refuses, and leaves it as it was.
+        let rate = Change { rating: Some(3), ..Default::default() };
+        assert!(notes.change(&db, &dir, &["b.png".into()], &rate).is_err());
+        assert!(notes.set_smart(&dir, "best", "rating:5", None).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"generativeview":1,"images":{"a.png":"#);
+
+        // Once it reads, the next scan picks it up with no change of its own.
+        std::fs::write(&path, r#"{"generativeview":1,"images":{"a.png":{"rating":4}}}"#).unwrap();
+        assert!(notes.load_dir(&db, &dir, false));
+        assert_eq!(db.note(&dir, "a.png").rating, 4);
+    }
 
     #[test]
     fn change_writes_and_merges() {
