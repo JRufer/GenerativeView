@@ -946,6 +946,35 @@ void main() {
     expect(state.problems.value, isEmpty);
     await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the problem');
 
+    // However long the error, the card stays on the screen and its close
+    // button can be reached.
+    state.problems.value = ['heron.png: ${'the server said no at great length ' * 300}'];
+    await pumpUntil(tester, () => button.evaluate().isNotEmpty, what: 'the long problem shown');
+    await settle(tester);
+    await tester.tap(button);
+    await settle(tester);
+    final screen = tester.getRect(find.byType(Scaffold).first);
+    final card = tester.getRect(find.byKey(const ValueKey('activity-card')));
+    expect(card.top, greaterThanOrEqualTo(screen.top));
+    expect(card.bottom, lessThanOrEqualTo(screen.bottom));
+    await tester.tap(find.byKey(const ValueKey('activity-problems-dismiss')));
+    await settle(tester);
+    expect(state.problems.value, isEmpty);
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the long problem');
+
+    // Press and hold puts a problem away even while something else runs,
+    // and what runs stays.
+    state.afterUpscale.value = ['heron.png, then refined on InvokeAI'];
+    state.problems.value = ['owl_01.png: out of memory'];
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-spinner')).evaluate().isNotEmpty, what: 'running with a problem');
+    await settle(tester);
+    await tester.longPress(button);
+    await settle(tester);
+    expect(state.problems.value, isEmpty);
+    expect(state.afterUpscale.value, isNotEmpty);
+    state.afterUpscale.value = const [];
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go with both done');
+
     // A hires fix being sent shows as running.
     state.afterUpscale.value = ['heron.png, then refined on InvokeAI'];
     await pumpUntil(tester, () => find.byKey(const ValueKey('activity-spinner')).evaluate().isNotEmpty, what: 'sending shown as running');

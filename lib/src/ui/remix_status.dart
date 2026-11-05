@@ -10,6 +10,12 @@ import 'upscale_dialog.dart' show scaleText;
 /// reads as something happening rather than one more control.
 const Color _remixBlue = Color(0xFF3B7BF6);
 
+/// Height kept clear of the card for the button and its margins.
+const double _cardReserve = 110;
+
+/// The card is never squeezed below this, however little room there is.
+const double _cardLeast = 120;
+
 /// Remixes and upscales under way, as one small round blue button: a
 /// spinner while anything runs, a tick once something is done.
 ///
@@ -21,8 +27,9 @@ const Color _remixBlue = Color(0xFF3B7BF6);
 /// (remixes waiting on the server, upscales with their progress and a way to
 /// stop each) and what is done. Tapped when all is done, it goes straight to
 /// the new pictures: remixes in the Remixes collection, upscales in the
-/// Upscales collection, each picked out. Pressed and held (or right-clicked) when done, it
-/// is put away without going there.
+/// Upscales collection, each picked out. Pressed and held (or right-clicked)
+/// when done, it is put away without going there; what went wrong can be put
+/// away the same way, even while other work runs.
 class ActivityButton extends StatefulWidget {
   const ActivityButton({super.key, required this.state, this.compact = false});
   final AppState state;
@@ -117,6 +124,17 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
 
   void _toggle() => _card.isShowing ? _card.hide() : _card.show();
 
+  /// How tall the card can be and stay on the screen, whichever way it
+  /// opens: the whole view, less the system's bars and the keyboard, less
+  /// what the button and its margins take.
+  double _cardRoom(BuildContext context) {
+    // The view itself: panels above here may have taken the bars out of
+    // the MediaQuery, and the card is not inside them.
+    final view = MediaQueryData.fromView(View.of(context));
+    final room = view.size.height - view.padding.vertical - view.viewInsets.bottom - _cardReserve;
+    return math.max(room, _cardLeast);
+  }
+
   void _tap(_Activity now) {
     if (now.busy || now.doneBothKinds || now.problems.isNotEmpty) {
       setState(_toggle);
@@ -142,7 +160,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
       if (now.sending.isNotEmpty) parts.add(now.sending.length == 1 ? 'a hires fix' : '${now.sending.length} hires fixes');
       return 'Running ${parts.join(' and ')}: tap for details';
     }
-    if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what';
+    if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what, press and hold to dismiss';
     if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
     final what = now.remixesDone.isNotEmpty
         ? (now.remixesDone.length == 1 ? 'Remix done' : '${now.remixesDone.length} remixes done')
@@ -164,7 +182,8 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
             pop: _pop,
             tooltip: _tooltip(now),
             onTap: () => _tap(now),
-            onDismiss: !now.busy && (now.anyDone || now.problems.isNotEmpty) ? _dismissDone : null,
+            // What went wrong can always be put away; what runs stays.
+            onDismiss: now.problems.isNotEmpty || (!now.busy && now.anyDone) ? _dismissDone : null,
           );
     return TapRegion(
       groupId: _region,
@@ -187,7 +206,12 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
               alignment: widget.compact ? Alignment.topRight : Alignment.bottomRight,
               child: TapRegion(
                 groupId: _region,
-                child: _ActivityCard(state: state, activity: now, onGo: () => setState(_card.hide)),
+                child: _ActivityCard(
+                  state: state,
+                  activity: now,
+                  maxHeight: _cardRoom(context),
+                  onGo: () => setState(_card.hide),
+                ),
               ),
             ),
           ),
@@ -324,9 +348,13 @@ class _RoundButton extends StatelessWidget {
 
 /// The card the button opens: what is running, and what is done.
 class _ActivityCard extends StatelessWidget {
-  const _ActivityCard({required this.state, required this.activity, required this.onGo});
+  const _ActivityCard({required this.state, required this.activity, required this.maxHeight, required this.onGo});
   final AppState state;
   final _Activity activity;
+
+  /// Taller than this and it scrolls, so a long error cannot push anything
+  /// off the screen.
+  final double maxHeight;
 
   /// Called on going to new pictures, so the card closes.
   final VoidCallback onGo;
@@ -389,42 +417,19 @@ class _ActivityCard extends StatelessWidget {
         ),
     ];
     if (a.problems.isNotEmpty) {
-      rows.add(
+      rows.insert(
+        0,
         Container(
           key: const ValueKey<String>('activity-problems'),
-          padding: const EdgeInsets.fromLTRB(10, 6, 2, 6),
+          padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color: Palette.danger.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: Palette.danger.withValues(alpha: 0.5)),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(Icons.error_outline, size: 16, color: Palette.danger),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SelectableText(
-                  a.problems.join('\n\n'),
-                  style: const TextStyle(fontSize: 12.5, height: 1.35),
-                ),
-              ),
-              SizedBox(
-                width: 32,
-                height: 32,
-                child: IconButton(
-                  key: const ValueKey<String>('activity-problems-dismiss'),
-                  tooltip: 'Dismiss',
-                  padding: EdgeInsets.zero,
-                  iconSize: 16,
-                  onPressed: state.dismissProblems,
-                  icon: const Icon(Icons.close),
-                ),
-              ),
-            ],
+          child: SelectableText(
+            a.problems.join('\n\n'),
+            style: const TextStyle(fontSize: 12.5, height: 1.35),
           ),
         ),
       );
@@ -435,20 +440,72 @@ class _ActivityCard extends StatelessWidget {
       elevation: 8,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: const BorderSide(color: Palette.line)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
+        constraints: BoxConstraints(minWidth: 220, maxWidth: 320, maxHeight: maxHeight),
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (var i = 0; i < rows.length; i++) ...[
-                if (i > 0) const SizedBox(height: 6),
-                rows[i],
-              ],
+              // Outside the scrolling part, so it can always be reached.
+              if (a.problems.isNotEmpty) _ProblemsHeader(count: a.problems.length, onDismiss: state.dismissProblems),
+              Flexible(
+                child: SingleChildScrollView(
+                  key: const ValueKey<String>('activity-card-scroll'),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 6),
+                        rows[i],
+                      ],
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Above what went wrong, and always on the card: how many, and the way to
+/// put them away.
+class _ProblemsHeader extends StatelessWidget {
+  const _ProblemsHeader({required this.count, required this.onDismiss});
+  final int count;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, bottom: 4),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, size: 16, color: Palette.danger),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              count == 1 ? 'Something went wrong' : '$count things went wrong',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: IconButton(
+              key: const ValueKey<String>('activity-problems-dismiss'),
+              tooltip: 'Dismiss',
+              padding: EdgeInsets.zero,
+              iconSize: 20,
+              onPressed: onDismiss,
+              icon: const Icon(Icons.close),
+            ),
+          ),
+        ],
       ),
     );
   }
