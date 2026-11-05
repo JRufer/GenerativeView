@@ -91,6 +91,86 @@ void json(HttpRequest request, Object body) {
 }
 
 void main() {
+  group('cancelRemix', () {
+    test('InvokeAI: each job is cancelled by its queue item', () async {
+      final asked = <String>[];
+      final (server, base) = await serve((r) => asked.add('${r.method} ${r.uri.path}'));
+      addTearDown(server.close);
+      await cancelRemix('invokeai', base, ['7', '8']);
+      expect(asked, ['PUT /api/v1/queue/default/i/7/cancel', 'PUT /api/v1/queue/default/i/8/cancel']);
+    });
+
+    test('ComfyUI: waiting jobs are deleted, and only our running one interrupted', () async {
+      final asked = <String>[];
+      final (server, base) = await serve((r) async {
+        final body = await utf8.decodeStream(r);
+        asked.add('${r.method} ${r.uri.path} $body');
+        if (r.method == 'GET') {
+          r.response.write(jsonEncode({
+            'queue_running': [
+              [0, 'mine'],
+            ],
+            'queue_pending': [],
+          }));
+        }
+      });
+      addTearDown(server.close);
+      await cancelRemix('comfyui', base, ['mine', 'waiting']);
+      expect(asked, [
+        'POST /queue {"delete":["mine","waiting"]}',
+        'GET /queue ',
+        'POST /interrupt {"prompt_id":"mine"}',
+      ]);
+    });
+
+    test('ComfyUI: someone else\'s running job is left alone', () async {
+      final asked = <String>[];
+      final (server, base) = await serve((r) {
+        asked.add(r.uri.path);
+        if (r.method == 'GET') {
+          r.response.write(jsonEncode({
+            'queue_running': [
+              [0, 'theirs'],
+            ],
+          }));
+        }
+      });
+      addTearDown(server.close);
+      await cancelRemix('comfyui', base, ['mine']);
+      expect(asked, isNot(contains('/interrupt')));
+    });
+
+    test('a job already gone is no error; a refusal is', () async {
+      var status = 404;
+      final (server, base) = await serve((r) => r.response.statusCode = status);
+      addTearDown(server.close);
+      await cancelRemix('invokeai', base, ['7']);
+      status = 500;
+      expect(cancelRemix('invokeai', base, ['7']), throwsA(isA<BackendException>()));
+    });
+  });
+
+  test('a stopped wait stops asking the server', () async {
+    remixPollEvery = const Duration(milliseconds: 5);
+    addTearDown(() => remixPollEvery = const Duration(seconds: 2));
+    var asked = 0;
+    final (server, base) = await serve((r) {
+      asked++;
+      r.response.write('{"status":"in_progress"}');
+    });
+    addTearDown(server.close);
+    final ticket = resumeRemix('invokeai', base, ['7']);
+    final sub = ticket.results.listen((_) {}, onError: (_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(asked, greaterThan(0));
+    ticket.stop();
+    unawaited(sub.cancel());
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final after = asked;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(asked, after);
+  });
+
   setUp(() => remixPollEvery = const Duration(milliseconds: 20));
 
   test('picture types are told apart by their bytes', () {

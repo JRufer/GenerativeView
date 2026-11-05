@@ -23,13 +23,14 @@ const double _cardLeast = 120;
 /// tiles' boxes; in the focus view it sits in the top bar ([compact]), so
 /// nothing covers the picture.
 ///
-/// Tapped while something runs, it opens a card listing what is running
-/// (remixes waiting on the server, upscales with their progress and a way to
-/// stop each) and what is done. Tapped when all is done, it goes straight to
+/// Tapped or pressed and held while something runs, it opens a card listing
+/// what is running (remixes waiting on the server, upscales with their
+/// progress, each with a way to cancel it) and what is done. Tapped when all
+/// is done, it goes straight to
 /// the new pictures: remixes in the Remixes collection, upscales in the
 /// Upscales collection, each picked out. Pressed and held (or right-clicked)
-/// when done, it is put away without going there; what went wrong can be put
-/// away the same way, even while other work runs.
+/// when done, or with only a problem left, it is put away without going
+/// there.
 class ActivityButton extends StatefulWidget {
   const ActivityButton({super.key, required this.state, this.compact = false});
   final AppState state;
@@ -68,6 +69,16 @@ class _Activity {
   bool get anyDone => remixesDone.isNotEmpty || upscaled.isNotEmpty;
   bool get none => !busy && !anyDone && problems.isEmpty;
 
+  /// What is running, one entry to cancel for each run: a Breed's pictures
+  /// are one run, however many.
+  List<_Run> get runs {
+    final byRun = <Object, List<RemixJob>>{};
+    for (final job in remixesRunning) {
+      byRun.putIfAbsent(job.batch ?? job.id, () => []).add(job);
+    }
+    return [for (final jobs in byRun.values) _Run(jobs)];
+  }
+
   /// Done of both kinds at once: there is no one place to go.
   bool get doneBothKinds => remixesDone.isNotEmpty && upscaled.isNotEmpty;
 
@@ -81,6 +92,23 @@ class _Activity {
   /// One upscale and nothing else: its progress can be shown on the ring.
   double? get progress =>
       remixesRunning.isEmpty && waiting == 0 && sending.isEmpty && upscales.length == 1 ? upscales.single.progress : null;
+}
+
+/// A run of remixes, as it is cancelled.
+class _Run {
+  _Run(this.jobs);
+  final List<RemixJob> jobs;
+
+  String get label {
+    final left = jobs.fold<int>(0, (n, j) => n + (j.remaining < 1 ? 1 : j.remaining));
+    final job = jobs.first;
+    final what = switch (job.label) {
+      'hires' => 'Hires fix of ${job.name}',
+      'bred' => 'Breed from ${job.name}',
+      _ => 'Remix of ${job.name}',
+    };
+    return left > 1 ? '$what, $left left' : what;
+  }
 }
 
 class _ActivityButtonState extends State<ActivityButton> with SingleTickerProviderStateMixin {
@@ -145,6 +173,16 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
     }
   }
 
+  /// Held while something runs, the card opens to cancel it; otherwise
+  /// what is finished is put away.
+  void _hold(_Activity now) {
+    if (now.busy) {
+      if (!_card.isShowing) setState(_card.show);
+    } else {
+      _dismissDone();
+    }
+  }
+
   void _dismissDone() {
     state.dismissDoneRemixes();
     state.dismissDoneUpscales();
@@ -158,7 +196,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
         if (now.upscales.isNotEmpty || now.waiting > 0) now.upscales.length + now.waiting == 1 ? 'an upscale' : '${now.upscales.length + now.waiting} upscales',
       ];
       if (now.sending.isNotEmpty) parts.add(now.sending.length == 1 ? 'a hires fix' : '${now.sending.length} hires fixes');
-      return 'Running ${parts.join(' and ')}: tap for details';
+      return 'Running ${parts.join(' and ')}: tap for details, or to cancel';
     }
     if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what, press and hold to dismiss';
     if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
@@ -182,8 +220,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
             pop: _pop,
             tooltip: _tooltip(now),
             onTap: () => _tap(now),
-            // What went wrong can always be put away; what runs stays.
-            onDismiss: now.problems.isNotEmpty || (!now.busy && now.anyDone) ? _dismissDone : null,
+            onHold: () => _hold(now),
           );
     return TapRegion(
       groupId: _region,
@@ -239,7 +276,7 @@ class _RoundButton extends StatelessWidget {
     required this.pop,
     required this.tooltip,
     required this.onTap,
-    required this.onDismiss,
+    required this.onHold,
   });
   final double size;
   final bool compact;
@@ -247,7 +284,7 @@ class _RoundButton extends StatelessWidget {
   final Animation<double> pop;
   final String tooltip;
   final VoidCallback onTap;
-  final VoidCallback? onDismiss;
+  final VoidCallback onHold;
 
   @override
   Widget build(BuildContext context) {
@@ -291,8 +328,8 @@ class _RoundButton extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        onLongPress: onDismiss,
-        onSecondaryTap: onDismiss,
+        onLongPress: onHold,
+        onSecondaryTap: onHold,
         child: SizedBox(width: size, height: size, child: face),
       ),
     );
@@ -326,7 +363,7 @@ class _RoundButton extends StatelessWidget {
     );
     return Tooltip(
       message: tooltip,
-      // Shown on hover; a long press belongs to the button (put away).
+      // Shown on hover; a long press belongs to the button.
       triggerMode: TooltipTriggerMode.manual,
       child: Semantics(
         button: true,
@@ -369,6 +406,21 @@ class _ActivityCard extends StatelessWidget {
           icon: const _Spinning(icon: Icons.autorenew),
           label: a.remixesRunning.length == 1 ? 'Remix Running' : '${a.remixesRunning.length} Remixes Running',
           tooltip: 'Waiting on the server for\n${a.remixesRunning.map((j) => j.name).join('\n')}',
+        ),
+      for (final run in a.runs)
+        _RunRow(
+          key: ValueKey<String>('activity-run-${run.jobs.first.id}'),
+          label: run.label,
+          onCancel: () => state.cancelRemixes(run.jobs.map((j) => j.id)),
+        ),
+      if (a.runs.length > 1)
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            key: const ValueKey<String>('activity-cancel-all'),
+            onPressed: () => state.cancelRemixes(a.remixesRunning.map((j) => j.id)),
+            child: const Text('Cancel all'),
+          ),
         ),
       for (final s in a.sending)
         _Pill(
@@ -572,6 +624,26 @@ class _Pill extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One run of remixes under way, and a way to cancel it.
+class _RunRow extends StatelessWidget {
+  const _RunRow({super.key, required this.label, required this.onCancel});
+  final String label;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+        ),
+        IconButton(tooltip: 'Cancel', iconSize: 18, onPressed: onCancel, icon: const Icon(Icons.close)),
+      ],
     );
   }
 }

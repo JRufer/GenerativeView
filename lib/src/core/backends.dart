@@ -138,7 +138,12 @@ class RemixTicket {
     this.base = '',
     this.jobs = const [],
     Stream<String>? finished,
-  }) : finished = finished ?? const Stream.empty();
+    void Function()? stop,
+  })  : finished = finished ?? const Stream.empty(),
+        stop = stop ?? _nothing;
+
+  static void _nothing() {}
+
   final String message;
 
   /// How many pictures were asked for.
@@ -158,6 +163,66 @@ class RemixTicket {
   /// Each of [jobs] once it is dealt with (its pictures handed on, or its
   /// failure), so a wait picked up later does not fetch it again.
   final Stream<String> finished;
+
+  /// Stop asking the server. Cancelling [results] alone is not enough: the
+  /// stream only notices at its next picture, and until then would go on
+  /// asking for as long as [remixPatience].
+  final void Function() stop;
+}
+
+/// Set to stop a wait for a remix, between asking the server.
+class _Stop {
+  bool on = false;
+}
+
+/// Cancel [jobs] on the backend [kind] at [base], whether they are running
+/// or still waiting. Throws a [BackendException] or a socket error if the
+/// server could not be told. One that has already finished is no error.
+///
+/// Forge has no names for its jobs: it is told to stop what it is working
+/// on, and anything sent to it after that still runs.
+Future<void> cancelRemix(String kind, String base, List<String> jobs) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  try {
+    switch (kind) {
+      case 'invokeai':
+        for (final id in jobs) {
+          await _tell(client, 'PUT', '$base/api/v1/queue/default/i/$id/cancel');
+        }
+      case 'comfyui':
+        if (jobs.isEmpty) return;
+        // Those waiting are taken off the queue; the one running must be
+        // interrupted, and only if it is one of these, since a ComfyUI too
+        // old to know prompt_id interrupts whatever is running.
+        await _tell(client, 'POST', '$base/queue', {'delete': jobs});
+        final queue = await _get(client, '$base/queue');
+        final running = queue['queue_running'];
+        if (running is! List) return;
+        for (final entry in running) {
+          final id = entry is List && entry.length > 1 ? '${entry[1]}' : '';
+          if (jobs.contains(id)) await _tell(client, 'POST', '$base/interrupt', {'prompt_id': id});
+        }
+      case 'forge':
+        await _tell(client, 'POST', '$base/sdapi/v1/interrupt', const <String, Object>{});
+    }
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Send [body] with [method] to [url], ignoring the answer but for whether
+/// it was refused. Not found is no refusal: there is nothing left to stop.
+Future<void> _tell(HttpClient client, String method, String url, [Object? body]) async {
+  final request = await client.openUrl(method, Uri.parse(url)).timeout(const Duration(seconds: 10));
+  if (body != null) {
+    request.headers.contentType = ContentType.json;
+    request.add(utf8.encode(jsonEncode(body)));
+  }
+  final response = await request.close().timeout(const Duration(seconds: 10));
+  await response.drain<void>();
+  if (response.statusCode >= 400 && response.statusCode != 404) {
+    throw BackendException('The server refused to cancel: ${response.statusCode}');
+  }
 }
 
 /// Wait again for [jobs] queued on the backend [kind] at [base] by an
@@ -166,12 +231,13 @@ class RemixTicket {
 /// to be asked about later.
 RemixTicket resumeRemix(String kind, String base, List<String> jobs) {
   final done = StreamController<String>();
+  final stop = _Stop();
   final results = switch (kind) {
-    'comfyui' => _comfyResults(base, jobs, done),
-    'invokeai' => _invokeResults(base, [for (final j in jobs) ?int.tryParse(j)], done),
+    'comfyui' => _comfyResults(base, jobs, done, stop),
+    'invokeai' => _invokeResults(base, [for (final j in jobs) ?int.tryParse(j)], done, stop),
     _ => throw BackendException('${backendNames[kind] ?? kind} remixes cannot be picked up again.'),
   };
-  return RemixTicket('', jobs.length, results, kind: kind, base: base, jobs: jobs, finished: done.stream);
+  return RemixTicket('', jobs.length, results, kind: kind, base: base, jobs: jobs, finished: done.stream, stop: () => stop.on = true);
 }
 
 /// How long to keep waiting for a backend to finish what was queued.
@@ -633,14 +699,16 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     ids.add('${reply['prompt_id'] ?? ''}');
   }
   final done = StreamController<String>();
+  final stop = _Stop();
   return RemixTicket(
     'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}',
     remix.count,
-    _comfyResults(base, ids, done),
+    _comfyResults(base, ids, done, stop),
     kind: 'comfyui',
     base: base,
     jobs: [for (final id in ids) if (id.isNotEmpty) id],
     finished: done.stream,
+    stop: () => stop.on = true,
   );
 }
 
@@ -780,7 +848,7 @@ const int _checkGoneEvery = 5;
 
 /// Wait for each of the ComfyUI prompts [ids] and fetch what it saved,
 /// telling [done] as each is dealt with.
-Stream<RemixImage> _comfyResults(String base, List<String> ids, [StreamController<String>? done]) async* {
+Stream<RemixImage> _comfyResults(String base, List<String> ids, [StreamController<String>? done, _Stop? stop]) async* {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
   try {
     for (final id in ids) {
@@ -789,7 +857,7 @@ Stream<RemixImage> _comfyResults(String base, List<String> ids, [StreamControlle
       Map<String, dynamic>? entry;
       var asked = 0;
       var gone = false;
-      while (entry == null && !gone) {
+      while (entry == null && !gone && stop?.on != true) {
         if (DateTime.now().isAfter(deadline)) {
           throw BackendException('ComfyUI did not finish within ${remixPatience.inHours} hours.');
         }
@@ -980,6 +1048,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     }
   }
   final done = StreamController<String>();
+  final stop = _Stop();
   return RemixTicket(
     'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}',
     remix.count,
@@ -987,8 +1056,9 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     base: base,
     jobs: fetchable ? [for (final id in ids) '$id'] : const [],
     finished: done.stream,
+    stop: () => stop.on = true,
     fetchable
-        ? _invokeResults(base, ids, done)
+        ? _invokeResults(base, ids, done, stop)
         : Stream.error(BackendException(
             'This InvokeAI does not say which queue items it made, so the '
             'pictures stay in its gallery. Updating InvokeAI fixes this.',
@@ -1194,7 +1264,7 @@ List<String> invokeMadeImages(Map<dynamic, dynamic> session) {
 /// Wait for each of the InvokeAI queue items [ids] and fetch the pictures
 /// it kept (not its intermediate steps), telling [done] as each is dealt
 /// with.
-Stream<RemixImage> _invokeResults(String base, List<int> ids, [StreamController<String>? done]) async* {
+Stream<RemixImage> _invokeResults(String base, List<int> ids, [StreamController<String>? done, _Stop? stop]) async* {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
   final api = '$base/api/v1';
   try {
@@ -1202,7 +1272,7 @@ Stream<RemixImage> _invokeResults(String base, List<int> ids, [StreamController<
       final deadline = DateTime.now().add(remixPatience);
       Map<String, dynamic>? item;
       var gone = false;
-      while (item == null && !gone) {
+      while (item == null && !gone && stop?.on != true) {
         if (DateTime.now().isAfter(deadline)) {
           throw BackendException('InvokeAI did not finish within ${remixPatience.inHours} hours.');
         }
@@ -1322,6 +1392,8 @@ Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
     'Sent ${_count(remix.count)} to Forge / A1111${_mode(remix)}',
     remix.count,
     _forgeResults(pending),
+    kind: 'forge',
+    base: base,
   );
 }
 

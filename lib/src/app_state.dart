@@ -2321,6 +2321,17 @@ class AppState extends ChangeNotifier {
   /// pictures have not been gone to yet.
   final ValueNotifier<List<RemixJob>> remixes = ValueNotifier(const []);
   final List<StreamSubscription<RemixImage>> _remixSubs = [];
+
+  /// How to cancel each remix running, by the id of its [RemixJob].
+  final Map<int, void Function()> _remixCancels = {};
+
+  /// Cancel the remixes [ids], on the server too. Pictures already back are
+  /// kept, and shown as done like any others.
+  void cancelRemixes(Iterable<int> ids) {
+    for (final id in [...ids]) {
+      _remixCancels[id]?.call();
+    }
+  }
   int _remixIds = 0;
 
   /// Pictures to light up in the grid once the list holds them.
@@ -2428,7 +2439,11 @@ class AppState extends ChangeNotifier {
       });
     }
     late final StreamSubscription<RemixImage> sub;
+    var ended = false;
     void finish() {
+      if (ended) return;
+      ended = true;
+      _remixCancels.remove(id);
       _remixSubs.remove(sub);
       finishedSub?.cancel();
       // However it ended, nothing of it is waited for any more.
@@ -2482,7 +2497,19 @@ class AppState extends ChangeNotifier {
       onDone: () => saving.whenComplete(finish),
     );
     _remixSubs.add(sub);
-    remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left, batch: batch)];
+    _remixCancels[id] = () {
+      if (ended) return;
+      // Not waited for again after this, so they are told now.
+      final out = [...?record?.jobs];
+      failed = true; // Nothing to report: it was asked for.
+      ticket.stop();
+      unawaited(sub.cancel());
+      saving.whenComplete(finish);
+      unawaited(cancelRemix(ticket.kind, ticket.base, out).catchError((Object e) {
+        if (!_disposed) _notices.add('Could not cancel it on the server, so it may still finish there: $e');
+      }));
+    };
+    remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left, batch: batch, label: label)];
   }
 
   /// Say that a remix went wrong, and keep it on the round button (in
@@ -3076,11 +3103,14 @@ class _PendingRemix {
 /// A remix sent to a server: waiting, or back with [saved] pictures.
 @immutable
 class RemixJob {
-  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true, this.remaining = 1, this.batch});
+  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true, this.remaining = 1, this.batch, this.label = 'remix'});
   final int id;
 
   /// Sent together with the others of this name, as one run (a Breed).
   final String? batch;
+
+  /// What the new files are called after: `remix`, `bred` or `hires`.
+  final String label;
 
   /// Renders asked for that have not come back yet (none once finished).
   final int remaining;
@@ -3092,9 +3122,9 @@ class RemixJob {
   final List<String> saved;
   final bool running;
 
-  RemixJob withRemaining(int remaining) => RemixJob(id, name, saved: saved, running: running, remaining: remaining, batch: batch);
+  RemixJob withRemaining(int remaining) => RemixJob(id, name, saved: saved, running: running, remaining: remaining, batch: batch, label: label);
 
-  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false, remaining: 0, batch: batch);
+  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false, remaining: 0, batch: batch, label: label);
 }
 
 /// An upscale waiting for the one before it to finish.
