@@ -15,6 +15,7 @@ import 'describe_card.dart';
 import 'presets_ui.dart';
 import 'prompt_check.dart';
 import 'remix_dialog.dart';
+import 'toast.dart';
 import 'upscale_dialog.dart';
 
 /// Say something briefly at the foot of the window.
@@ -24,11 +25,7 @@ void toast(BuildContext context, String message) {
   messenger
     ..hideCurrentSnackBar()
     ..showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(milliseconds: 1100),
-        width: 260,
-      ),
+      toastBar(messenger, message, duration: const Duration(milliseconds: 1100), width: 260),
     );
 }
 

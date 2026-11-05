@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../core/models.dart';
 import '../theme.dart';
 import 'sheet.dart';
+import 'toast.dart';
 
 /// "Move to…": pick a folder, then move [targets] there, with Undo.
 Future<void> openMoveTo(BuildContext context, AppState state, List<MediaItem> targets) async {
@@ -42,8 +43,9 @@ Future<void> moveWithUndo(BuildContext context, AppState state, Future<MoveOutco
   messenger
     ..hideCurrentSnackBar()
     ..showSnackBar(
-      SnackBar(
-        content: Text(message),
+      toastBar(
+        messenger,
+        message,
         duration: const Duration(seconds: 5),
         width: 360,
         action: n == 0
@@ -56,8 +58,9 @@ Future<void> moveWithUndo(BuildContext context, AppState state, Future<MoveOutco
                   messenger
                     ..hideCurrentSnackBar()
                     ..showSnackBar(
-                      SnackBar(
-                        content: Text(back.failed.isEmpty ? 'Moved back' : 'Could not move ${back.failed.length} back: ${back.failed.first}'),
+                      toastBar(
+                        messenger,
+                        back.failed.isEmpty ? 'Moved back' : 'Could not move ${back.failed.length} back: ${back.failed.first}',
                         duration: const Duration(milliseconds: 1600),
                         width: 260,
                       ),

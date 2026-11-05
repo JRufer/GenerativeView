@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../platform.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show copyText;
+import 'toast.dart';
 import 'sheet.dart';
 
 const String appName = 'GenerativeView';
@@ -154,7 +155,8 @@ class _AboutContentState extends State<AboutContent> {
   Future<void> _open(String url) async {
     final opened = await openUrl(url);
     if (!opened && mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not open $url')));
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.showSnackBar(toastBar(messenger, 'Could not open $url'));
     }
   }
 
