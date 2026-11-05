@@ -1,6 +1,7 @@
 // The mask painted for image to image: whether it paints anything, and how
 // the picture is cropped to a new shape (the mask is cropped the same way).
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
