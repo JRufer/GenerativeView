@@ -8,7 +8,7 @@ import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
-import 'core/backends.dart' show RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
+import 'core/backends.dart' show cancelRemix, RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
 import 'core/media_image.dart';
 import 'core/presets.dart';
 import 'core/model_download.dart';
@@ -3075,7 +3075,7 @@ class _PendingRemix {
         'name': name,
         'at': at,
         'label': label,
-        if (batch case final b?) 'batch': b,
+        'batch': ?batch,
       };
 
   static _PendingRemix? fromJson(Map<String, dynamic> j) {
