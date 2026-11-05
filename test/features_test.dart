@@ -946,6 +946,79 @@ void main() {
     expect(state.problems.value, isEmpty);
     await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the problem');
 
+    // However long the error, the card stays on the screen and its close
+    // button can be reached.
+    state.problems.value = ['heron.png: ${'the server said no at great length ' * 300}'];
+    await pumpUntil(tester, () => button.evaluate().isNotEmpty, what: 'the long problem shown');
+    await settle(tester);
+    await tester.tap(button);
+    await settle(tester);
+    final screen = tester.getRect(find.byType(Scaffold).first);
+    final card = tester.getRect(find.byKey(const ValueKey('activity-card')));
+    expect(card.top, greaterThanOrEqualTo(screen.top));
+    expect(card.bottom, lessThanOrEqualTo(screen.bottom));
+    await tester.tap(find.byKey(const ValueKey('activity-problems-dismiss')));
+    await settle(tester);
+    expect(state.problems.value, isEmpty);
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the long problem');
+
+    // Press and hold opens the card even while something else runs, with
+    // the problem there to put away, and what runs stays.
+    state.afterUpscale.value = ['heron.png, then refined on InvokeAI'];
+    state.problems.value = ['owl_01.png: out of memory'];
+    await pumpUntil(tester, () => find.byKey(const ValueKey('activity-spinner')).evaluate().isNotEmpty, what: 'running with a problem');
+    await settle(tester);
+    await tester.longPress(button);
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('activity-problems-dismiss')));
+    await settle(tester);
+    expect(state.problems.value, isEmpty);
+    expect(state.afterUpscale.value, isNotEmpty);
+    state.afterUpscale.value = const [];
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go with both done');
+
+    // Pressed and held while running, each run can be cancelled: nothing
+    // is reported, and what was running is gone.
+    final held = StreamController<RemixImage>();
+    state.collectRemix(owl, RemixTicket('', 1, held.stream));
+    final other = StreamController<RemixImage>();
+    state.collectRemix(sailor, RemixTicket('', 1, other.stream));
+    await pumpUntil(tester, () => button.evaluate().isNotEmpty, what: 'the running button');
+    await settle(tester);
+    await tester.longPress(button);
+    await settle(tester);
+    expect(find.text('Remix of owl_01.png'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.widgetWithText(Row, 'Remix of owl_01.png'), matching: find.byIcon(Icons.close)));
+    await pumpUntil(tester, () => state.remixes.value.length == 1, what: 'the one cancelled to go');
+    expect(state.remixes.value.single.name, 'sailor.png');
+
+    // A cancelled run keeps the pictures already back.
+    other.add(RemixImage(pngWithText(320, 320, 96, const {})));
+    await pumpUntil(tester, () => state.remixes.value.single.saved.isEmpty && state.remixes.value.single.remaining == 0, what: 'a picture back');
+    await settle(tester);
+    state.cancelRemixes([state.remixes.value.single.id]);
+    await pumpUntil(tester, () => !state.remixes.value.single.running, what: 'the run ended');
+    expect(state.remixes.value.single.saved, hasLength(1));
+    expect(state.problems.value, isEmpty);
+    state.dismissDoneRemixes();
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after cancelling');
+    unawaited(held.close());
+    unawaited(other.close());
+
+    // Sent as a batch, a Breed is one run until the last of it is back.
+    final part1 = StreamController<RemixImage>();
+    final batch = state.openRemixBatch();
+    state.collectRemix(sailor, RemixTicket('', 1, part1.stream), label: 'bred', batch: batch);
+    expect(state.remixes.value.single.batch, batch);
+    expect(state.remixBatchOpen(batch), isTrue);
+    state.closeRemixBatch(batch);
+    expect(state.remixBatchOpen(batch), isFalse);
+    expect(state.remixes.value.single.withRemaining(0).batch, batch);
+    unawaited(part1.close());
+    await pumpUntil(tester, () => state.problems.value.isNotEmpty, what: 'the empty run reported');
+    state.dismissProblems();
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the batch');
+
     // A hires fix being sent shows as running.
     state.afterUpscale.value = ['heron.png, then refined on InvokeAI'];
     await pumpUntil(tester, () => find.byKey(const ValueKey('activity-spinner')).evaluate().isNotEmpty, what: 'sending shown as running');
