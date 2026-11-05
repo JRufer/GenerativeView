@@ -24,6 +24,7 @@ use std::sync::{Arc, OnceLock};
 static ENGINE: RwLock<Option<Arc<Engine>>> = RwLock::new(None);
 static EVENT_PORT: AtomicI64 = AtomicI64::new(0);
 static CALLS: OnceLock<Sender<Call>> = OnceLock::new();
+static PROMPT_CALLS: OnceLock<Sender<Call>> = OnceLock::new();
 
 struct Call {
     port: i64,
@@ -49,30 +50,45 @@ fn engine() -> Option<Arc<Engine>> {
     ENGINE.read().clone()
 }
 
-fn calls() -> &'static Sender<Call> {
-    CALLS.get_or_init(|| {
-        let (tx, rx) = unbounded::<Call>();
-        for i in 0..3 {
-            let rx = rx.clone();
-            std::thread::Builder::new()
-                .name(format!("gv-call-{i}"))
-                .spawn(move || {
-                    for call in rx {
-                        let outcome = std::panic::catch_unwind(|| handle(&call.request));
-                        match outcome {
-                            Ok(Ok(Reply::Json(json))) => post_text(call.port, call.req, 0, json),
-                            Ok(Ok(Reply::Bytes(bytes))) => {
-                                Isolate::new(call.port).post(vec![call.req.into_dart(), 0i32.into_dart(), ZeroCopyBuffer(bytes).into_dart()]);
-                            }
-                            Ok(Err(msg)) => post_text(call.port, call.req, 1, msg),
-                            Err(_) => post_text(call.port, call.req, 1, "internal error".into()),
+/// Start `workers` threads answering calls from one queue.
+fn call_queue(name: &str, workers: usize) -> Sender<Call> {
+    let (tx, rx) = unbounded::<Call>();
+    for i in 0..workers {
+        let rx = rx.clone();
+        std::thread::Builder::new()
+            .name(format!("{name}-{i}"))
+            .spawn(move || {
+                for call in rx {
+                    let outcome = std::panic::catch_unwind(|| handle(&call.request));
+                    match outcome {
+                        Ok(Ok(Reply::Json(json))) => post_text(call.port, call.req, 0, json),
+                        Ok(Ok(Reply::Bytes(bytes))) => {
+                            Isolate::new(call.port).post(vec![call.req.into_dart(), 0i32.into_dart(), ZeroCopyBuffer(bytes).into_dart()]);
                         }
+                        Ok(Err(msg)) => post_text(call.port, call.req, 1, msg),
+                        Err(_) => post_text(call.port, call.req, 1, "internal error".into()),
                     }
-                })
-                .expect("call worker");
-        }
-        tx
-    })
+                }
+            })
+            .expect("call worker");
+    }
+    tx
+}
+
+fn calls() -> &'static Sender<Call> {
+    CALLS.get_or_init(|| call_queue("gv-call", 3))
+}
+
+/// One worker, so a picture's notes change in the order they were asked for.
+fn prompt_calls() -> &'static Sender<Call> {
+    PROMPT_CALLS.get_or_init(|| call_queue("gv-prompt", 1))
+}
+
+/// Whether `request` answers a tap, so must not wait behind the slow work of
+/// the main queue (taste, audience and search calls after new pictures
+/// arrive). The app's requests start with their method.
+fn is_prompt(request: &str) -> bool {
+    request.starts_with(r#"{"m":"notes_get""#) || request.starts_with(r#"{"m":"notes_set""#)
 }
 
 fn handle(request: &str) -> Result<Reply, String> {
@@ -138,7 +154,8 @@ pub unsafe extern "C" fn gv_open(data_dir: *const c_char, cache_dir: *const c_ch
 pub unsafe extern "C" fn gv_call(port: i64, req: i64, json: *const u8, len: usize) {
     match text(json, len) {
         Some(request) => {
-            let _ = calls().send(Call { port, req, request: request.to_string() });
+            let queue = if is_prompt(request) { prompt_calls() } else { calls() };
+            let _ = queue.send(Call { port, req, request: request.to_string() });
         }
         None => post_text(port, req, 1, "bad request: not UTF-8".into()),
     }
@@ -201,5 +218,18 @@ pub unsafe extern "C" fn gv_thumb_put(
 pub extern "C" fn gv_cancel(req: i64) {
     if let Some(engine) = engine() {
         engine.thumbs.cancel(req);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_prompt;
+
+    #[test]
+    fn only_notes_calls_skip_the_main_queue() {
+        assert!(is_prompt(r#"{"m":"notes_set","paths":["/a.png"],"rating":3}"#));
+        assert!(is_prompt(r#"{"m":"notes_get","path":"/a.png"}"#));
+        assert!(!is_prompt(r#"{"m":"taste_score","path":"/a.png"}"#));
+        assert!(!is_prompt(r#"{"m":"meta","text":"notes_set"}"#));
     }
 }

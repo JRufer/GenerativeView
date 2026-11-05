@@ -1010,3 +1010,34 @@ fn breed_words_come_only_from_nearby_rated_folders() {
     assert!(bred.contains("rim lighting"), "{bred}");
     assert!(!bred.contains("violet haze"), "{bred}");
 }
+
+/// A picture just saved by a remix, rated at once and again and again while
+/// the indexer is busy with it: every rating lands and reads back.
+#[test]
+fn a_new_picture_can_be_rated_while_it_is_being_indexed() {
+    let h = Harness::new();
+    let root = h._dirs.path().join("pictures");
+    std::fs::create_dir_all(&root).unwrap();
+    write_png(&root.join("parent.png"), 1, &[]);
+    let dir = root.to_string_lossy().to_string();
+    h.call("set_folder", json!({ "dir": dir, "recursive": false }));
+    h.wait("first scan", |e| e["t"] == "scan" && e["state"] == "done");
+    for round in 0..40u32 {
+        let name = format!("parent_remix{round}.png");
+        let path = root.join(&name);
+        let hidden = root.join(format!(".{name}.part"));
+        write_png(&hidden, round + 2, &[]);
+        std::fs::rename(&hidden, &path).unwrap();
+        let path = path.to_string_lossy().to_string();
+        h.call("notes_set", json!({ "paths": [path], "add": ["Remixes"] }));
+        h.call("rescan", json!({}));
+        for stars in 1..=5 {
+            h.call("notes_set", json!({ "paths": [path], "rating": stars }));
+            assert_eq!(h.call("notes_get", json!({ "path": path }))["rating"], stars, "{name}");
+        }
+    }
+    let path = root.join("parent_remix39.png").to_string_lossy().to_string();
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(h.call("notes_get", json!({ "path": path }))["rating"], 5);
+    assert_eq!(h.call("notes_get", json!({ "path": path }))["collections"], json!(["Remixes"]));
+}

@@ -97,6 +97,12 @@ class _NotesBarState extends State<NotesBar> {
   Note _note = Note.empty;
   String? _loadedFor;
 
+  // What was just tapped, shown at once while it is being saved, so a busy
+  // moment never looks like a tap that did nothing.
+  int? _tappedRating;
+  Flag? _tappedFlag;
+  int _saving = 0;
+
   @override
   void initState() {
     super.initState();
@@ -107,13 +113,37 @@ class _NotesBarState extends State<NotesBar> {
   @override
   void didUpdateWidget(NotesBar old) {
     super.didUpdateWidget(old);
-    if (old.item.path != widget.item.path) _load();
+    if (old.item.path != widget.item.path) {
+      _tappedRating = null;
+      _tappedFlag = null;
+      _load();
+    }
   }
 
   @override
   void dispose() {
     widget.state.notesTick.removeListener(_load);
     super.dispose();
+  }
+
+  /// Show [rating] or [flag] now, save it, then show what was saved.
+  Future<void> _change({int? rating, Flag? flag}) async {
+    final item = widget.item;
+    setState(() {
+      _tappedRating = rating ?? _tappedRating;
+      _tappedFlag = flag ?? _tappedFlag;
+      _saving++;
+    });
+    await widget.state.changeNotes(targets: [item], rating: rating, flag: flag);
+    if (!mounted) return;
+    _saving--;
+    if (_saving > 0 || widget.item.path != item.path) return;
+    await _load();
+    if (!mounted || _saving > 0 || widget.item.path != item.path) return;
+    setState(() {
+      _tappedRating = null;
+      _tappedFlag = null;
+    });
   }
 
   Future<void> _load() async {
@@ -132,9 +162,14 @@ class _NotesBarState extends State<NotesBar> {
   Widget build(BuildContext context) {
     final state = widget.state;
     // Until the file has been read, the grid's copy of the stars and flag.
-    final note = _loadedFor == widget.item.path
+    final known = _loadedFor == widget.item.path
         ? _note
         : Note(rating: widget.item.rating, flag: widget.item.flag);
+    final note = Note(
+      rating: _tappedRating ?? known.rating,
+      flag: _tappedFlag ?? known.flag,
+      collections: known.collections,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -144,11 +179,11 @@ class _NotesBarState extends State<NotesBar> {
           children: [
             StarRating(
               value: note.rating,
-              onChanged: (n) => state.changeNotes(targets: [widget.item], rating: n),
+              onChanged: (n) => _change(rating: n),
             ),
             FlagButtons(
               flag: note.flag,
-              onChanged: (f) => state.changeNotes(targets: [widget.item], flag: f),
+              onChanged: (f) => _change(flag: f),
             ),
           ],
         ),
