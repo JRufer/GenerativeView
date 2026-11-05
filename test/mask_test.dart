@@ -179,6 +179,13 @@ void main() {
       await open(tester, file.path);
       expect(find.byKey(const ValueKey('mask-color-panel')), findsOneWidget, reason: 'the wheel is out on a wide screen');
 
+      await tester.tap(find.byKey(const ValueKey('mask-color-collapse')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('mask-color-panel')), findsNothing, reason: 'folded away');
+      await tester.tap(find.byKey(const ValueKey('mask-color')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('mask-color-panel')), findsOneWidget, reason: 'back from the color button');
+
       final middle = tester.getCenter(canvas);
       await penStroke(tester, middle);
       await tester.pump();

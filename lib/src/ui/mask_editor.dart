@@ -552,8 +552,11 @@ class _MaskEditorState extends State<MaskEditor> {
   late final TextEditingController _hex = TextEditingController(text: hexOf(_color));
   final FocusNode _hexFocus = FocusNode();
 
-  /// Whether the color wheel is out. Until chosen, it is on a wide screen.
+  /// Whether the color wheel is out, rather than folded down to the recent
+  /// colors. Until chosen, it is on a wide screen.
   bool? _wheelChosen;
+
+  void _showWheel(bool open) => setState(() => _wheelChosen = open);
 
   void _setColor(Color color, {bool typed = false}) {
     setState(() => _color = color);
@@ -1030,7 +1033,20 @@ class _MaskEditorState extends State<MaskEditor> {
   Widget build(BuildContext context) {
     final painted = maskPaints(_ops);
     final wide = MediaQuery.sizeOf(context).width >= 800;
-    final wheel = _layer == MaskLayer.color && !_picking && (_wheelChosen ?? wide);
+    final colors = _layer == MaskLayer.color && !_picking;
+    final wheel = colors && (_wheelChosen ?? wide);
+    final panel = _Unfold(
+      open: wheel,
+      axis: wide ? Axis.horizontal : Axis.vertical,
+      alignment: wide ? Alignment.centerLeft : Alignment.topCenter,
+      child: _colorPanel(wide: wide),
+    );
+    final rail = _Unfold(
+      open: colors && !wheel && _recent.isNotEmpty,
+      axis: wide ? Axis.horizontal : Axis.vertical,
+      alignment: wide ? Alignment.topLeft : Alignment.topCenter,
+      child: _colorRail(wide: wide),
+    );
     return CallbackShortcuts(
       // Letters typed into the color's hex box are for the box.
       bindings: _hexFocus.hasFocus ? const {} : {
@@ -1064,8 +1080,11 @@ class _MaskEditorState extends State<MaskEditor> {
                 _bar(painted),
                 Expanded(
                   child: wide
-                      ? Row(children: [Expanded(child: _canvas()), if (wheel) _colorPanel(wide: true)])
-                      : Column(children: [Expanded(child: _canvas()), if (wheel) _colorPanel(wide: false)]),
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [Expanded(child: _canvas()), rail, panel],
+                        )
+                      : Column(children: [Expanded(child: _canvas()), rail, panel]),
                 ),
                 _tools(),
               ],
@@ -1284,10 +1303,7 @@ class _MaskEditorState extends State<MaskEditor> {
               child: InkWell(
                 key: const ValueKey<String>('mask-color'),
                 customBorder: const CircleBorder(),
-                onTap: () => setState(() {
-                  final wide = MediaQuery.sizeOf(context).width >= 800;
-                  _wheelChosen = !(_wheelChosen ?? wide);
-                }),
+                onTap: () => _showWheel(!(_wheelChosen ?? MediaQuery.sizeOf(context).width >= 800)),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -1382,21 +1398,72 @@ class _MaskEditorState extends State<MaskEditor> {
     );
   }
 
+  /// One of the colors used lately, ringed if it is the color in use.
+  Widget _recentColor(Color c) {
+    return InkWell(
+      key: ValueKey<String>('mask-recent-${hexOf(c)}'),
+      customBorder: const CircleBorder(),
+      onTap: () => _setColor(c),
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: c,
+          shape: BoxShape.circle,
+          border: c == _color ? Border.all(color: Palette.text, width: 2) : null,
+        ),
+      ),
+    );
+  }
+
+  /// The colors used lately, in a strip: what is left of the color panel
+  /// when it is folded away. A column beside the picture on a wide screen, a
+  /// row under it on a narrow one.
+  Widget _colorRail({required bool wide}) {
+    final colors = [
+      for (final (i, c) in _recent.indexed) ...[
+        if (i > 0) const SizedBox(width: 8, height: 8),
+        _recentColor(c),
+      ],
+    ];
+    return Container(
+      key: const ValueKey<String>('mask-color-rail'),
+      width: wide ? 52 : double.infinity,
+      height: wide ? double.infinity : 52,
+      decoration: BoxDecoration(
+        color: Palette.panel,
+        border: wide ? const Border(left: BorderSide(color: Palette.line)) : const Border(top: BorderSide(color: Palette.line)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: wide ? Axis.vertical : Axis.horizontal,
+        padding: const EdgeInsets.all(10),
+        child: wide
+            ? Column(mainAxisSize: MainAxisSize.min, children: colors)
+            : Row(mainAxisSize: MainAxisSize.min, children: colors),
+      ),
+    );
+  }
+
   /// The color wheel, its hex value, and the colors used lately: beside the
   /// picture on a wide screen, under it on a narrow one, never over it.
   Widget _colorPanel({required bool wide}) {
     final recent = Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: [
-        for (final c in _recent)
-          InkWell(
-            key: ValueKey<String>('mask-recent-${hexOf(c)}'),
-            customBorder: const CircleBorder(),
-            onTap: () => _setColor(c),
-            child: Container(width: 32, height: 32, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
-          ),
-      ],
+      children: [for (final c in _recent) _recentColor(c)],
+    );
+    final collapse = Tooltip(
+      message: 'Fold the wheel away',
+      child: InkWell(
+        key: const ValueKey<String>('mask-color-collapse'),
+        customBorder: const CircleBorder(),
+        onTap: () => _showWheel(false),
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(wide ? Icons.chevron_right : Icons.expand_more, size: 22, color: Palette.muted),
+        ),
+      ),
     );
     final hex = TextField(
       key: const ValueKey<String>('mask-hex'),
@@ -1412,15 +1479,26 @@ class _MaskEditorState extends State<MaskEditor> {
     return Container(
       key: const ValueKey<String>('mask-color-panel'),
       width: wide ? 280 : null,
-      padding: const EdgeInsets.all(12),
+      height: wide ? double.infinity : null,
+      padding: wide ? null : const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Palette.panel,
         border: wide ? const Border(left: BorderSide(color: Palette.line)) : const Border(top: BorderSide(color: Palette.line)),
       ),
       child: wide
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [Center(child: disc), const SizedBox(height: 14), hex, const SizedBox(height: 14), recent],
+          ? SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(alignment: Alignment.centerRight, child: collapse),
+                  Center(child: disc),
+                  const SizedBox(height: 14),
+                  hex,
+                  const SizedBox(height: 14),
+                  recent,
+                ],
+              ),
             )
           : Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1428,6 +1506,8 @@ class _MaskEditorState extends State<MaskEditor> {
                 disc,
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [hex, const SizedBox(height: 12), recent])),
+                const SizedBox(width: 4),
+                collapse,
               ],
             ),
     );
@@ -1494,6 +1574,38 @@ class _MaskEditorState extends State<MaskEditor> {
 }
 
 // ---------------------------------------------------------------- color
+
+/// Slides [child] out along [axis] and back, quickly, keeping it whole on
+/// the way so it is seen going rather than vanishing first.
+class _Unfold extends StatelessWidget {
+  const _Unfold({required this.open, required this.axis, required this.alignment, required this.child});
+
+  final bool open;
+  final Axis axis;
+  final Alignment alignment;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: open ? 1 : 0),
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOutCubic,
+      child: child,
+      builder: (context, amount, child) {
+        if (amount == 0) return const SizedBox.shrink();
+        return ClipRect(
+          child: Align(
+            alignment: alignment,
+            widthFactor: axis == Axis.horizontal ? amount : null,
+            heightFactor: axis == Axis.vertical ? amount : null,
+            child: IgnorePointer(ignoring: !open, child: child),
+          ),
+        );
+      },
+    );
+  }
+}
 
 /// The picture close up around [spot] (fractions of it), in a circle ringed
 /// with the color under it.
