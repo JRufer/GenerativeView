@@ -378,6 +378,8 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('remix-mask-edit')));
       await tester.tap(find.byKey(const ValueKey('remix-mask-edit')));
       await pumpUntil(tester, () => find.byKey(const ValueKey('mask-canvas')).evaluate().isNotEmpty, what: 'the mask editor');
+      await tester.tap(find.text('Mask'));
+      await tester.pump();
       await tester.tap(find.text('Find'));
       await pumpUntil(
         tester,

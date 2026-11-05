@@ -226,8 +226,11 @@ void main() {
       await tester.pump();
 
       await tester.tap(find.byKey(const ValueKey('mask-pick')));
-      await tester.runAsync(() => Future<void>.delayed(const Duration(seconds: 1)));
-      await tester.pump();
+      // The picture is decoded and read back a step at a time.
+      for (var i = 0; i < 30; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 40)));
+        await tester.pump();
+      }
       final gesture = await tester.startGesture(middle + const Offset(-100, -100));
       await tester.pump();
       expect(find.byKey(const ValueKey('mask-loupe')), findsOneWidget);
