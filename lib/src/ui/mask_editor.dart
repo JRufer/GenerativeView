@@ -33,15 +33,75 @@ enum MaskKind {
 /// One thing done to a mask. Points are fractions of the picture's width
 /// and height (0 to 1), and the brush radius a fraction of its width, so
 /// a mask applies to the picture at any size.
+///
+/// The same strokes make the color layer: there each carries its [color].
 class MaskOp {
-  const MaskOp(this.kind, {this.erase = false, this.points = const [], this.radius = 0});
+  const MaskOp(this.kind, {this.erase = false, this.points = const [], this.radius = 0, this.radii, this.color});
   final MaskKind kind;
 
   /// Takes paint away rather than adding it.
   final bool erase;
   final List<Offset> points;
   final double radius;
+
+  /// A stroke drawn with pen pressure: the radius at each of [points], in
+  /// place of the single [radius].
+  final List<double>? radii;
+
+  /// What a stroke of the color layer paints with.
+  final Color? color;
 }
+
+/// What was painted in the editor: where to redraw ([ops]), and the color
+/// painted into the picture first ([color]).
+class MaskEdit {
+  const MaskEdit(this.ops, this.color);
+  final List<MaskOp> ops;
+  final List<MaskOp> color;
+}
+
+/// The brush radius under pen [pressure] (0 to 1): from 1 at the lightest
+/// touch up to the [brush] chosen.
+double pressureRadius(double pressure, double brush) => 1 + (brush - 1) * pressure.clamp(0.0, 1.0);
+
+/// The outline of a stroke whose radius changes along it: a circle at each
+/// point, and between each two the tapering band that joins them.
+Path pressurePath(List<Offset> points, List<double> radii) {
+  final path = Path();
+  void circle(Offset c, double r) => path.addOval(Rect.fromCircle(center: c, radius: r));
+  circle(points.first, radii.first);
+  for (var i = 1; i < points.length; i++) {
+    final a = points[i - 1], b = points[i];
+    final ra = radii[i - 1], rb = radii[i];
+    circle(b, rb);
+    final d = b - a;
+    if (d.distance == 0) continue;
+    final n = Offset(-d.dy, d.dx) / d.distance;
+    // Wound the same way as the circles, or where they overlap they would
+    // cancel out and leave holes.
+    path.addPolygon([a - n * ra, b - n * rb, b + n * rb, a + n * ra], true);
+  }
+  return path;
+}
+
+/// The color of a picture's raw RGBA [pixels] at [spot], given as fractions
+/// of its [width] and [height]; a spot outside it reads the nearest edge.
+Color pixelColor(ByteData pixels, int width, int height, Offset spot) {
+  final x = (spot.dx * width).floor().clamp(0, width - 1);
+  final y = (spot.dy * height).floor().clamp(0, height - 1);
+  final at = (y * width + x) * 4;
+  return Color.fromARGB(255, pixels.getUint8(at), pixels.getUint8(at + 1), pixels.getUint8(at + 2));
+}
+
+/// The color a [text] like `#54763F` or `54763f` names, if it does.
+Color? parseHexColor(String text) {
+  final hex = text.trim().replaceFirst('#', '');
+  if (!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(hex)) return null;
+  return Color(0xFF000000 | int.parse(hex, radix: 16));
+}
+
+/// [color] as `#RRGGBB`.
+String hexOf(Color color) => '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
 
 /// The colour a mask is shown in over a picture.
 const Color maskTint = Color(0xFFFF4F7B);
@@ -58,6 +118,7 @@ void paintMask(Canvas canvas, Size size, List<MaskOp> ops, Color color) {
     ..isAntiAlias = true;
   Offset at(Offset p) => Offset(p.dx * size.width, p.dy * size.height);
   for (final op in ops) {
+    add.color = op.color ?? color;
     final paint = op.erase ? clear : add;
     switch (op.kind) {
       case MaskKind.all:
@@ -72,6 +133,13 @@ void paintMask(Canvas canvas, Size size, List<MaskOp> ops, Color color) {
         final path = Path()..addPolygon([for (final p in op.points) at(p)], true);
         canvas.drawPath(path, paint..style = PaintingStyle.fill);
       case MaskKind.stroke:
+        if (op.radii case final radii? when op.points.isNotEmpty && radii.length == op.points.length) {
+          canvas.drawPath(
+            pressurePath([for (final p in op.points) at(p)], [for (final r in radii) r * size.width]),
+            paint..style = PaintingStyle.fill,
+          );
+          continue;
+        }
         final r = op.radius * size.width;
         if (op.points.isEmpty || r <= 0) continue;
         if (op.points.length == 1) {
@@ -136,14 +204,15 @@ Rect coverRect(Size source, int width, int height) {
 }
 
 /// The picture at [path] made ready to start a remix from: [width] ×
-/// [height] (the middle of it, if the shape changed), with [ops] as a mask
-/// the same size, both as PNGs.
+/// [height] (the middle of it, if the shape changed), with [color] painted
+/// into it and [ops] as a mask the same size, both as PNGs.
 Future<ImageInput> prepareImageInput({
   required String path,
   required int width,
   required int height,
   required double strength,
   required List<MaskOp> ops,
+  List<MaskOp> color = const [],
 }) async {
   final codec = await pictureCodec(path);
   final frame = await codec.getNextFrame();
@@ -179,6 +248,12 @@ Future<ImageInput> prepareImageInput({
   try {
     final image = await render((canvas) {
       canvas.drawImageRect(source, crop, out, Paint()..filterQuality = FilterQuality.high);
+      if (color.isEmpty) return;
+      canvas.save();
+      canvas.scale(width / crop.width, height / crop.height);
+      canvas.translate(-crop.left, -crop.top);
+      paintMask(canvas, full, color, Colors.transparent);
+      canvas.restore();
     });
     final masked = maskPaints(ops);
     return ImageInput(
@@ -195,15 +270,19 @@ Future<ImageInput> prepareImageInput({
 
 // ---------------------------------------------------------------- preview
 
-/// The picture with [ops] over it, small: what the remix will start from.
+/// The picture with [color] and [ops] over it, small: what the remix will
+/// start from.
 class MaskPreview extends StatelessWidget {
-  const MaskPreview({super.key, required this.path, required this.ops, required this.aspect, this.version});
+  const MaskPreview({super.key, required this.path, required this.ops, required this.aspect, this.version, this.color = const []});
   final String path;
 
   /// The picture's `MediaItem.version`, when known; read from the file
   /// otherwise. Keeps a new file of the same name from showing the old one.
   final String? version;
   final List<MaskOp> ops;
+
+  /// What is painted into the picture, under the mask.
+  final List<MaskOp> color;
 
   /// The picture's width over its height.
   final double aspect;
@@ -226,7 +305,7 @@ class MaskPreview extends StatelessWidget {
               fit: BoxFit.fill,
               gaplessPlayback: true,
             ),
-            CustomPaint(painter: _MaskPainter(ops: ops)),
+            CustomPaint(painter: _MaskPainter(ops: ops, color: color)),
           ],
         ),
       ),
@@ -235,8 +314,12 @@ class MaskPreview extends StatelessWidget {
 }
 
 class _MaskPainter extends CustomPainter {
-  _MaskPainter({required this.ops, this.trace, this.traceErase = false});
+  _MaskPainter({required this.ops, this.color = const [], this.showMask = true, this.trace, this.traceErase = false});
   final List<MaskOp> ops;
+
+  /// The color layer, under the mask.
+  final List<MaskOp> color;
+  final bool showMask;
 
   /// The outline being traced, not yet closed.
   final List<Offset>? trace;
@@ -244,9 +327,12 @@ class _MaskPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.saveLayer(Offset.zero & size, Paint()..color = const Color(0x8C000000));
-    paintMask(canvas, size, ops, maskTint);
-    canvas.restore();
+    if (color.isNotEmpty) paintMask(canvas, size, color, Colors.transparent);
+    if (showMask) {
+      canvas.saveLayer(Offset.zero & size, Paint()..color = const Color(0x8C000000));
+      paintMask(canvas, size, ops, maskTint);
+      canvas.restore();
+    }
     final t = trace;
     if (t != null && t.length > 1) {
       final points = [for (final p in t) Offset(p.dx * size.width, p.dy * size.height)];
@@ -372,24 +458,25 @@ class _HeatPainter extends CustomPainter {
 
 // ---------------------------------------------------------------- editor
 
-/// Paint where a remix should redraw the picture at [path], over the
-/// picture itself. Starts from [ops]; the new mask when Done is pressed,
-/// or null when it is left.
-Future<List<MaskOp>?> editMask(
+/// Paint color into the picture at [path] and where a remix should redraw
+/// it, over the picture itself. Starts from [color] and [ops]; what was
+/// painted when Done is pressed, or null when it is left.
+Future<MaskEdit?> editMask(
   BuildContext context, {
   required String path,
   required String name,
   required double aspect,
   required List<MaskOp> ops,
+  List<MaskOp> color = const [],
   AppState? state,
   List<String> phrases = const [],
   String? find,
 }) {
-  return Navigator.of(context).push<List<MaskOp>>(
-    PageRouteBuilder<List<MaskOp>>(
+  return Navigator.of(context).push<MaskEdit>(
+    PageRouteBuilder<MaskEdit>(
       transitionDuration: const Duration(milliseconds: 140),
       reverseTransitionDuration: const Duration(milliseconds: 100),
-      pageBuilder: (_, _, _) => MaskEditor(path: path, name: name, aspect: aspect, ops: ops, state: state, phrases: phrases, find: find),
+      pageBuilder: (_, _, _) => MaskEditor(path: path, name: name, aspect: aspect, ops: ops, color: color, state: state, phrases: phrases, find: find),
       transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: animation, child: child),
     ),
   );
@@ -397,11 +484,19 @@ Future<List<MaskOp>?> editMask(
 
 enum MaskTool { brush, trace, find }
 
-/// The picture, fitted, with the mask over it in pink. One finger, a pen
-/// or the mouse paints with the brush or traces round a shape (filled when
-/// let go); Erase takes paint away instead. Two fingers or the wheel zoom
-/// and move; so do the right and middle mouse buttons dragged. The tools
-/// sit under the picture, never over it.
+/// Which layer is being painted: the color goes into the picture the remix
+/// starts from; the mask, above it, says where to redraw.
+enum MaskLayer { color, mask }
+
+/// The picture, fitted, with the color painted on it and the mask over that
+/// in pink. One finger, a pen or the mouse paints with the brush or traces
+/// round a shape (filled when let go); Erase takes paint away instead. Two
+/// fingers or the wheel zoom and move; so do the right and middle mouse
+/// buttons dragged. The tools sit under the picture, never over it.
+///
+/// A pen paints with its pressure (see [pressureRadius]), and erases with
+/// its side button held or its eraser. Once a pen is in use, fingers only
+/// zoom and move, so a hand resting on the screen leaves no marks.
 class MaskEditor extends StatefulWidget {
   const MaskEditor({
     super.key,
@@ -409,6 +504,7 @@ class MaskEditor extends StatefulWidget {
     required this.name,
     required this.aspect,
     required this.ops,
+    this.color = const [],
     this.state,
     this.phrases = const [],
     this.find,
@@ -417,6 +513,9 @@ class MaskEditor extends StatefulWidget {
   final String name;
   final double aspect;
   final List<MaskOp> ops;
+
+  /// The color layer as it was left.
+  final List<MaskOp> color;
 
   /// For Find: what looks for a phrase in the picture. Without it there is
   /// no Find tool.
@@ -434,6 +533,133 @@ class MaskEditor extends StatefulWidget {
 
 class _MaskEditorState extends State<MaskEditor> {
   late final List<MaskOp> _ops = [...widget.ops];
+  late final List<MaskOp> _colorOps = [...widget.color];
+
+  /// Color comes first, unless there is a mask to go on with or a phrase to
+  /// find for one.
+  late MaskLayer _layer = widget.find != null || maskPaints(_ops) ? MaskLayer.mask : MaskLayer.color;
+
+  /// The layer being painted.
+  List<MaskOp> get _list => _layer == MaskLayer.color ? _colorOps : _ops;
+
+  /// The tool in use: the color layer has only the brush.
+  MaskTool get _active => _layer == MaskLayer.color ? MaskTool.brush : _tool;
+
+  /// The last color used and those before it, kept while the app runs.
+  static Color _lastColor = Colors.white;
+  static final List<Color> _recent = [];
+  late Color _color = _lastColor;
+  late final TextEditingController _hex = TextEditingController(text: hexOf(_color));
+  final FocusNode _hexFocus = FocusNode();
+
+  /// Whether the color wheel is out. Until chosen, it is on a wide screen.
+  bool? _wheelChosen;
+
+  void _setColor(Color color, {bool typed = false}) {
+    setState(() => _color = color);
+    _lastColor = color;
+    if (!typed) _hex.text = hexOf(color);
+  }
+
+  void _remember(Color color) {
+    _recent
+      ..remove(color)
+      ..insert(0, color);
+    if (_recent.length > 8) _recent.removeLast();
+  }
+
+  // The eyedropper: the picture and the paint on it, as what is picked from.
+  bool _picking = false;
+  ui.Image? _sample;
+  ByteData? _samplePixels;
+  int? _pickPointer;
+  Offset? _pickAt;
+  Color? _picked;
+
+  Future<void> _startPicking() async {
+    setState(() {
+      _picking = true;
+      _picked = null;
+      _pickAt = null;
+    });
+    final codec = await pictureCodec(widget.path);
+    final frame = await codec.getNextFrame();
+    final source = frame.image;
+    final width = math.min(source.width, 1024);
+    final height = math.max(1, (source.height * width / source.width).round());
+    final size = Size(width.toDouble(), height.toDouble());
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, Offset.zero & size);
+    canvas.drawImageRect(
+      source,
+      Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
+      Offset.zero & size,
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+    paintMask(canvas, size, _colorOps, Colors.transparent);
+    final image = await recorder.endRecording().toImage(width, height);
+    final pixels = await image.toByteData();
+    source.dispose();
+    codec.dispose();
+    if (!mounted || !_picking || pixels == null) {
+      image.dispose();
+      return;
+    }
+    _sample?.dispose();
+    setState(() {
+      _sample = image;
+      _samplePixels = pixels;
+    });
+  }
+
+  void _stopPicking() => setState(() {
+        _picking = false;
+        _pickPointer = null;
+        _pickAt = null;
+        _picked = null;
+      });
+
+  void _pick(Offset local) {
+    final sample = _sample;
+    final pixels = _samplePixels;
+    if (sample == null || pixels == null) return;
+    setState(() {
+      _pickAt = local;
+      _picked = pixelColor(pixels, sample.width, sample.height, _toPicture(local));
+    });
+  }
+
+  void _pickDone() {
+    final picked = _picked;
+    if (picked == null) {
+      _pickPointer = null;
+      return;
+    }
+    _setColor(picked);
+    _remember(picked);
+    _stopPicking();
+  }
+
+  @override
+  void dispose() {
+    _hex.dispose();
+    _hexFocus.dispose();
+    _sample?.dispose();
+    super.dispose();
+  }
+
+  // The pen.
+  bool _penSeen = false;
+  bool _pressure = true;
+  int? _penDown;
+
+  static bool _isPen(PointerDeviceKind kind) => kind == PointerDeviceKind.stylus || kind == PointerDeviceKind.invertedStylus;
+
+  /// The radius [e]'s pressure asks for, or null if it has none to give.
+  double? _pressed(PointerEvent e) {
+    if (!_pressure || !_isPen(e.kind) || e.pressureMax <= e.pressureMin) return null;
+    return pressureRadius((e.pressure - e.pressureMin) / (e.pressureMax - e.pressureMin), _brush);
+  }
 
   /// The picture, as it is now on disk (not an older file of the same name
   /// still in the image cache).
@@ -478,6 +704,7 @@ class _MaskEditorState extends State<MaskEditor> {
   @override
   void initState() {
     super.initState();
+    _hexFocus.addListener(() => setState(() {}));
     final find = widget.find;
     if (find != null && widget.state != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -503,6 +730,9 @@ class _MaskEditorState extends State<MaskEditor> {
 
   // What is being drawn now.
   List<Offset>? _drawing;
+  List<double>? _drawingRadii;
+  bool _drawingErase = false;
+  double _drawingRadius = 0;
   int? _drawingPointer;
 
   // Zoom and move: the fitted picture is scaled about the view's middle,
@@ -567,13 +797,21 @@ class _MaskEditorState extends State<MaskEditor> {
 
   // ------------------------------------------------------------ drawing
 
-  void _start(int pointer, Offset local) {
-    _drawingPointer = pointer;
-    _drawing = [_toPicture(local)];
+  void _start(PointerDownEvent e) {
+    final radius = _pressed(e);
+    _drawingPointer = e.pointer;
+    _drawing = [_toPicture(e.localPosition)];
+    _drawingRadii = radius == null ? null : [radius / _rect.width];
+    _drawingRadius = radius ?? _brush;
+    _drawingErase = _erase ||
+        e.kind == PointerDeviceKind.invertedStylus ||
+        (_isPen(e.kind) && (e.buttons & kPrimaryStylusButton) != 0);
     _changed();
   }
 
-  void _extend(Offset local) {
+  void _extend(PointerEvent e) {
+    final local = e.localPosition;
+    final radius = _pressed(e);
     final d = _drawing;
     if (d == null) return;
     final p = _toPicture(local);
@@ -586,18 +824,34 @@ class _MaskEditorState extends State<MaskEditor> {
       if (dx * dx + dy * dy < 2) return;
     }
     d.add(p);
+    if (radius != null) {
+      // Eased, so a jitter of the pen does not show as lumps in the line.
+      _drawingRadius += (radius - _drawingRadius) * 0.5;
+      _drawingRadii?.add(_drawingRadius / r.width);
+    }
     _changed();
   }
+
+  /// The stroke being drawn, or finished.
+  MaskOp _stroke(List<Offset> points) => MaskOp(
+        MaskKind.stroke,
+        erase: _drawingErase,
+        points: points,
+        radius: _brush / _rect.width,
+        radii: _drawingRadii,
+        color: _layer == MaskLayer.color ? _color : null,
+      );
 
   void _finish() {
     final d = _drawing;
     _drawing = null;
     _drawingPointer = null;
     if (d == null) return;
-    if (_tool == MaskTool.trace) {
-      if (d.length >= 3) _ops.add(MaskOp(MaskKind.trace, erase: _erase, points: d));
+    if (_active == MaskTool.trace) {
+      if (d.length >= 3) _ops.add(MaskOp(MaskKind.trace, erase: _drawingErase, points: d));
     } else {
-      _ops.add(MaskOp(MaskKind.stroke, erase: _erase, points: d, radius: _brush / _rect.width));
+      _list.add(_stroke(d));
+      if (_layer == MaskLayer.color && !_drawingErase) _remember(_color);
     }
     _changed();
   }
@@ -610,14 +864,14 @@ class _MaskEditorState extends State<MaskEditor> {
   }
 
   void _undo() {
-    if (_ops.isEmpty) return;
-    _ops.removeLast();
+    if (_list.isEmpty) return;
+    _list.removeLast();
     _changed();
   }
 
   void _clear() {
-    if (_ops.isEmpty) return;
-    _ops.add(const MaskOp(MaskKind.all, erase: true));
+    if (_list.isEmpty) return;
+    _list.add(const MaskOp(MaskKind.all, erase: true));
     _changed();
   }
 
@@ -626,12 +880,12 @@ class _MaskEditorState extends State<MaskEditor> {
     _changed();
   }
 
-  void _done() => Navigator.of(context).pop(_simplified());
+  void _done() => Navigator.of(context).pop(MaskEdit(_simplified(_ops), _simplified(_colorOps)));
 
-  /// [_ops] without whatever a later clear wiped out.
-  List<MaskOp> _simplified() {
-    final last = _ops.lastIndexWhere((o) => o.kind == MaskKind.all);
-    return last < 0 ? [..._ops] : _ops.sublist(last);
+  /// [ops] without whatever a later clear wiped out.
+  List<MaskOp> _simplified(List<MaskOp> ops) {
+    final last = ops.lastIndexWhere((o) => o.kind == MaskKind.all);
+    return last < 0 ? [...ops] : ops.sublist(last);
   }
 
   void _resize(double factor) => setState(() => _brush = (_brush * factor).clamp(_brushMin, _brushMax));
@@ -639,6 +893,32 @@ class _MaskEditorState extends State<MaskEditor> {
   // ------------------------------------------------------------ pointers
 
   void _down(PointerDownEvent e) {
+    if (_isPen(e.kind)) {
+      // The pen wins: whatever a resting hand began is dropped.
+      if (!_penSeen) setState(() => _penSeen = true);
+      if (_drawing != null) _abandon();
+      _pointers.clear();
+      _panning = false;
+      _lastPan = null;
+      _pinchDistance = null;
+      _pinchSpot = null;
+      _penDown = e.pointer;
+      if (_picking) {
+        _pickPointer = e.pointer;
+        _pick(e.localPosition);
+      } else if (_active != MaskTool.find) {
+        _hover = e.localPosition;
+        _start(e);
+      }
+      return;
+    }
+    // A hand on the screen while the pen draws.
+    if (_penDown != null) return;
+    if (_picking) {
+      _pickPointer = e.pointer;
+      _pick(e.localPosition);
+      return;
+    }
     _pointers[e.pointer] = e.localPosition;
     final mouse = e.kind == PointerDeviceKind.mouse;
     if (mouse && (e.buttons & (kSecondaryMouseButton | kMiddleMouseButton)) != 0) {
@@ -647,10 +927,18 @@ class _MaskEditorState extends State<MaskEditor> {
       return;
     }
     if (_pointers.length == 1) {
+      if (_penSeen && e.kind == PointerDeviceKind.touch) {
+        // The pen paints: a finger only moves the picture.
+        _panning = true;
+        _lastPan = e.localPosition;
+        return;
+      }
       // Find marks by its button, not by drawing.
-      if (_tool != MaskTool.find) _start(e.pointer, e.localPosition);
+      if (_active != MaskTool.find) _start(e);
     } else if (_pointers.length == 2) {
       // Two fingers: zoom and move, not paint.
+      _panning = false;
+      _lastPan = null;
       if (_drawing != null) _abandon();
       final pts = _pointers.values.toList();
       _pinchDistance = (pts[0] - pts[1]).distance;
@@ -661,6 +949,15 @@ class _MaskEditorState extends State<MaskEditor> {
   }
 
   void _move(PointerMoveEvent e) {
+    if (e.pointer == _pickPointer) {
+      _pick(e.localPosition);
+      return;
+    }
+    if (e.pointer == _penDown) {
+      _hover = e.localPosition;
+      _extend(e);
+      return;
+    }
     if (!_pointers.containsKey(e.pointer)) return;
     _pointers[e.pointer] = e.localPosition;
     _hover = e.localPosition;
@@ -681,10 +978,19 @@ class _MaskEditorState extends State<MaskEditor> {
       });
       return;
     }
-    if (e.pointer == _drawingPointer) _extend(e.localPosition);
+    if (e.pointer == _drawingPointer) _extend(e);
   }
 
   void _up(PointerEvent e) {
+    if (e.pointer == _penDown) _penDown = null;
+    if (e.pointer == _pickPointer) {
+      if (e is PointerCancelEvent) {
+        _pickPointer = null;
+      } else {
+        _pickDone();
+      }
+      return;
+    }
     _pointers.remove(e.pointer);
     if (_panning && _pointers.isEmpty) {
       _panning = false;
@@ -723,10 +1029,18 @@ class _MaskEditorState extends State<MaskEditor> {
   @override
   Widget build(BuildContext context) {
     final painted = maskPaints(_ops);
+    final wide = MediaQuery.sizeOf(context).width >= 800;
+    final wheel = _layer == MaskLayer.color && !_picking && (_wheelChosen ?? wide);
     return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.escape): () => Navigator.of(context).maybePop(),
+      // Letters typed into the color's hex box are for the box.
+      bindings: _hexFocus.hasFocus ? const {} : {
+        const SingleActivator(LogicalKeyboardKey.escape): () => _picking ? _stopPicking() : Navigator.of(context).maybePop(),
         const SingleActivator(LogicalKeyboardKey.enter): _done,
+        const SingleActivator(LogicalKeyboardKey.keyC): () => setState(() => _layer = MaskLayer.color),
+        const SingleActivator(LogicalKeyboardKey.keyM): () => setState(() => _layer = MaskLayer.mask),
+        const SingleActivator(LogicalKeyboardKey.keyP): () {
+          if (_layer == MaskLayer.color && !_picking) _startPicking();
+        },
         const SingleActivator(LogicalKeyboardKey.keyZ, control: true): _undo,
         const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): _undo,
         const SingleActivator(LogicalKeyboardKey.keyB): () => setState(() => _tool = MaskTool.brush),
@@ -748,7 +1062,11 @@ class _MaskEditorState extends State<MaskEditor> {
             child: Column(
               children: [
                 _bar(painted),
-                Expanded(child: _canvas()),
+                Expanded(
+                  child: wide
+                      ? Row(children: [Expanded(child: _canvas()), if (wheel) _colorPanel(wide: true)])
+                      : Column(children: [Expanded(child: _canvas()), if (wheel) _colorPanel(wide: false)]),
+                ),
                 _tools(),
               ],
             ),
@@ -769,7 +1087,7 @@ class _MaskEditorState extends State<MaskEditor> {
       child: Row(
         children: [
           Tooltip(
-            message: 'Leave without changing the mask (Esc)',
+            message: 'Leave without changing anything (Esc)',
             child: InkWell(
               key: const ValueKey<String>('mask-cancel'),
               onTap: () => Navigator.of(context).maybePop(),
@@ -784,11 +1102,15 @@ class _MaskEditorState extends State<MaskEditor> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Paint where to redraw', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(_picking ? 'Pick a color' : 'Fix the picture', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                 Text(
-                  _tool == MaskTool.find && _phrase != null
+                  _picking
+                      ? 'Touch the picture, slide, and let go'
+                      : _layer == MaskLayer.color
+                      ? 'Color: painted into the picture the remix starts from'
+                      : _tool == MaskTool.find && _phrase != null
                       ? (_finding ? 'Finding “$_phrase”…' : (_findError ?? 'Found: where “$_phrase” fits best'))
-                      : (painted ? 'Only the pink part is redrawn' : 'Nothing painted: all of it is redrawn'),
+                      : (painted ? 'Mask: only the pink part is redrawn' : 'Mask: nothing painted, so all of it is redrawn'),
                   key: const ValueKey<String>('mask-status'),
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 11.5, color: Palette.faint),
@@ -796,12 +1118,19 @@ class _MaskEditorState extends State<MaskEditor> {
               ],
             ),
           ),
-          FilledButton.icon(
-            key: const ValueKey<String>('mask-done'),
-            onPressed: _done,
-            icon: const Icon(Icons.check, size: 18),
-            label: const Text('Done'),
-          ),
+          if (_picking)
+            OutlinedButton(
+              key: const ValueKey<String>('mask-pick-cancel'),
+              onPressed: _stopPicking,
+              child: const Text('Cancel'),
+            )
+          else
+            FilledButton.icon(
+              key: const ValueKey<String>('mask-done'),
+              onPressed: _done,
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Done'),
+            ),
         ],
       ),
     );
@@ -812,15 +1141,24 @@ class _MaskEditorState extends State<MaskEditor> {
       builder: (context, box) {
         _view = Size(box.maxWidth, box.maxHeight);
         final r = _rect;
-        final hover = _hover;
+        final hover = _picking ? null : _hover;
+        final brushing = _active == MaskTool.brush;
+        final ring = _drawing != null && _drawingRadii != null ? _drawingRadius : _brush;
+        final pickAt = _pickAt;
+        final sample = _sample;
         return MouseRegion(
-          cursor: _tool == MaskTool.brush ? SystemMouseCursors.none : SystemMouseCursors.precise,
+          cursor: brushing && !_picking ? SystemMouseCursors.none : SystemMouseCursors.precise,
           onHover: (e) => setState(() => _hover = e.localPosition),
           onExit: (_) => setState(() => _hover = null),
           child: Listener(
             key: const ValueKey<String>('mask-canvas'),
             behavior: HitTestBehavior.opaque,
             onPointerDown: _down,
+            // Mice are seen by the region above; a pen held over the screen
+            // only by this.
+            onPointerHover: (e) {
+              if (_isPen(e.kind)) setState(() => _hover = e.localPosition);
+            },
             onPointerMove: _move,
             onPointerUp: _up,
             onPointerCancel: _up,
@@ -841,35 +1179,56 @@ class _MaskEditorState extends State<MaskEditor> {
                     rect: r,
                     child: CustomPaint(
                       painter: _MaskPainter(
+                        // The stroke under the finger, shown as it goes.
                         ops: [
                           ..._ops,
-                          // The stroke under the finger, shown as it goes.
-                          if (_drawing != null && _tool == MaskTool.brush)
-                            MaskOp(MaskKind.stroke, erase: _erase, points: _drawing!, radius: _brush / r.width),
+                          if (_drawing != null && brushing && _layer == MaskLayer.mask) _stroke(_drawing!),
                         ],
-                        trace: _tool == MaskTool.trace ? _drawing : null,
-                        traceErase: _erase,
+                        color: [
+                          ..._colorOps,
+                          if (_drawing != null && _layer == MaskLayer.color) _stroke(_drawing!),
+                        ],
+                        showMask: _layer == MaskLayer.mask,
+                        trace: _active == MaskTool.trace ? _drawing : null,
+                        traceErase: _drawingErase,
                       ),
                     ),
                   ),
-                  if (_tool == MaskTool.find && _heat != null && _heatFor == _phrase)
+                  if (_active == MaskTool.find && _heat != null && _heatFor == _phrase)
                     Positioned.fromRect(
                       rect: r,
                       child: IgnorePointer(child: CustomPaint(painter: _HeatPainter(_heat!, _threshold))),
                     ),
                   // Where the brush would paint, under the mouse.
-                  if (hover != null && _tool == MaskTool.brush)
+                  if (hover != null && brushing)
                     Positioned(
-                      left: hover.dx - _brush,
-                      top: hover.dy - _brush,
+                      left: hover.dx - ring,
+                      top: hover.dy - ring,
                       child: IgnorePointer(
                         child: Container(
-                          width: _brush * 2,
-                          height: _brush * 2,
+                          width: ring * 2,
+                          height: ring * 2,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            border: Border.all(color: _erase ? Colors.white : maskTint, width: 1.5),
+                            border: Border.all(
+                              color: _erase ? Colors.white : (_layer == MaskLayer.color ? _color : maskTint),
+                              width: 1.5,
+                            ),
                           ),
+                        ),
+                      ),
+                    ),
+                  // The eyedropper's loupe, above the finger so it can be
+                  // seen, or below it at the top of the screen.
+                  if (pickAt != null && sample != null)
+                    Positioned(
+                      left: pickAt.dx - 48,
+                      top: pickAt.dy < 150 ? pickAt.dy + 40 : pickAt.dy - 136,
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          key: const ValueKey<String>('mask-loupe'),
+                          size: const Size.square(96),
+                          painter: _LoupePainter(sample, _toPicture(pickAt), _picked ?? Colors.white),
                         ),
                       ),
                     ),
@@ -899,18 +1258,49 @@ class _MaskEditorState extends State<MaskEditor> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_tool == MaskTool.find) ...[_findRow(), const SizedBox(height: 8)],
+          if (_active == MaskTool.find) ...[_findRow(), const SizedBox(height: 8)],
           Wrap(
         spacing: 10,
         runSpacing: 8,
         alignment: WrapAlignment.center,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          SegmentedButton<MaskTool>(
+          SegmentedButton<MaskLayer>(
+            key: const ValueKey<String>('mask-layer'),
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: MaskLayer.color, icon: Icon(Icons.palette_outlined, size: 17), label: Text('Color'), tooltip: 'Paint color into the picture (C)'),
+              ButtonSegment(value: MaskLayer.mask, icon: Icon(Icons.brush, size: 17), label: Text('Mask'), tooltip: 'Paint where to redraw (M)'),
+            ],
+            selected: {_layer},
+            onSelectionChanged: (s) => setState(() {
+              _layer = s.first;
+              _picking = false;
+            }),
+          ),
+          if (_layer == MaskLayer.color) ...[
+            Tooltip(
+              message: 'The color: tap for the wheel',
+              child: InkWell(
+                key: const ValueKey<String>('mask-color'),
+                customBorder: const CircleBorder(),
+                onTap: () => setState(() {
+                  final wide = MediaQuery.sizeOf(context).width >= 800;
+                  _wheelChosen = !(_wheelChosen ?? wide);
+                }),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(color: _color, shape: BoxShape.circle, border: Border.all(color: Palette.text, width: 2)),
+                ),
+              ),
+            ),
+            icon(key: const ValueKey<String>('mask-pick'), tooltip: 'Pick a color from the picture (P)', icon: Icons.colorize, onTap: _picking ? null : _startPicking),
+          ] else SegmentedButton<MaskTool>(
             key: const ValueKey<String>('mask-tool'),
             showSelectedIcon: false,
             segments: [
-              const ButtonSegment(value: MaskTool.brush, icon: Icon(Icons.brush, size: 17), label: Text('Brush'), tooltip: 'Paint with a round brush (B)'),
+              const ButtonSegment(value: MaskTool.brush, icon: Icon(Icons.circle, size: 13), label: Text('Brush'), tooltip: 'Paint with a round brush (B)'),
               const ButtonSegment(value: MaskTool.trace, icon: Icon(Icons.gesture, size: 17), label: Text('Trace'), tooltip: 'Trace round a shape; it fills when you let go (T)'),
               if (_canFind)
                 const ButtonSegment(
@@ -933,13 +1323,13 @@ class _MaskEditorState extends State<MaskEditor> {
             key: const ValueKey<String>('mask-mode'),
             showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: false, icon: Icon(Icons.add, size: 17), label: Text('Paint'), tooltip: 'Add to what is redrawn (E switches)'),
-              ButtonSegment(value: true, icon: Icon(Icons.remove, size: 17), label: Text('Erase'), tooltip: 'Take away from what is redrawn (E switches)'),
+              ButtonSegment(value: false, icon: Icon(Icons.add, size: 17), label: Text('Paint'), tooltip: 'Add paint (E switches)'),
+              ButtonSegment(value: true, icon: Icon(Icons.remove, size: 17), label: Text('Erase'), tooltip: 'Take paint away (E switches)'),
             ],
             selected: {_erase},
             onSelectionChanged: (s) => setState(() => _erase = s.first),
           ),
-          if (_tool == MaskTool.brush)
+          if (_active == MaskTool.brush)
             SizedBox(
               width: 190,
               child: Row(
@@ -957,24 +1347,89 @@ class _MaskEditorState extends State<MaskEditor> {
                 ],
               ),
             ),
-          icon(key: const ValueKey<String>('mask-undo'), tooltip: 'Undo (Ctrl Z)', icon: Icons.undo, onTap: _ops.isEmpty ? null : _undo),
-          icon(key: const ValueKey<String>('mask-invert'), tooltip: 'Swap the painted and unpainted parts (I)', icon: Icons.invert_colors, onTap: _invert),
+          if (_penSeen && _active == MaskTool.brush)
+            OutlinedButton.icon(
+              key: const ValueKey<String>('mask-pressure'),
+              onPressed: () => setState(() => _pressure = !_pressure),
+              icon: const Icon(Icons.draw_outlined, size: 16),
+              label: Text(_pressure ? 'Pen pressure: on' : 'Pen pressure: off'),
+            ),
+          icon(key: const ValueKey<String>('mask-undo'), tooltip: 'Undo (Ctrl Z)', icon: Icons.undo, onTap: _list.isEmpty ? null : _undo),
+          if (_layer == MaskLayer.mask) ...[
+            icon(key: const ValueKey<String>('mask-invert'), tooltip: 'Swap the painted and unpainted parts (I)', icon: Icons.invert_colors, onTap: _invert),
+            icon(
+              key: const ValueKey<String>('mask-all'),
+              tooltip: 'Paint all of it',
+              icon: Icons.format_color_fill,
+              onTap: () {
+                _ops.add(const MaskOp(MaskKind.all));
+                _changed();
+              },
+            ),
+          ],
           icon(
-            key: const ValueKey<String>('mask-all'),
-            tooltip: 'Paint all of it',
-            icon: Icons.format_color_fill,
-            onTap: () {
-              _ops.add(const MaskOp(MaskKind.all));
-              _changed();
-            },
+            key: const ValueKey<String>('mask-clear'),
+            tooltip: _layer == MaskLayer.color ? 'Clear the color' : 'Clear the mask',
+            icon: Icons.layers_clear_outlined,
+            onTap: _list.isEmpty ? null : _clear,
           ),
-          icon(key: const ValueKey<String>('mask-clear'), tooltip: 'Clear the mask', icon: Icons.layers_clear_outlined, onTap: _ops.isEmpty ? null : _clear),
           if (_zoom > 1.001)
             icon(key: const ValueKey<String>('mask-fit'), tooltip: 'Fit the picture again (0)', icon: Icons.fit_screen_outlined, onTap: _fit),
         ],
           ),
         ],
       ),
+    );
+  }
+
+  /// The color wheel, its hex value, and the colors used lately: beside the
+  /// picture on a wide screen, under it on a narrow one, never over it.
+  Widget _colorPanel({required bool wide}) {
+    final recent = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final c in _recent)
+          InkWell(
+            key: ValueKey<String>('mask-recent-${hexOf(c)}'),
+            customBorder: const CircleBorder(),
+            onTap: () => _setColor(c),
+            child: Container(width: 32, height: 32, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          ),
+      ],
+    );
+    final hex = TextField(
+      key: const ValueKey<String>('mask-hex'),
+      controller: _hex,
+      focusNode: _hexFocus,
+      decoration: const InputDecoration(labelText: 'Hex', isDense: true, border: OutlineInputBorder()),
+      onChanged: (text) {
+        final color = parseHexColor(text);
+        if (color != null) _setColor(color, typed: true);
+      },
+    );
+    final disc = ColorWheel(color: _color, size: wide ? 248 : 168, onChanged: _setColor);
+    return Container(
+      key: const ValueKey<String>('mask-color-panel'),
+      width: wide ? 280 : null,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Palette.panel,
+        border: wide ? const Border(left: BorderSide(color: Palette.line)) : const Border(top: BorderSide(color: Palette.line)),
+      ),
+      child: wide
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [Center(child: disc), const SizedBox(height: 14), hex, const SizedBox(height: 14), recent],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                disc,
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [hex, const SizedBox(height: 12), recent])),
+              ],
+            ),
     );
   }
 
@@ -1036,4 +1491,146 @@ class _MaskEditorState extends State<MaskEditor> {
       ],
     );
   }
+}
+
+// ---------------------------------------------------------------- color
+
+/// The picture close up around [spot] (fractions of it), in a circle ringed
+/// with the color under it.
+class _LoupePainter extends CustomPainter {
+  _LoupePainter(this.image, this.spot, this.color);
+  final ui.Image image;
+  final Offset spot;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final circle = Offset.zero & size;
+    canvas.save();
+    canvas.clipPath(Path()..addOval(circle));
+    canvas.drawImageRect(
+      image,
+      Rect.fromCenter(center: Offset(spot.dx * image.width, spot.dy * image.height), width: 13, height: 13),
+      circle,
+      Paint()..filterQuality = FilterQuality.none,
+    );
+    canvas.restore();
+    final middle = size.center(Offset.zero);
+    canvas.drawCircle(middle, size.width / 2 - 4, Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8);
+    canvas.drawCircle(middle, size.width / 2 - 0.5, Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke);
+    canvas.drawRect(Rect.fromCenter(center: middle, width: size.width / 13, height: size.width / 13), Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke);
+  }
+
+  @override
+  bool shouldRepaint(_LoupePainter old) => old.image != image || old.spot != spot || old.color != color;
+}
+
+/// A hue ring round a square of saturation (across) and value (down).
+class ColorWheel extends StatefulWidget {
+  const ColorWheel({super.key, required this.color, required this.size, required this.onChanged});
+  final Color color;
+  final double size;
+  final ValueChanged<Color> onChanged;
+
+  @override
+  State<ColorWheel> createState() => _ColorWheelState();
+}
+
+class _ColorWheelState extends State<ColorWheel> {
+  late HSVColor _hsv = HSVColor.fromColor(widget.color);
+
+  /// Which part the drag began on: it stays there.
+  bool _onRing = false;
+
+  @override
+  void didUpdateWidget(ColorWheel old) {
+    super.didUpdateWidget(old);
+    // Black and white have no hue of their own: keep the one chosen.
+    if (widget.color != _hsv.toColor()) {
+      final next = HSVColor.fromColor(widget.color);
+      _hsv = next.saturation == 0 || next.value == 0 ? next.withHue(_hsv.hue) : next;
+    }
+  }
+
+  void _touch(Offset local, {bool first = false}) {
+    final middle = Offset(widget.size, widget.size) / 2;
+    final from = local - middle;
+    final geometry = _WheelGeometry(widget.size);
+    if (first) _onRing = from.distance >= geometry.inner;
+    if (_onRing) {
+      final degrees = math.atan2(from.dy, from.dx) * 180 / math.pi;
+      _hsv = _hsv.withHue((degrees + 360) % 360);
+    } else {
+      final side = geometry.side;
+      final x = ((from.dx + side / 2) / side).clamp(0.0, 1.0);
+      final y = ((from.dy + side / 2) / side).clamp(0.0, 1.0);
+      _hsv = _hsv.withSaturation(x).withValue(1 - y);
+    }
+    setState(() {});
+    widget.onChanged(_hsv.toColor());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      key: const ValueKey<String>('mask-wheel'),
+      onPanDown: (d) => _touch(d.localPosition, first: true),
+      onPanUpdate: (d) => _touch(d.localPosition),
+      child: CustomPaint(size: Size.square(widget.size), painter: _WheelPainter(_hsv)),
+    );
+  }
+}
+
+class _WheelGeometry {
+  _WheelGeometry(double size)
+      : outer = size / 2,
+        inner = size / 2 - 22,
+        side = (size / 2 - 22) * math.sqrt2 * 0.9;
+  final double outer;
+  final double inner;
+  final double side;
+}
+
+class _WheelPainter extends CustomPainter {
+  _WheelPainter(this.hsv);
+  final HSVColor hsv;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final g = _WheelGeometry(size.width);
+    final middle = size.center(Offset.zero);
+    final disc = Rect.fromCircle(center: middle, radius: g.outer);
+    canvas.drawCircle(
+      middle,
+      (g.outer + g.inner) / 2,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = g.outer - g.inner
+        ..shader = SweepGradient(
+          colors: [for (var h = 0; h <= 360; h += 60) HSVColor.fromAHSV(1, h % 360, 1, 1).toColor()],
+        ).createShader(disc),
+    );
+    final square = Rect.fromCenter(center: middle, width: g.side, height: g.side);
+    canvas.drawRect(square, Paint()
+      ..shader = LinearGradient(colors: [Colors.white, hsv.withSaturation(1).withValue(1).toColor()]).createShader(square));
+    canvas.drawRect(square, Paint()
+      ..shader = const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Colors.black]).createShader(square));
+    final knob = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    final angle = hsv.hue * math.pi / 180;
+    canvas.drawCircle(middle + Offset(math.cos(angle), math.sin(angle)) * ((g.outer + g.inner) / 2), 9, knob);
+    canvas.drawCircle(square.topLeft + Offset(hsv.saturation * g.side, (1 - hsv.value) * g.side), 7, knob);
+  }
+
+  @override
+  bool shouldRepaint(_WheelPainter old) => old.hsv != hsv;
 }
