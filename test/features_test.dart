@@ -975,6 +975,22 @@ void main() {
     state.afterUpscale.value = const [];
     await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go with both done');
 
+    // Sent as a batch, a Breed is one run until the last of it is back,
+    // and it comes back after being kept across a restart of the app the
+    // same way.
+    final part1 = StreamController<RemixImage>();
+    final batch = state.openRemixBatch();
+    state.collectRemix(sailor, RemixTicket('', 1, part1.stream), label: 'bred', batch: batch);
+    expect(state.remixes.value.single.batch, batch);
+    expect(state.remixBatchOpen(batch), isTrue);
+    state.closeRemixBatch(batch);
+    expect(state.remixBatchOpen(batch), isFalse);
+    expect(state.remixes.value.single.withRemaining(0).batch, batch);
+    unawaited(part1.close());
+    await pumpUntil(tester, () => state.problems.value.isNotEmpty, what: 'the empty run reported');
+    state.dismissProblems();
+    await pumpUntil(tester, () => button.evaluate().isEmpty, what: 'the button to go after the batch');
+
     // A hires fix being sent shows as running.
     state.afterUpscale.value = ['heron.png, then refined on InvokeAI'];
     await pumpUntil(tester, () => find.byKey(const ValueKey('activity-spinner')).evaluate().isNotEmpty, what: 'sending shown as running');

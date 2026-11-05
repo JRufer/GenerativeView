@@ -324,6 +324,8 @@ class _BreedPanelState extends State<BreedPanel> {
     _width.text = '$width';
     _height.text = '$height';
     var sent = 0;
+    // One run, however many are ticked: told of once, when all are back.
+    final batch = widget.state.openRemixBatch();
     try {
       // A preset's model, when the server has it; otherwise each picture's own.
       String? model;
@@ -371,7 +373,7 @@ class _BreedPanelState extends State<BreedPanel> {
             loras: loras.isEmpty ? null : loras,
           ),
         );
-        widget.state.collectRemix(base, ticket, label: 'bred');
+        widget.state.collectRemix(base, ticket, label: 'bred', batch: batch);
         sent++;
       }
       if (!mounted) return;
@@ -380,6 +382,7 @@ class _BreedPanelState extends State<BreedPanel> {
     } catch (e) {
       if (mounted) setState(() => _error = sent == 0 ? '$e' : 'Sent $sent, then: $e');
     } finally {
+      widget.state.closeRemixBatch(batch);
       if (mounted) setState(() => _sending = false);
     }
   }

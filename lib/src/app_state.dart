@@ -2345,10 +2345,41 @@ class AppState extends ChangeNotifier {
   /// [label] names the new files instead of `remix`: a hires fix comes back
   /// as `<name>_hires1.png`, goes in the [upscaleCollection], and once back
   /// is shown with the upscales done rather than the remixes.
-  void collectRemix(MediaItem original, RemixTicket ticket, {String label = 'remix'}) =>
-      _collectRemix(original.path, original.name, ticket, label: label);
+  ///
+  /// [batch], from [openRemixBatch], ties it to the others sent together.
+  void collectRemix(MediaItem original, RemixTicket ticket, {String label = 'remix', String? batch}) =>
+      _collectRemix(original.path, original.name, ticket, label: label, batch: batch);
 
-  void _collectRemix(String originalPath, String originalName, RemixTicket ticket, {_PendingRemix? resumed, String label = 'remix'}) {
+  /// Batches still being sent, so more may join them.
+  final Set<String> _openRemixBatches = {};
+
+  /// Start a batch: several tickets sent as one run, which is told of once
+  /// when all of them are back. A name unique across runs of the app, since
+  /// it is kept with what is still out. [closeRemixBatch] when all are sent.
+  String openRemixBatch() {
+    final batch = '${DateTime.now().microsecondsSinceEpoch}-${++_remixIds}';
+    _openRemixBatches.add(batch);
+    return batch;
+  }
+
+  /// Nothing more will join [batch].
+  void closeRemixBatch(String batch) {
+    _openRemixBatches.remove(batch);
+    // Everything in it may have come back while it was being sent.
+    if (!_disposed) remixes.value = [...remixes.value];
+  }
+
+  /// Whether more of [batch] may still be sent.
+  bool remixBatchOpen(String batch) => _openRemixBatches.contains(batch);
+
+  void _collectRemix(
+    String originalPath,
+    String originalName,
+    RemixTicket ticket, {
+    _PendingRemix? resumed,
+    String label = 'remix',
+    String? batch,
+  }) {
     final results = ticket.results;
     final record = resumed ??
         (ticket.jobs.isEmpty
@@ -2361,6 +2392,7 @@ class AppState extends ChangeNotifier {
                 name: originalName,
                 at: DateTime.now().millisecondsSinceEpoch,
                 label: label,
+                batch: batch,
               ));
     if (record != null && resumed == null) {
       _pendingRemixes.add(record);
@@ -2450,7 +2482,7 @@ class AppState extends ChangeNotifier {
       onDone: () => saving.whenComplete(finish),
     );
     _remixSubs.add(sub);
-    remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left)];
+    remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left, batch: batch)];
   }
 
   /// Say that a remix went wrong, and keep it on the round button (in
@@ -2489,7 +2521,7 @@ class AppState extends ChangeNotifier {
         continue;
       }
       _pendingRemixes.add(record);
-      _collectRemix(record.path, record.name, ticket, resumed: record, label: record.label);
+      _collectRemix(record.path, record.name, ticket, resumed: record, label: record.label, batch: record.batch);
       resumed++;
     }
     // Dropped or given up on, those are forgotten.
@@ -2985,6 +3017,7 @@ class _PendingRemix {
     required this.name,
     required this.at,
     this.label = 'remix',
+    this.batch,
   });
 
   /// The backend and where it is.
@@ -3004,8 +3037,19 @@ class _PendingRemix {
   /// What the new files are called after: `remix`, or `hires`.
   final String label;
 
-  Map<String, Object> toJson() =>
-      {'kind': kind, 'base': base, 'jobs': jobs, 'path': path, 'name': name, 'at': at, 'label': label};
+  /// The batch it was sent in, if any.
+  final String? batch;
+
+  Map<String, Object> toJson() => {
+        'kind': kind,
+        'base': base,
+        'jobs': jobs,
+        'path': path,
+        'name': name,
+        'at': at,
+        'label': label,
+        if (batch case final b?) 'batch': b,
+      };
 
   static _PendingRemix? fromJson(Map<String, dynamic> j) {
     final kind = j['kind'];
@@ -3024,6 +3068,7 @@ class _PendingRemix {
         final String l when RegExp(r'^[a-z]+$').hasMatch(l) => l,
         _ => 'remix',
       },
+      batch: j['batch'] as String?,
     );
   }
 }
@@ -3031,8 +3076,11 @@ class _PendingRemix {
 /// A remix sent to a server: waiting, or back with [saved] pictures.
 @immutable
 class RemixJob {
-  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true, this.remaining = 1});
+  const RemixJob(this.id, this.name, {this.saved = const [], this.running = true, this.remaining = 1, this.batch});
   final int id;
+
+  /// Sent together with the others of this name, as one run (a Breed).
+  final String? batch;
 
   /// Renders asked for that have not come back yet (none once finished).
   final int remaining;
@@ -3044,9 +3092,9 @@ class RemixJob {
   final List<String> saved;
   final bool running;
 
-  RemixJob withRemaining(int remaining) => RemixJob(id, name, saved: saved, running: running, remaining: remaining);
+  RemixJob withRemaining(int remaining) => RemixJob(id, name, saved: saved, running: running, remaining: remaining, batch: batch);
 
-  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false, remaining: 0);
+  RemixJob finished(List<String> saved) => RemixJob(id, name, saved: List.unmodifiable(saved), running: false, remaining: 0, batch: batch);
 }
 
 /// An upscale waiting for the one before it to finish.
