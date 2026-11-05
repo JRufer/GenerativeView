@@ -317,6 +317,9 @@ class _RemixPanelState extends State<RemixPanel> {
 
   /// Where image to image redraws; nothing painted means all of it.
   List<MaskOp> _mask = const [];
+
+  /// Color painted into the picture before it is sent.
+  List<MaskOp> _color = const [];
   String? _backend;
   bool _sending = false;
   String? _error;
@@ -422,6 +425,7 @@ class _RemixPanelState extends State<RemixPanel> {
             height: height,
             strength: _strength,
             ops: _mask,
+            color: _color,
           );
         } catch (e) {
           throw BackendException('Could not read the picture to start from: $e');
@@ -847,18 +851,22 @@ Widget build(BuildContext context) {
     final aspect = item.width > 0 && item.height > 0
         ? item.width / item.height
         : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
-    final ops = await editMask(
+    final edit = await editMask(
       context,
       path: item.path,
       name: item.name,
       aspect: aspect,
       ops: _mask,
+      color: _color,
       state: widget.state,
       phrases: promptPhrases(_prompt.text),
       find: find,
     );
-    if (ops != null && mounted) {
-      setState(() => _mask = ops);
+    if (edit != null && mounted) {
+      setState(() {
+        _mask = edit.ops;
+        _color = edit.color;
+      });
     }
   }
 
@@ -869,6 +877,7 @@ Widget build(BuildContext context) {
         ? item.width / item.height
         : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
     final painted = maskPaints(_mask);
+    final colored = maskPaints(_color);
     Future<void> edit() => _editMask();
 
     final strength = Column(
@@ -901,6 +910,15 @@ Widget build(BuildContext context) {
           'Low keeps the picture and touches it up; around 0.5 to 0.7 reworks it; near 1 redraws it almost from scratch.',
           style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
         ),
+        if (colored)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              'Lower keeps your color closer. Near 1 mostly ignores it.',
+              key: ValueKey<String>('remix-color-hint'),
+              style: TextStyle(fontSize: 11.5, color: Palette.muted, height: 1.35),
+            ),
+          ),
       ],
     );
 
@@ -908,7 +926,8 @@ Widget build(BuildContext context) {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          painted ? 'Only the painted part is redrawn; the rest is kept.' : 'No mask: all of the picture is redrawn.',
+          '${colored ? 'Your color is painted in. ' : ''}'
+          '${painted ? 'Only the painted part is redrawn; the rest is kept.' : 'No mask: all of the picture is redrawn.'}',
           key: const ValueKey<String>('remix-mask-status'),
           style: const TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.35),
         ),
@@ -921,14 +940,19 @@ Widget build(BuildContext context) {
               key: const ValueKey<String>('remix-mask-edit'),
               onPressed: edit,
               icon: const Icon(Icons.brush, size: 16),
-              label: Text(painted ? 'Edit mask…' : 'Paint a mask…'),
+              label: Text(painted || colored ? 'Edit color and mask…' : 'Paint color or a mask…'),
             ),
+            if (_color.isNotEmpty)
+              TextButton(
+                key: const ValueKey<String>('remix-color-clear'),
+                onPressed: () => setState(() => _color = const []),
+                child: const Text('Clear color'),
+              ),
             if (_mask.isNotEmpty)
-              TextButton.icon(
+              TextButton(
                 key: const ValueKey<String>('remix-mask-clear'),
-                        onPressed: () => setState(() => _mask = const []),
-                icon: const Icon(Icons.layers_clear_outlined, size: 16),
-                label: const Text('Clear'),
+                onPressed: () => setState(() => _mask = const []),
+                child: const Text('Clear mask'),
               ),
           ],
         ),
@@ -948,8 +972,8 @@ Widget build(BuildContext context) {
               onTap: edit,
               borderRadius: BorderRadius.circular(6),
               child: Tooltip(
-                message: 'Paint where to redraw',
-                child: MaskPreview(path: item.path, version: item.version, ops: _mask, aspect: aspect),
+                message: 'Paint color, and where to redraw',
+                child: MaskPreview(path: item.path, version: item.version, ops: _mask, color: _color, aspect: aspect),
               ),
             );
             // Picture beside the controls when there is room, else above.
