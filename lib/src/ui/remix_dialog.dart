@@ -967,7 +967,7 @@ Widget build(BuildContext context) {
       extend: _extend,
       pixels: item.width > 0 && item.height > 0 ? Size(item.width.toDouble(), item.height.toDouble()) : null,
       selector: widget.state.objectSelectorFor?.call(item.path),
-      canExtend: widget.state.previewTools && !item.isVideo,
+      canExtend: !item.isVideo,
     );
     if (edit != null && mounted) {
       setState(() {
