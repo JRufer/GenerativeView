@@ -1451,7 +1451,7 @@ class _MaskEditorState extends State<MaskEditor> {
                         ],
                         color: [
                           ..._colorOps,
-                          if (_smearShown case final shown?) shown,
+                          ?_smearShown,
                           if (_drawing != null && _layer == MaskLayer.color && !_drawingSmear) _stroke(_drawing!),
                         ],
                         showMask: _layer == MaskLayer.mask,

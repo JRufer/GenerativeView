@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'dart:ui' as ui show Image;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -122,7 +123,7 @@ void main() {
     });
 
     test('a smear patch lands where it should, its soft edge keeping its color', () async {
-      final done = Completer<Image>();
+      final done = Completer<ui.Image>();
       // Premultiplied: half covered, full red.
       decodeImageFromPixels(Uint8List.fromList([128, 0, 0, 128]), 1, 1, PixelFormat.rgba8888, done.complete);
       final patch = await done.future;
