@@ -229,7 +229,8 @@ void main() {
       expect(tw / th, closeTo(9 / 16, 1e-9));
       // From no extension at all, the canvas grows to hold the picture.
       final (sw, sh) = Extension.none.fitTo(1, 16 / 9).canvasOf(1);
-      expect((sw, sh), (closeTo(16 / 9, 1e-9), closeTo(1, 1e-9)));
+      expect(sw, closeTo(16 / 9, 1e-9));
+      expect(sh, closeTo(1, 1e-9));
       // A side never goes past the most it may.
       final far = const Extension(left: 1, right: 1).fitTo(1, 9 / 16);
       for (final side in [far.left, far.right, far.top, far.bottom]) {
