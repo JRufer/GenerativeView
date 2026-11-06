@@ -13,14 +13,19 @@ import '../core/lora_edits.dart';
 import '../core/models.dart';
 import '../core/prompt_edits.dart';
 import '../core/spelling.dart';
+import '../core/detail_pass.dart';
+import '../core/wildcards.dart';
 import '../theme.dart';
 import 'audience_widgets.dart' show RemixAudienceSection;
+import 'detail_ui.dart';
+import '../detail_run.dart';
 import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
 import 'presets_ui.dart';
 import 'prompt_editor.dart';
 import 'kit.dart';
 import 'sheet.dart';
+import 'wildcards_ui.dart';
 
 /// Open the remix panel for [item]: its prompt to edit (with spelling and
 /// weights), its seed, size and count, and a button that queues it on
@@ -114,12 +119,39 @@ class RemixPanel extends StatefulWidget {
 class _RemixPanelState extends State<RemixPanel> {
   late final PromptController _prompt = PromptController(text: widget.info.prompt);
   late final PromptController _negative = PromptController(text: widget.info.negative);
+
+  /// The word lists, for the prompts to show which `__lists__` exist.
+  void _syncWordLists() {
+    final lists = widget.state.wordLists;
+    if (!identical(_prompt.wordLists, lists)) {
+      _prompt.wordLists = lists;
+      _negative.wordLists = lists;
+    }
+  }
+
+  /// How the prompts' wildcards are picked for each picture.
+  WildcardMode _wildMode = WildcardMode.random;
+
+  /// How far the canvas is taken out past the picture (image to image).
+  Extension _extend = Extension.none;
+
+  /// Faces and hands redrawn up close in each new picture.
+  DetailPass _detail = const DetailPass();
+
+  /// Pictures to make: one of every combination of the wildcards in
+  /// [WildcardMode.every], else the count chosen.
+  int get _pictures {
+    if (_wildMode != WildcardMode.every) return _count;
+    final lists = widget.state.wordLists;
+    final total = wildcardCombinations(WildcardPrompt.parse(_prompt.text, lists), WildcardPrompt.parse(_negative.text, lists));
+    return total < 2 ? _count : math.min(total, maxEveryCombination);
+  }
   late final TextEditingController _seed = TextEditingController(text: widget.info.seed);
   late final TextEditingController _width;
   late final TextEditingController _height;
 
   /// Width over height, as the picture is: kept while the size is locked.
-  late final double _aspect;
+  late double _aspect;
 
   /// Sampling steps and CFG scale, as the user sets them.
   late final SamplingChoice _sampling = SamplingChoice(steps: recipeSteps(widget.info), cfg: recipeCfg(widget.info));
@@ -335,6 +367,8 @@ class _RemixPanelState extends State<RemixPanel> {
   @override
   void initState() {
     super.initState();
+    _syncWordLists();
+    widget.state.addListener(_syncWordLists);
     final (w, h) = recipeSize(info);
     _width = TextEditingController(text: w > 0 ? '${snapSize(w)}' : '1024');
     _height = TextEditingController(text: h > 0 ? '${snapSize(h)}' : '1024');
@@ -388,6 +422,7 @@ class _RemixPanelState extends State<RemixPanel> {
 
   @override
   void dispose() {
+    widget.state.removeListener(_syncWordLists);
     _promptFocus.dispose();
     _prompt.dispose();
     _negative.dispose();
@@ -426,37 +461,80 @@ class _RemixPanelState extends State<RemixPanel> {
             strength: _strength,
             ops: _mask,
             color: _color,
+            extend: _extend,
           );
         } catch (e) {
           throw BackendException('Could not read the picture to start from: $e');
         }
       }
-      final ticket = await sendRemix(
-        kind,
-        widget.state.backendUrls[kind]!,
-        Remix(
-          info: _model == null ? info : withModel(info, _model!),
-          prompt: _prompt.text,
-          negative: _negative.text,
-          seed: int.tryParse(_seed.text.trim()) ?? 0,
-          randomSeed: _random || int.tryParse(_seed.text.trim()) == null,
-          count: _count,
-          width: width,
-          height: height,
-          steps: _sampling.sentSteps,
-          cfg: _sampling.sentCfg,
-          loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
-          init: init,
-        ),
+      final seed = int.tryParse(_seed.text.trim()) ?? 0;
+      final random = _random || int.tryParse(_seed.text.trim()) == null;
+      Remix remix({required String prompt, required String negative, required int seed, required int count}) => Remix(
+        info: _model == null ? info : withModel(info, _model!),
+        prompt: prompt,
+        negative: negative,
+        seed: seed,
+        randomSeed: random,
+        count: count,
+        width: width,
+        height: height,
+        steps: _sampling.sentSteps,
+        cfg: _sampling.sentCfg,
+        loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
+        init: init,
       );
-      // Waited for in the background, panel or no panel.
-      widget.state.collectRemix(widget.item, ticket);
+      final picks = wildcardPicks(
+        _prompt.text,
+        _negative.text,
+        widget.state.wordLists,
+        count: _pictures,
+        every: _wildMode == WildcardMode.every,
+        seed: seed,
+      );
+      final base = widget.state.backendUrls[kind]!;
+      // Faces and hands redrawn in each picture before it is saved, with the
+      // prompt that picture was made with.
+      RemixTicket fixed(RemixTicket t, String prompt, String negative) => _detail.on
+          ? withDetailPass(t, widget.state, kind: kind, base: base, info: info, prompt: prompt, negative: negative, pass: _detail)
+          : t;
+      if (picks == null) {
+        final ticket = await sendRemix(kind, base, remix(prompt: _prompt.text, negative: _negative.text, seed: seed, count: _count));
+        // Waited for in the background, panel or no panel.
+        widget.state.collectRemix(widget.item, fixed(ticket, _prompt.text, _negative.text));
+        if (!mounted) return;
+        toast(
+          context,
+          '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
+          'saved beside the original and added to ${AppState.remixCollection}.',
+        );
+      } else {
+        // A prompt of its own for each picture: one remix each, sent at once
+        // and kept as one run, told of when all of them are back.
+        final batch = widget.state.openRemixBatch();
+        var sent = 0;
+        Object? failure;
+        try {
+          await Future.wait([
+            for (var i = 0; i < picks.length; i++)
+              sendRemix(kind, base, remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1)).then((ticket) {
+                widget.state.collectRemix(widget.item, fixed(ticket, picks[i].$1, picks[i].$2), batch: batch);
+                sent++;
+              }, onError: (Object e) {
+                failure ??= e;
+              }),
+          ]);
+        } finally {
+          widget.state.closeRemixBatch(batch);
+        }
+        if (failure != null) throw BackendException(sent == 0 ? '$failure' : 'Sent $sent of ${picks.length}, then: $failure');
+        if (!mounted) return;
+        toast(
+          context,
+          'Sent ${picks.length} pictures to ${backendNames[kind]}, each with its own prompt. They will be '
+          'saved beside the original and added to ${AppState.remixCollection}.',
+        );
+      }
       if (!mounted) return;
-      toast(
-        context,
-        '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
-        'saved beside the original and added to ${AppState.remixCollection}.',
-      );
       Navigator.of(context).maybePop();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -518,7 +596,7 @@ Widget build(BuildContext context) {
       ),
       const SizedBox(height: 4),
       const Text(
-        'Select words to weight them; the caret in an underlined word offers corrections.',
+        'Select words to weight them; tap an underlined word for corrections.',
         style: TextStyle(fontSize: 11.5, color: Palette.faint),
       ),
       _suggestions(),
@@ -531,8 +609,19 @@ Widget build(BuildContext context) {
         maxLines: 5,
         onAddWord: widget.state.addUserWord,
       ),
-      RemixAudienceSection(state: widget.state, prompt: _prompt, negative: _negative),
+      WildcardBar(
+        state: widget.state,
+        prompt: _prompt,
+        negative: _negative,
+        mode: _wildMode,
+        onMode: (m) => setState(() => _wildMode = m),
+        seed: int.tryParse(_seed.text) ?? 0,
+      ),
     ];
+    // Aiming the prompt at an audience: under the prompts on a narrow
+    // panel, and with the other settings on the right of a wide one, so
+    // the two columns come out about as long as each other.
+    final audience = RemixAudienceSection(state: widget.state, prompt: _prompt, negative: _negative);
     // How to make it.
     final how = <Widget>[
       const PanelHeading('Seed, size and count'),
@@ -582,14 +671,22 @@ Widget build(BuildContext context) {
               ),
               const SizedBox(height: 10),
               row(
-                SizeField(width: _width, height: _height, aspect: _aspect, expand: true),
-                _Stepper(
-                  value: _count,
-                  min: 1,
-                  max: 16,
-                  label: _count == 1 ? 'picture' : 'pictures',
-                  onChanged: (v) => setState(() => _count = v),
-                ),
+                SizeField(key: ValueKey<double>(_aspect), width: _width, height: _height, aspect: _aspect, expand: true),
+                _wildMode == WildcardMode.every
+                    ? _Stepper(
+                        value: _pictures,
+                        min: _pictures,
+                        max: _pictures,
+                        label: 'one of each',
+                        onChanged: (_) {},
+                      )
+                    : _Stepper(
+                        value: _count,
+                        min: 1,
+                        max: 16,
+                        label: _count == 1 ? 'picture' : 'pictures',
+                        onChanged: (v) => setState(() => _count = v),
+                      ),
               ),
             ],
           );
@@ -609,6 +706,20 @@ Widget build(BuildContext context) {
       SamplingSection(key: ValueKey<String>('remix-sampling-$_presetTick'), choice: _sampling),
       _modelRow(),
       if (_loras.isNotEmpty) LoraSection(key: ValueKey<String>('remix-loras-$_presetTick'), loras: _loras, prompt: _prompt),
+      if (widget.state.regionFinder != null)
+        FoldSection(
+          key: const ValueKey<String>('remix-detail'),
+          label: 'Faces and hands',
+          summary: _detail.summary,
+          highlight: _detail.on,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: DetailPassSection(pass: _detail, onChanged: (p) => setState(() => _detail = p), finder: widget.state.regionFinder),
+          ),
+        ),
+    ];
+    // Where it goes and what to know about that: last, under everything.
+    final notes = <Widget>[
       if (_backend != null && (urls[_backend] ?? '').isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 10),
@@ -673,10 +784,10 @@ Widget build(BuildContext context) {
                   children: [
                     Expanded(flex: 5, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: what)),
                     const SizedBox(width: 24),
-                    Expanded(flex: 4, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: how)),
+                    Expanded(flex: 4, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...how, audience, ...notes])),
                   ],
                 )
-              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...what, ...how]),
+              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...what, audience, ...how, ...notes]),
         );
       },
     );
@@ -861,13 +972,34 @@ Widget build(BuildContext context) {
       state: widget.state,
       phrases: promptPhrases(_prompt.text),
       find: find,
+      extend: _extend,
+      pixels: item.width > 0 && item.height > 0 ? Size(item.width.toDouble(), item.height.toDouble()) : null,
+      selector: widget.state.objectSelectorFor?.call(item.path),
+      canExtend: !item.isVideo,
     );
     if (edit != null && mounted) {
       setState(() {
         _mask = edit.ops;
         _color = edit.color;
+        _setExtension(edit.extend);
       });
     }
+  }
+
+  /// Take the canvas out as far as [e]: the size made follows, since the
+  /// picture is drawn at its own size inside the larger canvas.
+  void _setExtension(Extension e) {
+    final was = _extend;
+    _extend = e;
+    if (identical(was, e)) return;
+    final item = widget.item;
+    final (w, h) = recipeSize(info);
+    final bw = item.width > 0 ? item.width : w, bh = item.height > 0 ? item.height : h;
+    if (bw <= 0 || bh <= 0) return;
+    final (nw, nh) = e.sizeOf(bw, bh, step: sizeStep);
+    _width.text = '$nw';
+    _height.text = '$nh';
+    _aspect = nw / nh;
   }
 
   /// The picture to start from, how much of it to redraw, and where.
@@ -907,7 +1039,7 @@ Widget build(BuildContext context) {
           ),
         ),
         const Text(
-          'Low keeps the picture and touches it up; around 0.5 to 0.7 reworks it; near 1 redraws it almost from scratch.',
+          'Low touches it up · 0.5 to 0.7 reworks it · near 1 redraws it',
           style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
         ),
         if (colored)
@@ -927,10 +1059,20 @@ Widget build(BuildContext context) {
       children: [
         Text(
           '${colored ? 'Your color is painted in. ' : ''}'
-          '${painted ? 'Only the painted part is redrawn; the rest is kept.' : 'No mask: all of the picture is redrawn.'}',
+          '${painted ? 'Only the painted part is redrawn; the rest is kept.' : (_extend.any ? 'The new canvas is drawn; the picture is kept.' : 'No mask: all of the picture is redrawn.')}',
           key: const ValueKey<String>('remix-mask-status'),
           style: const TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.35),
         ),
+        if (_extend.any)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Extended to ${_width.text} × ${_height.text}, blending ${_extend.blend} px of its edge'
+              '${_strength < extendMinStrength ? ', redrawn at ${extendMinStrength.toStringAsFixed(2)} so the new canvas is drawn' : ''}.',
+              key: const ValueKey<String>('remix-extend-status'),
+              style: const TextStyle(fontSize: 12.5, color: Palette.accent, height: 1.35),
+            ),
+          ),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -940,8 +1082,14 @@ Widget build(BuildContext context) {
               key: const ValueKey<String>('remix-mask-edit'),
               onPressed: edit,
               icon: const Icon(Icons.brush, size: 16),
-              label: Text(painted || colored ? 'Edit color and mask…' : 'Paint color or a mask…'),
+              label: Text(painted || colored || _extend.any ? 'Edit…' : 'Paint, mask or extend…'),
             ),
+            if (_extend.any)
+              TextButton(
+                key: const ValueKey<String>('remix-extend-clear'),
+                onPressed: () => setState(() => _setExtension(Extension.none)),
+                child: const Text('Undo extend'),
+              ),
             if (_color.isNotEmpty)
               TextButton(
                 key: const ValueKey<String>('remix-color-clear'),

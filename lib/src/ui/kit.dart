@@ -511,19 +511,25 @@ class ServerSendBar extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                 ],
+                // The button is always at the right-hand end, the same place
+                // in every panel; the servers and anything beside them take
+                // what is left of the row.
                 Row(
                   children: [
-                    if (showServers && wide) ...[
-                      Flexible(flex: 3, child: Wrap(spacing: 6, runSpacing: 6, children: chips)),
-                      setUp,
-                    ],
-                    // What is beside the button takes the room left over,
-                    // so it wraps only when there truly is none.
-                    if (leading != null) ...[
-                      const SizedBox(width: 6),
-                      Expanded(child: Align(alignment: Alignment.centerLeft, child: leading!)),
-                    ] else
-                      const Spacer(),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          if (showServers && wide) ...[
+                            Flexible(child: Wrap(spacing: 6, runSpacing: 6, children: chips)),
+                            setUp,
+                          ],
+                          if (leading != null) ...[
+                            const SizedBox(width: 6),
+                            Flexible(child: Align(alignment: Alignment.centerLeft, child: leading!)),
+                          ],
+                        ],
+                      ),
+                    ),
                     const SizedBox(width: 10),
                     button,
                   ],

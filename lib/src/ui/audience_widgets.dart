@@ -572,9 +572,20 @@ class _RemixAudienceSectionState extends State<RemixAudienceSection> {
           AudienceChooser(value: _target, keyPrefix: 'remix-audience', anyLabel: 'As written', onChanged: _aim),
           if (steer != null) AudienceSteerNote(steer, target: _target),
           const SizedBox(height: 6),
-          const Text(
-            'Going down takes the parts that rate higher out of the prompt and guards against them in the negative. Going up lifts those guards and weights up words already in the prompt that lean that way; it never adds words.',
-            style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4),
+          const Tooltip(
+            message: 'Going down takes the parts that rate higher out of the prompt and guards against them in the negative. '
+                'Going up lifts those guards and weights up words already in the prompt that lean that way; it never adds words.',
+            triggerMode: TooltipTriggerMode.tap,
+            showDuration: Duration(seconds: 8),
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: 'Lower takes words out; higher only weights up words already there. '),
+                  WidgetSpan(alignment: PlaceholderAlignment.middle, child: Icon(Icons.info_outline, size: 13, color: Palette.faint)),
+                ],
+              ),
+              style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4),
+            ),
           ),
         ],
       ),
@@ -598,8 +609,8 @@ class BreedAudienceSection extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           target == 0
-              ? 'Pick a level and every candidate is aimed at it: parts that rate higher are struck out and guarded against.'
-              : 'Every candidate is aimed at ${Audience.label(target)}: struck-out parts are left out and weighted words weighted up when it is rendered.',
+              ? 'Pick a level and every candidate is aimed at it.'
+              : 'Every candidate is aimed at ${Audience.label(target)}: struck-out parts are left out.',
           style: const TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.4),
         ),
       ],

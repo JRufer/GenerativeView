@@ -20,7 +20,11 @@ Each feature is tried on four pictures:
 
 Features covered: edited prompt, seed and one more per picture, size, steps
 and CFG, the model, another model chosen, a LoRA added, a LoRA reweighted, a LoRA switched off, image to image,
-a painted area redrawn, and hires fix.
+a painted area redrawn, the canvas extended (outpainting), and hires fix.
+
+The hires fix in tiles and the face and hand detail pass send ordinary
+image to image jobs (one per tile or region) and are put back together on
+the device, so they reach every server the same way.
 
 **Adding a feature:** add a `Feature` to the `features` list. It then runs
 on every server and every picture. If a combination truly cannot work, add it

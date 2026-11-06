@@ -550,6 +550,22 @@ final List<Feature> features = [
     },
   ),
   Feature(
+    'image to image: the canvas extended, the new area drawn',
+    // What Extend sends: a wider canvas than the picture, masked where it
+    // is new, at the strength an extension is redrawn at or more.
+    (info) => remixOf(
+      info,
+      width: side((info.width * 16 / 9).round()),
+      height: side(info.height),
+      init: startFrom(strength: 0.9, masked: true),
+    ),
+    (info, all) {
+      expect(all.single.strength, closeTo(0.9, 0.05));
+      expect(all.single.masked, isTrue);
+      if (all.single.width != null) expect(all.single.width, side((info.width * 16 / 9).round()));
+    },
+  ),
+  Feature(
     'hires fix: twice the size, refined at low strength',
     (info) => remixOf(
       info,

@@ -8,6 +8,10 @@ import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
+import 'core/detail_models.dart';
+import 'core/detail_pass.dart' show RegionFinder;
+import 'core/object_select.dart' show ObjectSelector;
+import 'core/select_model.dart';
 import 'core/backends.dart' show cancelRemix, RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
 import 'core/media_image.dart';
 import 'core/presets.dart';
@@ -15,6 +19,7 @@ import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/taste.dart';
+import 'core/wildcards.dart' show wordListsFromJson;
 import 'core/thumb_cache.dart';
 import 'platform.dart' show PasteSource, TrashOutcome, scanMediaFiles, sharedFiles, trashFiles;
 
@@ -170,6 +175,13 @@ class AppState extends ChangeNotifier {
     _events = core.events.listen(_onEvent);
     jxlPixels = core.jxlPixels;
     jxlToPng = (path, dest) => core.call('jxl_png', {'path': path, 'dest': dest});
+    final finder = DetailModels(core);
+    regionFinder = finder;
+    unawaited(finder.check());
+    final select = SelectModel(core);
+    _selectModel = select;
+    objectSelectorFor = select.selectorFor;
+    unawaited(select.check());
   }
 
   final NativeCore core;
@@ -196,6 +208,11 @@ class AppState extends ChangeNotifier {
   /// the home page.
   final StreamController<String> _notices = StreamController.broadcast();
   Stream<String> get notices => _notices.stream;
+
+  /// Say [text] in a toast, as the app's own notices are.
+  void notice(String text) {
+    if (!_disposed) _notices.add(text);
+  }
 
   /// Zoom nudges from the keyboard for the picture in the focus view: one
   /// stop in (positive) or out (negative) per step.
@@ -449,6 +466,17 @@ class AppState extends ChangeNotifier {
   /// picture folder. Uninstalling the app takes them too: see Export.
   List<Preset> presets = const [];
 
+  /// Tap to select in the mask editor: what outlines objects in the picture
+  /// at a path. Null hides the Select tool.
+  ObjectSelector Function(String path)? objectSelectorFor;
+  SelectModel? _selectModel;
+
+  /// What finds faces and hands for the detail pass. Null hides it.
+  RegionFinder? regionFinder;
+
+  /// Word lists for `__name__` in a prompt, by name, kept with the presets.
+  Map<String, List<String>> wordLists = const {};
+
   /// How Remixes and Breeds are kept: 'png' (as the server sent them) or 'jxl'.
   String remixFormat = 'png';
 
@@ -604,6 +632,7 @@ class AppState extends ChangeNotifier {
       for (final entry in _savedList(saved['presets']))
         if (entry is Map<String, dynamic>) Preset.fromJson(entry),
     ];
+    wordLists = wordListsFromJson(saved['word_lists']);
     remixFormat = (saved['remix_format'] as String?) ?? remixFormat;
     upscaleFormat = (saved['upscale_format'] as String?) ?? upscaleFormat;
     jxlQuality = (saved['jxl_quality'] as String?) ?? jxlQuality;
@@ -1512,6 +1541,23 @@ class AppState extends ChangeNotifier {
     _keepPresets(list);
   }
 
+  void _keepWordLists(Map<String, List<String>> lists) {
+    wordLists = lists;
+    _save('word_lists', jsonEncode(lists));
+    notifyListeners();
+  }
+
+  /// Add the word list [name], or change it; [was] is its old name when it
+  /// is renamed.
+  void saveWordList(String name, List<String> words, {String? was}) {
+    final lists = {...wordLists};
+    if (was != null && was != name) lists.remove(was);
+    lists[name] = [for (final w in words) if (w.trim().isNotEmpty) w.trim()];
+    _keepWordLists(lists);
+  }
+
+  void deleteWordList(String name) => _keepWordLists({...wordLists}..remove(name));
+
   /// Write every preset to the file at [path].
   Future<void> exportPresets(String path) => File(path).writeAsString(presetsToFile(presets), flush: true);
 
@@ -2417,7 +2463,7 @@ class AppState extends ChangeNotifier {
     final id = ++_remixIds;
     final saved = <String>[];
     // How it is spoken of when something goes wrong.
-    final what = label == 'hires' ? 'Hires fix' : 'Remix';
+    final what = label == 'hires' ? 'Hires fix' : (label == 'detail' ? 'Detail pass' : 'Remix');
     final server = switch (ticket.kind) {
       'comfyui' => 'ComfyUI ',
       'invokeai' => 'InvokeAI ',
@@ -2439,6 +2485,7 @@ class AppState extends ChangeNotifier {
       });
     }
     late final StreamSubscription<RemixImage> sub;
+    StreamSubscription<int>? remainingSub;
     var ended = false;
     void finish() {
       if (ended) return;
@@ -2446,6 +2493,7 @@ class AppState extends ChangeNotifier {
       _remixCancels.remove(id);
       _remixSubs.remove(sub);
       finishedSub?.cancel();
+      remainingSub?.cancel();
       // However it ended, nothing of it is waited for any more.
       if (record != null && _pendingRemixes.remove(record)) _savePendingRemixes();
       if (_disposed) return;
@@ -2457,7 +2505,7 @@ class AppState extends ChangeNotifier {
         // round button keeps it.
         if (!failed) _remixProblem('$what of $originalName', '${server}finished, but brought no picture back');
         list.removeAt(at);
-      } else if (label == 'hires') {
+      } else if (label == 'hires' || label == 'detail') {
         // An upscale, finished on the server: done with the upscales.
         list.removeAt(at);
         upscaled.value = [...upscaled.value, ...saved];
@@ -2480,6 +2528,12 @@ class AppState extends ChangeNotifier {
       remixes.value = list;
     }
 
+    // A ticket that brings one picture back from many renders says itself
+    // how many are left.
+    remainingSub = ticket.remaining?.listen((n) {
+      left = n + 1;
+      oneLess();
+    });
     sub = results.listen(
       (image) {
         oneLess();
@@ -2511,6 +2565,10 @@ class AppState extends ChangeNotifier {
     };
     remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left, batch: batch, label: label)];
   }
+
+  /// Whether what a run of [label] makes is kept with the upscales: a hires
+  /// fix, or faces and hands fixed on a picture already made.
+  static bool _isUpscale(String label) => label == 'hires' || label == 'detail';
 
   /// Say that a remix went wrong, and keep it on the round button (in
   /// [problems]) until put away, so it is not missed.
@@ -2580,7 +2638,7 @@ class AppState extends ChangeNotifier {
       // picture.
       final part = File('$base.$name.part');
       await part.writeAsBytes(image.bytes, flush: true);
-      final jxl = label == 'hires' ? upscaleFormat == 'jxl' : remixFormat == 'jxl';
+      final jxl = _isUpscale(label) ? upscaleFormat == 'jxl' : remixFormat == 'jxl';
       if (jxl && !isJxl(path)) {
         final stem = path.substring(0, path.lastIndexOf('.'));
         var dest = '$stem.jxl';
@@ -2605,7 +2663,7 @@ class AppState extends ChangeNotifier {
       return null;
     }
     if (_disposed) return path;
-    final collection = label == 'hires' ? upscaleCollection : remixCollection;
+    final collection = _isUpscale(label) ? upscaleCollection : remixCollection;
     try {
       await core.call('notes_set', {
         'paths': [path],
@@ -2999,6 +3057,9 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    final finder = regionFinder;
+    if (finder is DetailModels) finder.dispose();
+    _selectModel?.dispose();
     _events.cancel();
     _sharedIn?.cancel();
     _reloadTimer?.cancel();

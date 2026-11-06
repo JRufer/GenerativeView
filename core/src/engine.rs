@@ -33,6 +33,12 @@ pub struct Engine {
     /// The model of the user's taste, with a fingerprint of the ratings it
     /// learned from: fitted again only when they change.
     taste: parking_lot::Mutex<Option<(u64, Arc<Taste>)>>,
+    /// The face and hand finder, loaded the first time it is asked for.
+    finder: parking_lot::Mutex<Option<Arc<crate::detect::Finder>>>,
+    /// Tap to select: the model once loaded, and the pictures lately made
+    /// ready for it (newest last), so each tap is quick.
+    sam: parking_lot::Mutex<Option<Arc<crate::sam::Sam>>>,
+    prepared: parking_lot::Mutex<Vec<(String, Arc<crate::sam::Prepared>)>>,
 }
 
 /// The taste model, or why there is none yet, with how many of the
@@ -62,6 +68,40 @@ fn join(dir: &str, name: &str) -> String {
     }
 }
 
+fn u32_arg(args: &Value, key: &str) -> Result<u32, String> {
+    args.get(key).and_then(Value::as_u64).map(|v| v as u32).ok_or_else(|| format!("missing number {key}"))
+}
+
+impl Engine {
+    /// The picture at `path` made ready to tap: encoded once, then kept
+    /// (the last two).
+    fn select_prepared(&self, path: &str) -> Result<Arc<crate::sam::Prepared>, String> {
+        if let Some((_, p)) = self.prepared.lock().iter().find(|(k, _)| k == path) {
+            return Ok(p.clone());
+        }
+        let sam = {
+            let mut slot = self.sam.lock();
+            match slot.as_ref() {
+                Some(s) => s.clone(),
+                None => {
+                    let s = Arc::new(crate::sam::Sam::load(&crate::sam::model_dir(&self.data_dir).join(crate::sam::FILE))?);
+                    *slot = Some(s.clone());
+                    s
+                }
+            }
+        };
+        let picture = crate::jxl::open(Path::new(path))?;
+        let p = Arc::new(sam.prepare(&picture)?);
+        let mut list = self.prepared.lock();
+        list.retain(|(k, _)| k != path);
+        list.push((path.to_string(), p.clone()));
+        if list.len() > 2 {
+            list.remove(0);
+        }
+        Ok(p)
+    }
+}
+
 fn bool_arg(args: &Value, key: &str) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -74,7 +114,7 @@ impl Engine {
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
         let dupes = crate::dupes::Duplicates::open(data_dir);
-        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default() })
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default(), finder: Default::default(), sam: Default::default(), prepared: Default::default() })
     }
 
     pub fn close(&self) {
@@ -917,6 +957,106 @@ impl Engine {
                 Ok("{}".to_string())
             }
             "upscale" => self.start_upscale(args),
+            "detail_crop" => {
+                let boxes: Vec<[f32; 4]> = serde_json::from_value(args.get("boxes").cloned().unwrap_or_default()).map_err(|e| format!("boxes: {e}"))?;
+                let side = u32_arg(args, "side").unwrap_or(1024);
+                let crops = crate::tiles::crop_regions(Path::new(str_arg(args, "path")?), &boxes, side, Path::new(str_arg(args, "dir")?))?;
+                Ok(Value::Array(
+                    crops
+                        .iter()
+                        .map(|(p, t, (w, h))| json!({ "path": p.to_string_lossy(), "x": t.x, "y": t.y, "w": t.w, "h": t.h, "sent_w": w, "sent_h": h }))
+                        .collect(),
+                )
+                .to_string())
+            }
+            "detail_paste" => {
+                #[derive(serde::Deserialize)]
+                struct Placed {
+                    path: String,
+                    #[serde(flatten)]
+                    tile: crate::tiles::Tile,
+                }
+                let placed: Vec<Placed> = serde_json::from_value(args.get("pieces").cloned().unwrap_or_default()).map_err(|e| format!("pieces: {e}"))?;
+                let pieces: Vec<_> = placed.into_iter().map(|p| (std::path::PathBuf::from(p.path), p.tile)).collect();
+                let base = Path::new(str_arg(args, "path")?);
+                let out = crate::tiles::paste_regions(base, &pieces, 0.15)?;
+                // With the picture's own metadata.
+                let png = crate::upscale::png_with_metadata_of(base, &image::DynamicImage::ImageRgb8(out))?;
+                let dest = str_arg(args, "dest")?;
+                std::fs::write(dest, png).map_err(|e| format!("cannot write {dest}: {e}"))?;
+                Ok(json!({ "path": dest }).to_string())
+            }
+            "select_status" => {
+                let dir = crate::sam::model_dir(&self.data_dir);
+                Ok(json!({ "installed": dir.join(crate::sam::FILE).is_file(), "dir": dir.to_string_lossy() }).to_string())
+            }
+            "select_prepare" => {
+                let path = normalize(str_arg(args, "path")?);
+                self.select_prepared(&path)?;
+                Ok("{}".into())
+            }
+            "select_outline" => {
+                let path = normalize(str_arg(args, "path")?);
+                let p = self.select_prepared(&path)?;
+                let x = args.get("x").and_then(Value::as_f64).ok_or("missing number x")? as f32;
+                let y = args.get("y").and_then(Value::as_f64).ok_or("missing number y")? as f32;
+                let sam = self.sam.lock().clone().ok_or("the selection model is not loaded")?;
+                let outline = sam.outline(&p, x, y);
+                Ok(Value::Array(outline.iter().map(|(x, y)| json!([x, y])).collect()).to_string())
+            }
+            "detail_status" => {
+                let dir = crate::detect::model_dir(&self.data_dir);
+                Ok(json!({ "installed": crate::detect::Finder::installed(&dir), "dir": dir.to_string_lossy() }).to_string())
+            }
+            "detail_find" => {
+                let finder = {
+                    let mut slot = self.finder.lock();
+                    match slot.as_ref() {
+                        Some(f) => f.clone(),
+                        None => {
+                            let f = Arc::new(crate::detect::Finder::load(&crate::detect::model_dir(&self.data_dir))?);
+                            *slot = Some(f.clone());
+                            f
+                        }
+                    }
+                };
+                let picture = crate::jxl::open(Path::new(str_arg(args, "path")?))?;
+                let found = finder.find(&picture)?;
+                Ok(Value::Array(
+                    found
+                        .iter()
+                        .map(|r| json!({ "kind": r.kind, "box": [r.x0, r.y0, r.x1, r.y1], "score": r.score }))
+                        .collect(),
+                )
+                .to_string())
+            }
+            "tiles_split" => {
+                let tiles: Vec<crate::tiles::Tile> = serde_json::from_value(args.get("tiles").cloned().unwrap_or_default()).map_err(|e| format!("tiles: {e}"))?;
+                let paths = crate::tiles::split(
+                    Path::new(str_arg(args, "path")?),
+                    u32_arg(args, "width")?,
+                    u32_arg(args, "height")?,
+                    &tiles,
+                    Path::new(str_arg(args, "dir")?),
+                )?;
+                Ok(json!({ "paths": paths.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>() }).to_string())
+            }
+            "tiles_merge" => {
+                #[derive(serde::Deserialize)]
+                struct Placed {
+                    path: String,
+                    #[serde(flatten)]
+                    tile: crate::tiles::Tile,
+                }
+                let placed: Vec<Placed> = serde_json::from_value(args.get("tiles").cloned().unwrap_or_default()).map_err(|e| format!("tiles: {e}"))?;
+                let tiles: Vec<_> = placed.into_iter().map(|p| (std::path::PathBuf::from(p.path), p.tile)).collect();
+                let merged = crate::tiles::merge(&tiles, u32_arg(args, "width")?, u32_arg(args, "height")?, u32_arg(args, "overlap").unwrap_or(128))?;
+                // With the original's metadata, as an upscale keeps it.
+                let png = crate::upscale::png_with_metadata_of(Path::new(str_arg(args, "source")?), &image::DynamicImage::ImageRgb8(merged))?;
+                let dest = str_arg(args, "dest")?;
+                std::fs::write(dest, png).map_err(|e| format!("cannot write {dest}: {e}"))?;
+                Ok(json!({ "path": dest }).to_string())
+            }
             "upscale_cancel" => {
                 let job = args.get("job").and_then(Value::as_u64).ok_or("missing argument: job")?;
                 self.upscales.lock().retain(|j| *j != job);

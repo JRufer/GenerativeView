@@ -231,7 +231,16 @@ impl Notes {
     /// Bring the index's copy of `dir`'s notes up to date with its file, if
     /// the file changed since it was last read (or `force`). Returns whether
     /// anything the index holds changed.
+    ///
+    /// Taken in turn with changes: a scan that read the file just before a
+    /// change was written must not then put its older copy in the index.
     pub fn load_dir(&self, db: &Db, dir: &str, force: bool) -> bool {
+        let _guard = self.lock.lock();
+        self.reload(db, dir, force)
+    }
+
+    /// [`Notes::load_dir`], for a caller already holding the lock.
+    fn reload(&self, db: &Db, dir: &str, force: bool) -> bool {
         let path = join(dir, FILE_NAME);
         let now = stamp(&path);
         let known = db.notes_stamp(dir);
@@ -300,7 +309,7 @@ impl Notes {
             write_atomic(&path, &file)?;
         }
         // The index follows the file.
-        self.load_dir(db, dir, true);
+        self.reload(db, dir, true);
         Ok(out)
     }
 
@@ -375,9 +384,9 @@ impl Notes {
             save_file(&to_path, &mut to)?;
             save_file(&from_path, &mut from)?;
         }
-        self.load_dir(db, to_dir, true);
+        self.reload(db, to_dir, true);
         if from_dir != to_dir {
-            self.load_dir(db, from_dir, true);
+            self.reload(db, from_dir, true);
         }
         Ok(true)
     }
@@ -407,7 +416,7 @@ impl Notes {
                     images.remove(name);
                 }
                 save_file(&path, &mut file)?;
-                self.load_dir(db, &dir, true);
+                self.reload(db, &dir, true);
             }
         }
         Ok((entries, folders))

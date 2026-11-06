@@ -16,17 +16,51 @@ pub struct Tensor {
     pub data: Vec<f32>,
 }
 
+/// A checkpoint's pickled object and its storages by key, from either the
+/// zip archive PyTorch has written since 1.6 or the older format: a run of
+/// pickles (magic number, protocol, system info, the object, the storages'
+/// keys) and then each storage's bytes, after its element count.
+fn open_archive(bytes: &[u8], objects: bool) -> Result<(Value, HashMap<String, Vec<u8>>), String> {
+    if bytes.starts_with(b"PK") {
+        let files = unzip(bytes)?;
+        let (pkl_name, pkl) = files.iter().find(|(name, _)| name.ends_with("/data.pkl") || *name == "data.pkl").ok_or("not a PyTorch checkpoint: no data.pkl")?;
+        let prefix = format!("{}data/", pkl_name.strip_suffix("data.pkl").unwrap_or(""));
+        let root = Machine { objects, ..Default::default() }.run(pkl)?;
+        let storages = files.iter().filter_map(|(n, b)| n.strip_prefix(&prefix).map(|k| (k.to_string(), b.clone()))).collect();
+        return Ok((root, storages));
+    }
+    let mut m = Machine { objects, ..Default::default() };
+    let (_magic, at) = m.run_from(bytes, 0).map_err(|e| format!("not a PyTorch checkpoint: {e}"))?;
+    let (_protocol, at) = m.run_from(bytes, at)?;
+    let (_system, at) = m.run_from(bytes, at)?;
+    let (root, at) = m.run_from(bytes, at)?;
+    let (keys, mut at) = m.run_from(bytes, at)?;
+    let Value::List(keys) = keys else { return Err("checkpoint does not list its storages".into()) };
+    let size_of = |dtype: &str| match dtype {
+        "DoubleStorage" | "LongStorage" => 8,
+        "FloatStorage" | "IntStorage" => 4,
+        "HalfStorage" | "BFloat16Storage" | "ShortStorage" => 2,
+        _ => 1,
+    };
+    let mut storages = HashMap::new();
+    for k in keys {
+        let Value::Str(key) = k else { return Err("bad storage key".into()) };
+        let dtype = m.seen.iter().find(|(s, _)| *s == key).map(|(_, d)| d.clone()).unwrap_or_else(|| "FloatStorage".into());
+        let count = bytes.get(at..at + 8).map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as usize).ok_or("truncated checkpoint")?;
+        at += 8;
+        let len = count * size_of(&dtype);
+        let data = bytes.get(at..at + len).ok_or("truncated checkpoint")?;
+        at += len;
+        storages.insert(key, data.to_vec());
+    }
+    Ok((root, storages))
+}
+
 /// The tensors of a checkpoint by name, from its state dict (or the
 /// `params` / `params_ema` / `state_dict` dict inside it).
 pub fn load(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
-    let files = unzip(bytes)?;
-    let (pkl_name, pkl) = files.iter().find(|(name, _)| name.ends_with("/data.pkl") || *name == "data.pkl").ok_or("not a PyTorch checkpoint: no data.pkl")?;
-    let prefix = pkl_name.strip_suffix("data.pkl").unwrap_or("");
-    let storage = |key: &str| -> Result<&[u8], String> {
-        let name = format!("{prefix}data/{key}");
-        files.iter().find(|(n, _)| *n == name).map(|(_, b)| b.as_slice()).ok_or_else(|| format!("checkpoint is missing {name}"))
-    };
-    let root = Machine::default().run(pkl)?;
+    let (root, files) = open_archive(bytes, false)?;
+    let storage = |key: &str| -> Result<&[u8], String> { files.get(key).map(|b| b.as_slice()).ok_or_else(|| format!("checkpoint is missing storage {key}")) };
     let mut dict = match root {
         Value::Dict(d) => d,
         _ => return Err("checkpoint does not hold a dict".into()),
@@ -42,28 +76,132 @@ pub fn load(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
     let mut out = HashMap::new();
     for (key, value) in dict {
         let (Value::Str(name), Value::Tensor { key, dtype, offset, shape, stride }) = (key, value) else { continue };
-        if dtype != "FloatStorage" {
-            return Err(format!("{name}: {dtype} tensors are not supported"));
+        // Counters (a batch norm's num_batches_tracked) and the like.
+        if dtype != "FloatStorage" && dtype != "HalfStorage" {
+            continue;
         }
-        let raw = storage(&key)?;
-        let count: usize = shape.iter().product();
-        // Contiguous, row-major: what a saved state dict holds.
-        let mut expect = 1;
-        for (dim, st) in shape.iter().zip(&stride).rev() {
-            if *dim > 1 && *st != expect {
-                return Err(format!("{name}: tensor is not contiguous"));
-            }
-            expect *= dim;
-        }
-        let start = offset * 4;
-        let end = start + count * 4;
-        if end > raw.len() {
-            return Err(format!("{name}: storage is too short"));
-        }
-        let data = raw[start..end].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-        out.insert(name, Tensor { shape, data });
+        let t = read_tensor(&name, storage(&key)?, &dtype, offset, shape, &stride)?;
+        out.insert(name, t);
     }
     Ok(out)
+}
+
+/// The tensors of a checkpoint that saves a whole model rather than its
+/// state dict (as Ultralytics does), by their dotted names as a state dict
+/// would have them: every parameter and buffer found by walking the
+/// modules' `_modules`, `_parameters` and `_buffers`, in half or full
+/// precision. The model is found under the checkpoint's `ema` or `model`.
+/// Its classes are only named, never run.
+pub fn load_modules(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
+    let (root, files) = open_archive(bytes, true)?;
+    let storage = |key: &str| -> Result<&[u8], String> { files.get(key).map(|b| b.as_slice()).ok_or_else(|| format!("checkpoint is missing storage {key}")) };
+    let Value::Dict(dict) = root else { return Err("checkpoint does not hold a dict".into()) };
+    let model = ["ema", "model"]
+        .iter()
+        .find_map(|want| dict.iter().find(|(k, v)| matches!(k, Value::Str(s) if s == want) && matches!(v, Value::Object { .. })).map(|(_, v)| v))
+        .ok_or("checkpoint holds no model")?;
+    let mut found = Vec::new();
+    walk(model, "", &mut found);
+    let mut out = HashMap::new();
+    for (name, value) in found {
+        let Value::Tensor { key, dtype, offset, shape, stride } = value else { continue };
+        if dtype != "FloatStorage" && dtype != "HalfStorage" {
+            continue;
+        }
+        let t = read_tensor(&name, storage(key)?, dtype, *offset, shape.clone(), stride)?;
+        out.insert(name, t);
+    }
+    if out.is_empty() {
+        return Err("checkpoint holds no tensors".into());
+    }
+    Ok(out)
+}
+
+/// Every tensor under `module`, named by its path.
+fn walk<'a>(module: &'a Value, path: &str, out: &mut Vec<(String, &'a Value)>) {
+    let Value::Object { state, .. } = module else { return };
+    // A module's state is its __dict__, or (dict, slots).
+    let dict = match state.as_ref() {
+        Value::Dict(d) => d,
+        Value::Tuple(parts) => match parts.first() {
+            Some(Value::Dict(d)) => d,
+            _ => return,
+        },
+        _ => return,
+    };
+    let field = |name: &str| dict.iter().find(|(k, _)| matches!(k, Value::Str(s) if s == name)).map(|(_, v)| v);
+    for kind in ["_parameters", "_buffers"] {
+        if let Some(Value::Dict(items)) = field(kind) {
+            for (k, v) in items {
+                if let (Value::Str(name), Value::Tensor { .. }) = (k, v) {
+                    out.push((format!("{path}{name}"), v));
+                }
+            }
+        }
+    }
+    if let Some(Value::Dict(children)) = field("_modules") {
+        for (k, v) in children {
+            if let Value::Str(name) = k {
+                walk(v, &format!("{path}{name}."), out);
+            }
+        }
+    }
+}
+
+/// A tensor's values from its storage, as f32: contiguous, row-major, from
+/// float or half storage.
+fn read_tensor(name: &str, raw: &[u8], dtype: &str, offset: usize, shape: Vec<usize>, stride: &[usize]) -> Result<Tensor, String> {
+    let count: usize = shape.iter().product();
+    let mut expect = 1;
+    for (dim, st) in shape.iter().zip(stride).rev() {
+        if *dim > 1 && *st != expect {
+            return Err(format!("{name}: tensor is not contiguous"));
+        }
+        expect *= dim;
+    }
+    let size = match dtype {
+        "FloatStorage" => 4,
+        "HalfStorage" => 2,
+        other => return Err(format!("{name}: {other} tensors are not supported")),
+    };
+    let start = offset * size;
+    let end = start + count * size;
+    if end > raw.len() {
+        return Err(format!("{name}: storage is too short"));
+    }
+    let bytes = &raw[start..end];
+    let data = if size == 4 {
+        bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+    } else {
+        bytes.chunks_exact(2).map(|b| half_to_f32(u16::from_le_bytes([b[0], b[1]]))).collect()
+    };
+    Ok(Tensor { shape, data })
+}
+
+/// An IEEE half-precision number as f32.
+pub fn half_to_f32(h: u16) -> f32 {
+    let sign = ((h >> 15) & 1) as u32;
+    let exp = ((h >> 10) & 0x1f) as u32;
+    let frac = (h & 0x3ff) as u32;
+    let bits = if exp == 0 {
+        if frac == 0 {
+            sign << 31
+        } else {
+            // Subnormal: normalise it.
+            let mut e = 127 - 15 + 1;
+            let mut f = frac;
+            while f & 0x400 == 0 {
+                f <<= 1;
+                e -= 1;
+            }
+            (sign << 31) | ((e as u32) << 23) | ((f & 0x3ff) << 13)
+        }
+    } else if exp == 0x1f {
+        (sign << 31) | (0xff << 23) | (frac << 13)
+    } else {
+        (sign << 31) | ((exp + 127 - 15) << 23) | (frac << 13)
+    };
+    f32::from_bits(bits)
 }
 
 // ---------------------------------------------------------------- zip
@@ -130,12 +268,29 @@ enum Value {
     Storage(String, String),
     Tensor { key: String, dtype: String, offset: usize, shape: Vec<usize>, stride: Vec<usize> },
     Mark,
+    Float,
+    Bytes,
+    List(Vec<Value>),
+    /// An instance of a class the machine does not know (a module, say), as
+    /// inert data: its class's name and the state BUILD gave it. Nothing of
+    /// the class is ever run.
+    Object {
+        /// Named for debugging; nothing of it is used.
+        #[allow(dead_code)]
+        class: String,
+        state: Box<Value>,
+    },
 }
 
 #[derive(Default)]
 struct Machine {
     stack: Vec<Value>,
     memo: HashMap<usize, Value>,
+    /// Make unknown classes into [`Value::Object`]s rather than refuse
+    /// them: for a checkpoint that saves whole modules.
+    objects: bool,
+    /// Every storage named, with its type, in the order first met.
+    seen: Vec<(String, String)>,
 }
 
 fn ints(v: &Value) -> Result<Vec<usize>, String> {
@@ -158,7 +313,14 @@ impl Machine {
     }
 
     fn run(mut self, code: &[u8]) -> Result<Value, String> {
-        let mut at = 0;
+        self.run_from(code, 0).map(|(v, _)| v)
+    }
+
+    /// Run the pickle that starts at `start`; its value, and where it ends.
+    fn run_from(&mut self, code: &[u8], start: usize) -> Result<(Value, usize), String> {
+        self.stack.clear();
+        self.memo.clear();
+        let mut at = start;
         let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
             let s = code.get(*at..*at + n).ok_or("truncated pickle")?;
             *at += n;
@@ -282,6 +444,9 @@ impl Machine {
                         Some(Value::Int(n)) => n.to_string(),
                         _ => return Err("bad storage key".into()),
                     };
+                    if !self.seen.iter().any(|(k, _)| *k == key) {
+                        self.seen.push((key.clone(), dtype.clone()));
+                    }
                     self.stack.push(Value::Storage(dtype, key));
                 }
                 b'R' => {
@@ -301,6 +466,11 @@ impl Machine {
                             Value::Tensor { key, dtype, offset, shape, stride }
                         }
                         "collections.OrderedDict" => Value::Dict(Vec::new()),
+                        // A Parameter is its tensor.
+                        "torch._utils._rebuild_parameter" | "torch._utils._rebuild_parameter_with_state" if self.objects => {
+                            args.into_iter().next().ok_or("parameter without a tensor")?
+                        }
+                        other if self.objects => Value::Object { class: other.to_string(), state: Box::new(Value::None) },
                         other => return Err(format!("checkpoint calls {other}, which is not allowed")),
                     };
                     self.stack.push(value);
@@ -323,9 +493,88 @@ impl Machine {
                 }
                 b'b' => {
                     // BUILD: state for an object; dicts and tensors ignore it.
-                    self.pop()?;
+                    let state = self.pop()?;
+                    if let Some(Value::Object { state: slot, .. }) = self.stack.last_mut() {
+                        **slot = state;
+                    }
                 }
-                b'.' => return self.pop(),
+                0x81 | 0x92 if self.objects => {
+                    // NEWOBJ / NEWOBJ_EX: an instance, made inert.
+                    if op == 0x92 {
+                        self.pop()?; // kwargs
+                    }
+                    self.pop()?; // args
+                    let class = match self.pop()? {
+                        Value::Global(name) => name,
+                        _ => "object".to_string(),
+                    };
+                    self.stack.push(Value::Object { class, state: Box::new(Value::None) });
+                }
+                0x95 => {
+                    take(&mut at, 8)?; // FRAME
+                }
+                b'G' => {
+                    take(&mut at, 8)?;
+                    self.stack.push(Value::Float);
+                }
+                b']' => self.stack.push(Value::List(Vec::new())),
+                b'a' => {
+                    let v = self.pop()?;
+                    if let Some(Value::List(l)) = self.stack.last_mut() {
+                        l.push(v);
+                    }
+                }
+                b'e' => {
+                    let items = self.pop_mark()?;
+                    if let Some(Value::List(l)) = self.stack.last_mut() {
+                        l.extend(items);
+                    }
+                }
+                0x8f => self.stack.push(Value::List(Vec::new())), // EMPTY_SET
+                0x90 => {
+                    // ADDITEMS
+                    self.pop_mark()?;
+                }
+                0x91 => {
+                    // FROZENSET
+                    self.pop_mark()?;
+                    self.stack.push(Value::List(Vec::new()));
+                }
+                b'B' | 0x8e => {
+                    let n = if op == b'B' { 4 } else { 8 };
+                    let b = take(&mut at, n)?;
+                    let mut len = 0usize;
+                    for (i, byte) in b.iter().enumerate() {
+                        len |= (*byte as usize) << (8 * i);
+                    }
+                    take(&mut at, len)?;
+                    self.stack.push(Value::Bytes);
+                }
+                b'C' => {
+                    let n = take(&mut at, 1)?[0] as usize;
+                    take(&mut at, n)?;
+                    self.stack.push(Value::Bytes);
+                }
+                0x8d => {
+                    // BINUNICODE8
+                    let b = take(&mut at, 8)?;
+                    let n = u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as usize;
+                    let s = take(&mut at, n)?;
+                    self.stack.push(Value::Str(String::from_utf8_lossy(s).into_owned()));
+                }
+                b'I' | b'L' | b'F' | b'V' | b'S' => {
+                    // Text forms of numbers and strings (protocol 0).
+                    let rest = &code[at..];
+                    let end = rest.iter().position(|&c| c == b'\n').ok_or("bad text value")?;
+                    let text = String::from_utf8_lossy(&rest[..end]).into_owned();
+                    at += end + 1;
+                    self.stack.push(match op {
+                        b'I' | b'L' => text.trim_end_matches('L').parse().map(Value::Int).unwrap_or(Value::Bool),
+                        b'F' => Value::Float,
+                        _ => Value::Str(text.trim_matches(|c| c == '\'' || c == '"').to_string()),
+                    });
+                }
+                b'.' => return Ok((self.pop()?, at)),
                 other => return Err(format!("unsupported pickle opcode 0x{other:02x}")),
             }
         }
@@ -376,6 +625,15 @@ mod tests {
         out.extend_from_slice(&dir_at.to_le_bytes());
         out.extend_from_slice(&[0, 0]);
         out
+    }
+
+    #[test]
+    fn half_precision_reads_as_float() {
+        assert_eq!(half_to_f32(0x3c00), 1.0);
+        assert_eq!(half_to_f32(0xc000), -2.0);
+        assert_eq!(half_to_f32(0x3555), 0.33325195);
+        assert_eq!(half_to_f32(0x0001), 5.9604645e-8);
+        assert_eq!(half_to_f32(0), 0.0);
     }
 
     #[test]

@@ -139,6 +139,7 @@ class RemixTicket {
     this.jobs = const [],
     Stream<String>? finished,
     void Function()? stop,
+    this.remaining,
   })  : finished = finished ?? const Stream.empty(),
         stop = stop ?? _nothing;
 
@@ -163,6 +164,11 @@ class RemixTicket {
   /// Each of [jobs] once it is dealt with (its pictures handed on, or its
   /// failure), so a wait picked up later does not fetch it again.
   final Stream<String> finished;
+
+  /// How many renders are still to come back, when that is not one per
+  /// picture in [results]: a hires fix in tiles brings back one picture
+  /// from many renders.
+  final Stream<int>? remaining;
 
   /// Stop asking the server. Cancelling [results] alone is not enough: the
   /// stream only notices at its next picture, and until then would go on
