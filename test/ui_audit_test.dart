@@ -82,9 +82,9 @@ void main() {
   });
 
   Future<AppState> launch(WidgetTester tester, Size size) async {
-    // Real shadows in the pictures; back as the test framework wants them after.
+    // Real shadows in the pictures; put back in close(), before the test
+    // framework checks they were.
     debugDisableShadows = false;
-    addTearDown(() => debugDisableShadows = true);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -113,6 +113,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     state.dispose();
     await tester.pump(const Duration(seconds: 5));
+    debugDisableShadows = true;
   }
 
   int indexOf(AppState state, String name) {
