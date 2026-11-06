@@ -1,0 +1,56 @@
+# TEMPORARY (removed before merge): runs the analyzer and the screenshot
+# tests for the generation tools, and pushes their output and screenshots to
+# the gen-tools-shots branch, where they can be read without the Actions
+# artifact store.
+name: gen-tools-shots
+on:
+  push:
+    branches: [feat/generation-tools]
+permissions:
+  contents: write
+concurrency:
+  group: gen-tools-shots
+  cancel-in-progress: true
+env:
+  FLUTTER_VERSION: 3.47.7
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv ffmpeg
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build core
+        working-directory: core
+        run: cargo build --release --lib
+      - name: Sample images
+        run: git clone --depth 1 https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
+      - name: Analyze and test
+        env:
+          GV_SCREENSHOT_DIR: ${{ github.workspace }}/out/screens
+          GV_SAMPLE_DIR: ${{ runner.temp }}/samples
+        run: |
+          mkdir -p out/screens
+          flutter pub get > out/pub.txt 2>&1 || true
+          flutter analyze > out/analyze.txt 2>&1 || true
+          tests=$(ls test/ui_audit_test.dart test/gen_tools_test.dart 2>/dev/null)
+          timeout 40m flutter test --reporter expanded $tests > out/test.txt 2>&1 || true
+          echo "${{ github.sha }}" > out/RUN.txt
+          tail -5 out/test.txt
+      - name: Publish the report
+        if: always()
+        run: |
+          cd out
+          git init -q -b gen-tools-shots
+          git -c user.name=ci -c user.email=ci@localhost add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "report ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gen-tools-shots
