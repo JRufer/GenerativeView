@@ -121,8 +121,10 @@ void main() {
       expect(red(10, 32), 255);
       expect(red(50, 32), lessThan(255));
     });
+  });
 
-    test('a smear patch lands where it should, its soft edge keeping its color', () async {
+  testWidgets('a smear patch lands where it should, its soft edge keeping its color', (tester) async {
+    await tester.runAsync(() async {
       final done = Completer<ui.Image>();
       // Premultiplied: half covered, full red.
       decodeImageFromPixels(Uint8List.fromList([128, 0, 0, 128]), 1, 1, PixelFormat.rgba8888, done.complete);
