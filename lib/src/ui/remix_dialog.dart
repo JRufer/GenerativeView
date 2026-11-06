@@ -7,7 +7,8 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../core/backends.dart';
 import '../core/presets.dart';
-import '../core/recipe_graphs.dart' show modelKey;
+import '../core/recipe_graphs.dart' show findModel, modelKey;
+import '../core/server_loras.dart';
 import '../core/civitai.dart';
 import '../core/lora_edits.dart';
 import '../core/models.dart';
@@ -24,6 +25,7 @@ import 'meta_panel.dart' show copyText, toast;
 import 'presets_ui.dart';
 import 'prompt_editor.dart';
 import 'kit.dart';
+import 'lora_picker.dart';
 import 'sheet.dart';
 import 'wildcards_ui.dart';
 
@@ -163,6 +165,85 @@ class _RemixPanelState extends State<RemixPanel> {
 
   /// The models on the chosen server; null while asking or if it cannot say.
   List<String>? _serverModels;
+  List<ServerModel>? _serverMains;
+
+  /// The chosen server's LoRAs, asked for the first time they are wanted.
+  Future<List<ServerModel>>? _serverLoraList;
+
+  /// What the server's LoRAs turned out to be, once known: for the notes on
+  /// added LoRAs made for another kind of model.
+  List<ServerModel>? _serverLorasKnown;
+
+  /// The kind of model the remix renders with ([familyNames]); null while
+  /// working it out or if it cannot be told.
+  String? _family;
+  int _familyTick = 0;
+
+  /// The keys of the picture's own LoRAs; any other in [_loras] was added.
+  late final Set<String> _ownLoras = {for (final l in widget.info.loras) modelKey(l.name)};
+
+  Set<String> get _addedLoras => {for (final l in _loras) if (!_ownLoras.contains(l.key)) l.key};
+
+  Future<List<ServerModel>> _installedLoras() {
+    final kind = _backend;
+    final base = kind == null ? '' : (widget.state.backendUrls[kind] ?? '');
+    if (kind == null || base.isEmpty) return Future.value(const []);
+    final asked = _serverLoraList ??= serverLoras(kind, base);
+    asked.then((list) {
+      if (mounted && identical(asked, _serverLoraList)) setState(() => _serverLorasKnown = list);
+    }, onError: (_) {
+      // Ask again next time.
+      if (identical(asked, _serverLoraList)) _serverLoraList = null;
+    });
+    return asked;
+  }
+
+  /// Work out [_family] for the model chosen now.
+  Future<void> _resolveFamily() async {
+    final kind = _backend;
+    final base = kind == null ? '' : (widget.state.backendUrls[kind] ?? '');
+    final mains = _serverMains;
+    final tick = ++_familyTick;
+    if (kind == null || base.isEmpty || mains == null) return;
+    final chosen = _model;
+    String? family;
+    try {
+      family = chosen == null
+          ? await pictureModelFamily(kind, base, info, mains, _installedLoras)
+          : await modelFamily(kind, base, mains.firstWhere((m) => m.name == chosen, orElse: () => ServerModel(chosen)));
+    } catch (_) {
+      family = null;
+    }
+    if (!mounted || tick != _familyTick) return;
+    setState(() => _family = family);
+  }
+
+  Future<void> _addLora() async {
+    final picked = await pickLora(
+      context,
+      loras: _installedLoras(),
+      family: _family,
+      model: _model ?? info.model,
+      have: {for (final l in _loras) l.key},
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _loras.add(LoraChoice(LoraRef(picked.name, 1.0, null, ''))));
+  }
+
+  /// Warnings for added LoRAs made for another kind of model than the one
+  /// rendered with (the model was changed after adding them, say).
+  Map<String, String> get _loraNotes {
+    final family = _family;
+    final known = _serverLorasKnown;
+    if (family == null || known == null) return const {};
+    final added = _addedLoras;
+    return {
+      for (final l in _loras)
+        if (added.contains(l.key))
+          if (findModel(l.original.name, known, (m) => [m.name]) case final m? when m.family != null && m.family != family)
+            l.key: 'Made for ${familyLabel(m.family!)}, not ${familyLabel(family)}; the server will skip it',
+    };
+  }
 
   /// The model to use instead of the picture's, as the server names it.
   String? _model;
@@ -175,16 +256,22 @@ class _RemixPanelState extends State<RemixPanel> {
     final base = kind == null ? '' : (widget.state.backendUrls[kind] ?? '');
     setState(() {
       _serverModels = null;
+      _serverMains = null;
+      _serverLoraList = null;
+      _serverLorasKnown = null;
+      _family = null;
       _model = null;
     });
     if (kind == null || base.isEmpty) return;
     try {
-      final names = await serverModels(kind, base);
+      final mains = await serverMainModels(kind, base);
       if (!mounted || kind != _backend) return;
       setState(() {
-        _serverModels = names;
+        _serverMains = mains;
+        _serverModels = [for (final m in mains) m.name];
         _takePresetModel();
       });
+      unawaited(_resolveFamily());
     } catch (_) {
       // Not reachable: Send will say so.
     }
@@ -251,6 +338,7 @@ class _RemixPanelState extends State<RemixPanel> {
       if (preset.cfg case final cfg?) _sampling.cfg = cfg;
       applyPresetLoras(_loras, preset.loras);
     });
+    _resolveFamily();
   }
 
   void _undoPreset() {
@@ -277,6 +365,7 @@ class _RemixPanelState extends State<RemixPanel> {
       _beforePreset = null;
       _presetTick++;
     });
+    _resolveFamily();
   }
 
   /// A preset of what is in the panel now, to pick from in the Save panel.
@@ -317,7 +406,10 @@ class _RemixPanelState extends State<RemixPanel> {
               for (final name in names)
                 if (name != own) DropdownMenuItem<String?>(value: name, child: Text(modelKey(name), overflow: TextOverflow.ellipsis)),
             ],
-            onChanged: (value) => setState(() => _model = value),
+            onChanged: (value) {
+              setState(() => _model = value);
+              _resolveFamily();
+            },
           ),
           if (missing)
             Text(
@@ -705,7 +797,16 @@ Widget build(BuildContext context) {
         ),
       SamplingSection(key: ValueKey<String>('remix-sampling-$_presetTick'), choice: _sampling),
       _modelRow(),
-      if (_loras.isNotEmpty) LoraSection(key: ValueKey<String>('remix-loras-$_presetTick'), loras: _loras, prompt: _prompt),
+      if (_loras.isNotEmpty || _serverMains != null)
+        LoraSection(
+          key: ValueKey<String>('remix-loras-$_presetTick'),
+          loras: _loras,
+          prompt: _prompt,
+          onAddLora: _serverMains == null ? null : _addLora,
+          added: _addedLoras,
+          notes: _loraNotes,
+          onRemove: (i) => setState(() => _loras.removeAt(i)),
+        ),
       if (widget.state.regionFinder != null)
         FoldSection(
           key: const ValueKey<String>('remix-detail'),
@@ -1679,8 +1780,28 @@ class _SamplingSectionState extends State<SamplingSection> {
 /// pointed out, on its row and, folded, beside the heading. What was found
 /// is remembered while the app is open, so the next remix shows it at once.
 class LoraSection extends StatefulWidget {
-  const LoraSection({super.key, required this.loras, this.prompt, this.lookUp});
+  const LoraSection({
+    super.key,
+    required this.loras,
+    this.prompt,
+    this.lookUp,
+    this.onAddLora,
+    this.added = const {},
+    this.onRemove,
+    this.notes = const {},
+  });
   final List<LoraChoice> loras;
+
+  /// Pick another LoRA from the server's to add; null for no Add button.
+  final VoidCallback? onAddLora;
+
+  /// Keys ([LoraChoice.key]) of the LoRAs added here, not the picture's own:
+  /// marked so, and removable with [onRemove].
+  final Set<String> added;
+  final ValueChanged<int>? onRemove;
+
+  /// A warning under a LoRA, by key: made for another kind of model, say.
+  final Map<String, String> notes;
 
   /// The prompt being edited, to check and add trigger words to.
   final TextEditingController? prompt;
@@ -1706,9 +1827,13 @@ class _Triggers {
 }
 
 class _LoraSectionState extends State<LoraSection> {
-  late final List<_Triggers> _triggers = [
-    for (final l in widget.loras) _cached(l.original),
-  ];
+  /// What is known of each LoRA's trigger words, by [LoraChoice.key]: LoRAs
+  /// can be added and removed while the section is open.
+  final Map<String, _Triggers> _byKey = {};
+
+  _Triggers _t(int i) => _byKey[widget.loras[i].key] ??= _cached(widget.loras[i].original);
+
+  Iterable<_Triggers> get _all => [for (var i = 0; i < widget.loras.length; i++) _t(i)];
 
   /// What lookups found while the app has been open, by name and hash.
   static final Map<String, CivitaiModel?> _known = {};
@@ -1737,15 +1862,16 @@ class _LoraSectionState extends State<LoraSection> {
     if (mounted) setState(() {});
   }
 
-  bool get _looking => _triggers.any((t) => t.looking);
+  bool get _looking => _all.any((t) => t.looking);
 
   Future<void> _check() async {
     final lookUp = widget.lookUp ?? lookUpModel;
     await Future.wait([
       for (var i = 0; i < widget.loras.length; i++)
         () async {
-          if (_triggers[i].found) return;
-          setState(() => _triggers[i] = const _Triggers(looking: true));
+          if (_t(i).found) return;
+          final key = widget.loras[i].key;
+          setState(() => _byKey[key] = const _Triggers(looking: true));
           final lora = widget.loras[i].original;
           _Triggers result;
           try {
@@ -1755,7 +1881,7 @@ class _LoraSectionState extends State<LoraSection> {
           } catch (e) {
             result = _Triggers(error: '$e');
           }
-          if (mounted) setState(() => _triggers[i] = result);
+          if (mounted) setState(() => _byKey[key] = result);
         }(),
     ]);
   }
@@ -1765,7 +1891,7 @@ class _LoraSectionState extends State<LoraSection> {
   bool _missing(int i) {
     final prompt = widget.prompt;
     if (prompt == null || !widget.loras[i].enabled) return false;
-    final words = _triggers[i].words;
+    final words = _t(i).words;
     return words.isNotEmpty && !words.any((w) => triggerPresent(prompt.text, w));
   }
 
@@ -1782,16 +1908,25 @@ class _LoraSectionState extends State<LoraSection> {
     final changed = loras.where((l) => l.changed).length;
     final off = loras.where((l) => !l.enabled).length;
     final missing = [for (var i = 0; i < loras.length; i++) if (_missing(i)) i].length;
-    final summary = [
-      '${loras.length}',
-      if (off > 0) '$off off',
-      if (changed - off > 0) '${changed - off} changed',
-    ].join(' · ');
-    final unchecked = widget.prompt != null && _triggers.any((t) => !t.found);
+    final added = loras.where((l) => widget.added.contains(l.key)).length;
+    final summary = loras.isEmpty
+        ? 'None'
+        : [
+            '${loras.length}',
+            if (added > 0) '$added added',
+            if (off > 0) '$off off',
+            if (changed - off > 0) '${changed - off} changed',
+          ].join(' · ');
+    final unchecked = widget.prompt != null && _all.any((t) => !t.found);
     final rows = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (unchecked || _looking)
+              if (loras.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text('The picture was made without LoRAs.', style: TextStyle(fontSize: 12, color: Palette.faint)),
+                ),
+              if (loras.isNotEmpty && (unchecked || _looking))
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Row(
@@ -1819,11 +1954,26 @@ class _LoraSectionState extends State<LoraSection> {
                   key: ValueKey<String>('remix-lora-$i'),
                   index: i,
                   choice: loras[i],
-                  triggers: _triggers[i],
+                  triggers: _t(i),
                   prompt: widget.prompt?.text,
                   missing: _missing(i),
                   onAdd: _add,
+                  added: widget.added.contains(loras[i].key),
+                  note: widget.notes[loras[i].key],
+                  onRemove: widget.onRemove == null || !widget.added.contains(loras[i].key)
+                      ? null
+                      : () => widget.onRemove!(i),
                   onChanged: () => setState(() {}),
+                ),
+              if (widget.onAddLora != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const ValueKey<String>('remix-lora-add'),
+                    onPressed: widget.onAddLora,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add LoRA'),
+                  ),
                 ),
             ],
           );
@@ -1832,7 +1982,7 @@ class _LoraSectionState extends State<LoraSection> {
       label: 'LoRAs',
       summary: summary,
       summaryKey: const ValueKey<String>('remix-loras-summary'),
-      highlight: changed > 0,
+      highlight: changed > 0 || added > 0,
       extra: missing == 0
           ? null
           : Row(
@@ -1867,9 +2017,21 @@ class _LoraRow extends StatelessWidget {
     this.prompt,
     this.missing = false,
     this.onAdd,
+    this.added = false,
+    this.note,
+    this.onRemove,
   });
   final int index;
   final LoraChoice choice;
+
+  /// Added in the panel rather than one the picture was made with.
+  final bool added;
+
+  /// A warning to show under it.
+  final String? note;
+
+  /// Take it out again; for an added one.
+  final VoidCallback? onRemove;
   final VoidCallback onChanged;
   final _Triggers triggers;
 
@@ -1923,6 +2085,17 @@ class _LoraRow extends StatelessWidget {
                   ),
                 ),
               ),
+              if (added)
+                Container(
+                  key: ValueKey<String>('remix-lora-added-$index'),
+                  margin: const EdgeInsets.only(left: 6, right: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Palette.accent.withValues(alpha: 0.6)),
+                  ),
+                  child: const Text('added', style: TextStyle(fontSize: 10.5, color: Palette.accent)),
+                ),
               if (c.enabled) ...[
                 Text(
                   weightText(c.weight),
@@ -1954,6 +2127,14 @@ class _LoraRow extends StatelessWidget {
                       )
                     : null,
               ),
+              if (onRemove != null)
+                IconButton(
+                  key: ValueKey<String>('remix-lora-remove-$index'),
+                  tooltip: 'Take this LoRA out',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: onRemove,
+                ),
               Switch(
                 key: ValueKey<String>('remix-lora-switch-$index'),
                 value: c.enabled,
@@ -1974,6 +2155,19 @@ class _LoraRow extends StatelessWidget {
               onChanged();
             },
           ),
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 2),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, size: 14, color: _warn),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(note!, key: ValueKey<String>('remix-lora-note-$index'), style: const TextStyle(fontSize: 11.5, color: _warn)),
+                  ),
+                ],
+              ),
+            ),
           ?_triggerLine(),
         ],
       ),

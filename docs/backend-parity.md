@@ -64,6 +64,8 @@ Krea 2 picture, and a Forge picture:
 - [ ] Size slider stops only on sizes the server takes; the aspect lock holds
 - [ ] Steps and CFG, by slider and typed
 - [ ] LoRA section: one switched off, one reweighted
+- [ ] Add LoRA lists only the server's LoRAs made for the chosen model's kind
+      (SDXL, Krea 2…), the rest behind "can't be checked"; an added one renders
 - [ ] Image to image at a few strengths
 - [ ] Mask painted, then traced, only that area redrawn
 - [ ] Hires fix (upscale, then refine on ComfyUI) at the same size, 1.5× and 2×
