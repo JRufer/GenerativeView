@@ -435,6 +435,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
                 ),
               ),
           ],
+          if (!_detailOnly) ...[
           const PanelHeading('Metadata'),
           Wrap(
             spacing: 8,
@@ -465,10 +466,21 @@ class _UpscalePanelState extends State<UpscalePanel> {
               style: const TextStyle(fontSize: 12, color: Palette.faint, height: 1.35),
             ),
           ),
+          ],
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              ownSize
+              _detailOnly
+                  ? (many
+                        ? '${widget.items.length} pictures, one after another, each saved beside its original as name_detail1, in ${AppState.upscaleCollection}'
+                        : 'Saved as ${_stem(item.name)}_detail1, with its own prompt and settings, in ${AppState.upscaleCollection}')
+                  : _detailOn && !refine && _factor != null
+                  ? (many
+                        ? '${widget.items.length} pictures, one after another: each upscaled here (not kept), its faces and hands redrawn '
+                              'on ${backendNames[_server]}, and saved beside its original as name_detail1, in ${AppState.upscaleCollection}'
+                        : 'Upscaled here to ${scaleText(factor)}x (not kept), faces and hands redrawn on ${backendNames[_server]}, '
+                              'and saved as ${_stem(item.name)}_detail1, in ${AppState.upscaleCollection}')
+                  : ownSize
                   ? (many
                         ? '${widget.items.length} pictures, one after another: each sent to ${backendNames[_server]} at its own size, '
                               'nothing upscaled here, and saved beside its original as name_hires1, in ${AppState.upscaleCollection}'
