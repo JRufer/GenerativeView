@@ -101,6 +101,8 @@ jobs:
         env:
           GV_SCREENSHOT_DIR: ${{ github.workspace }}/out/screens
           GV_SAMPLE_DIR: ${{ runner.temp }}/samples
+          GV_DETAIL_MODELS: ${{ runner.temp }}/detail
+          GV_SAM_MODEL: ${{ runner.temp }}/sam/model.safetensors
         run: |
           mkdir -p out/screens
           flutter pub get > out/pub.txt 2>&1 || true

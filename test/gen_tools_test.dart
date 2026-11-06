@@ -408,6 +408,75 @@ void main() {
     await close(tester, state);
   });
 
+  // With the real models (CI fetches them into GV_DETAIL_MODELS and
+  // GV_SAM_MODEL): put where the app keeps them, so the app's own finder and
+  // selector are used, not the stand-ins.
+  final detailModels = Platform.environment['GV_DETAIL_MODELS'] ?? '';
+  final samModel = Platform.environment['GV_SAM_MODEL'] ?? '';
+  final noModels = skip || detailModels.isEmpty || samModel.isEmpty;
+
+  Future<AppState> launchReal(WidgetTester tester, Size size) async {
+    for (final rel in ['retinaface/mobilenet0.25_Final.pth', 'anime_face_v1.4_n/model.pt', 'anime_hand_v1.0_n/model.pt']) {
+      final to = File('${scratch.path}/data/models/detail/$rel');
+      if (!to.existsSync()) {
+        to.parent.createSync(recursive: true);
+        File('$detailModels/$rel').copySync(to.path);
+      }
+    }
+    final sam = File('${scratch.path}/data/models/mobilesam/model.safetensors');
+    if (!sam.existsSync()) {
+      sam.parent.createSync(recursive: true);
+      File(samModel).copySync(sam.path);
+    }
+    debugDisableShadows = false;
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final state = AppState(core: core, thumbs: ThumbCache(core, maxBytes: 128 << 20));
+    await tester.pumpWidget(RepaintBoundary(key: boundary, child: GenerativeViewApp(state: state)));
+    var done = false;
+    state.restore(initialFolder: library.path).whenComplete(() => done = true);
+    await pumpUntil(tester, () => done, what: 'the folder to open');
+    if (state.leftOpen && state.narrowLayout) state.toggleLeft();
+    await pumpUntil(tester, () => state.items.length >= 8 && !state.scan.value.running, what: 'the pictures', timeout: const Duration(minutes: 2));
+    state.setBackendUrl('comfyui', 'http://127.0.0.1:8188');
+    await pumpUntil(tester, () => state.regionFinder!.model.installed, what: 'the finder models to be known');
+    return state;
+  }
+
+  for (final (name, size) in [('fold-closed', foldClosed), ('tab', tabUltra)]) {
+    testWidgets('the real models: select and faces, on the $name', skip: noModels, (tester) async {
+      final state = await launchReal(tester, size);
+      final girl = item(state, 'girl_in_field.png');
+      final selector = state.objectSelectorFor!(girl.path);
+      await pumpUntil(tester, () => selector.model.installed, what: 'the selection model to be known');
+      editMask(ctx(tester), path: girl.path, name: girl.name, aspect: 1, ops: const [], state: state, pixels: const Size(1024, 1024), selector: selector, canExtend: true);
+      await pumpUntil(tester, () => find.byKey(const ValueKey('mask-canvas')).evaluate().isNotEmpty, what: 'the mask editor');
+      await tap(tester, find.text('Mask'));
+      await tap(tester, find.text('Select'));
+      // Tap her face, then her robe.
+      final r = tester.getRect(find.byKey(const ValueKey('mask-canvas')));
+      final side = math.min(r.width, r.height);
+      final pic = Rect.fromCenter(center: r.center, width: side, height: side);
+      for (final (fx, fy) in [(0.51, 0.37), (0.5, 0.7)]) {
+        await tester.tapAt(Offset(pic.left + fx * side, pic.top + fy * side));
+        await pumpUntil(tester, () => find.byKey(const ValueKey('mask-selecting')).evaluate().isEmpty, what: 'the outline', timeout: const Duration(seconds: 60));
+      }
+      await shot(tester, 'real-select-$name');
+      await tester.tap(find.byKey(const ValueKey('mask-cancel')));
+      await settle(tester);
+      openUpscale(ctx(tester), state, girl, detail: true);
+      await pumpUntil(tester, () => find.textContaining('Found ').evaluate().isNotEmpty, what: 'faces found', timeout: const Duration(seconds: 60));
+      await tester.ensureVisible(find.byKey(const ValueKey('detail-preview')));
+      await shot(tester, 'real-faces-$name');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await settle(tester);
+      await close(tester, state);
+    });
+  }
+
   for (final (name, size) in [('fold-closed', foldClosed), ('fold-open', foldOpen), ('tab', tabUltra)]) {
     testWidgets('wildcards in remix, on the $name', skip: skip, (tester) async {
       final state = await launch(tester, size);
