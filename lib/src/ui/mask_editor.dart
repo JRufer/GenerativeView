@@ -114,6 +114,43 @@ class Extension {
   /// Reaching out evenly to the shape [target] (width over height), from a
   /// picture shaped [aspect]: the sides grow if it is wider, else the top
   /// and bottom.
+  /// The canvas's width and height, for a picture shaped [aspect], in
+  /// units of the picture's height.
+  (double, double) canvasOf(double aspect) => (aspect * (1 + left + right), 1 + top + bottom);
+
+  /// The canvas [w] by [h] (in units of the picture's height, for a
+  /// picture shaped [aspect]), placed so the picture keeps where it sits
+  /// in this one as far as it can: each new length is shared out between
+  /// the two sides as they share it now, evenly if neither has any. The
+  /// canvas holds the picture, and no side goes past [most].
+  Extension resized(double aspect, double w, double h) {
+    (double, double) share(double extra, double a, double b, double most) {
+      extra = extra.clamp(0.0, 2 * most);
+      var first = a + b > 1e-9 ? extra * a / (a + b) : extra / 2;
+      first = first.clamp(math.max(0.0, extra - most), math.min(most, extra));
+      return (first, extra - first);
+    }
+
+    final (l, r) = share(w - aspect, left * aspect, right * aspect, most * aspect);
+    final (t, b) = share(h - 1, top, bottom, most);
+    return Extension(left: l / aspect, right: r / aspect, top: t, bottom: b, blend: blend);
+  }
+
+  /// This canvas taken to the shape [target] (width over height), for a
+  /// picture shaped [aspect]: its longer side keeps its length and the
+  /// other is made to fit, grown if need be to hold the picture, and
+  /// shrunk if a side would go past [most].
+  Extension fitTo(double aspect, double target) {
+    final (cw, ch) = canvasOf(aspect);
+    final long = math.max(cw, ch);
+    var (w, h) = target >= 1 ? (long, long / target) : (long * target, long);
+    final up = math.max(1.0, math.max(aspect / w, 1 / h));
+    w *= up;
+    h *= up;
+    final down = math.min(1.0, math.min(aspect * (1 + 2 * most) / w, (1 + 2 * most) / h));
+    return resized(aspect, w * down, h * down);
+  }
+
   static Extension toAspect(double aspect, double target, {int blend = 32}) {
     if (target >= aspect) {
       final extra = (target / aspect - 1).clamp(0.0, 2 * most);
@@ -122,6 +159,28 @@ class Extension {
     final extra = (aspect / target - 1).clamp(0.0, 2 * most);
     return Extension(top: extra / 2, bottom: extra / 2, blend: blend);
   }
+}
+
+/// [start] resized by dragging its [corner] (0 top left, 1 top right,
+/// 2 bottom right, 3 bottom left) by [moved] (in widths of the picture,
+/// which is shaped [aspect]), keeping the canvas's shape: it grows or
+/// shrinks about the opposite corner, as far as the drag reaches along
+/// the canvas's diagonal, never smaller than the picture and no side past
+/// [Extension.most].
+Extension cornerResize(Extension start, double aspect, int corner, Offset moved) {
+  final (w0, h0) = start.canvasOf(aspect);
+  final leftSide = corner == 0 || corner == 3, topSide = corner == 0 || corner == 1;
+  // In units of the picture's height, as the canvas is measured.
+  final dx = moved.dx * aspect, dy = moved.dy * aspect;
+  final w1 = w0 + (leftSide ? -dx : dx), h1 = h0 + (topSide ? -dy : dy);
+  final fixedX = (leftSide ? start.right : start.left) * aspect;
+  final fixedY = topSide ? start.bottom : start.top;
+  final lo = math.max((aspect + fixedX) / w0, (1 + fixedY) / h0);
+  final hi = math.min((aspect * (1 + Extension.most) + fixedX) / w0, (1 + Extension.most + fixedY) / h0);
+  final s = ((w1 * w0 + h1 * h0) / (w0 * w0 + h0 * h0)).clamp(lo, math.max(lo, hi));
+  final x = (w0 * s - aspect - fixedX) / aspect, y = h0 * s - 1 - fixedY;
+  final across = leftSide ? start.copyWith(left: x) : start.copyWith(right: x);
+  return topSide ? across.copyWith(top: y) : across.copyWith(bottom: y);
 }
 
 /// The brush radius under pen [pressure] (0 to 1): from 1 at the lightest
@@ -1127,6 +1186,14 @@ class _MaskEditorState extends State<MaskEditor> {
   Extension? _edgeStart;
   double _edgeScale = 1;
 
+  /// The shape (width over height) the canvas is held to once one is
+  /// picked: its corners then resize it, keeping that shape.
+  double? _locked;
+
+  /// The corner being dragged while the shape is held (0 top left, 1 top
+  /// right, 2 bottom right, 3 bottom left).
+  int? _corner;
+
   /// Room round the canvas while extending, to take hold of its edges.
   double get _gutter => _layer == MaskLayer.extend ? 30 : 0;
 
@@ -1169,6 +1236,27 @@ class _MaskEditorState extends State<MaskEditor> {
     return d[best] <= reach ? best : null;
   }
 
+  /// The corner of the canvas near [local], if one is near enough to take.
+  int? _cornerAt(Offset local) {
+    final f = _frame;
+    const reach = 34.0;
+    final corners = [f.topLeft, f.topRight, f.bottomRight, f.bottomLeft];
+    var best = 0;
+    for (var i = 1; i < 4; i++) {
+      if ((corners[i] - local).distance < (corners[best] - local).distance) best = i;
+    }
+    return (corners[best] - local).distance <= reach ? best : null;
+  }
+
+  /// A corner dragged while the shape is held: the canvas grows or shrinks
+  /// about the opposite corner, keeping its shape, always holding the
+  /// picture.
+  void _dragCorner(Offset local) {
+    final from = _edgeFrom, start = _edgeStart, corner = _corner;
+    if (from == null || start == null || corner == null) return;
+    setState(() => _ext = cornerResize(start, widget.aspect > 0 ? widget.aspect : 1.0, corner, (local - from) / _edgeScale));
+  }
+
   void _dragEdge(Offset local) {
     final from = _edgeFrom, start = _edgeStart, side = _edge;
     if (from == null || start == null || side == null) return;
@@ -1188,8 +1276,10 @@ class _MaskEditorState extends State<MaskEditor> {
   /// canvas moved) or selecting (a tap, unless it turns into a drag).
   void _beginEdgeOrTap(PointerDownEvent e) {
     if (_layer == MaskLayer.extend) {
-      final side = _edgeAt(e.localPosition);
-      if (side != null) {
+      final corner = _locked != null ? _cornerAt(e.localPosition) : null;
+      final side = _locked == null ? _edgeAt(e.localPosition) : null;
+      if (corner != null || side != null) {
+        _corner = corner;
         _edge = side;
         _edgePointer = e.pointer;
         _edgeFrom = e.localPosition;
@@ -1504,7 +1594,11 @@ class _MaskEditorState extends State<MaskEditor> {
       return;
     }
     if (e.pointer == _edgePointer) {
-      _dragEdge(e.localPosition);
+      if (_corner != null) {
+        _dragCorner(e.localPosition);
+      } else {
+        _dragEdge(e.localPosition);
+      }
       return;
     }
     if (e.pointer == _tapPointer && _tapAt != null && (e.localPosition - _tapAt!).distance > 10) {
@@ -1550,6 +1644,7 @@ class _MaskEditorState extends State<MaskEditor> {
     if (e.pointer == _edgePointer) {
       setState(() {
         _edge = null;
+        _corner = null;
         _edgePointer = null;
         _edgeFrom = null;
         _edgeStart = null;
@@ -1812,7 +1907,8 @@ class _MaskEditorState extends State<MaskEditor> {
                             blend: _ext.any ? _ext.blend * r.width / math.max(1, widget.pixels?.width ?? 1024) : 0,
                             showMask: _layer != MaskLayer.color,
                             handles: _layer == MaskLayer.extend,
-                            dragging: _edge,
+                            corners: _locked != null,
+                            dragging: _locked != null ? _corner : _edge,
                           ),
                         ),
                       ),
@@ -2082,16 +2178,29 @@ class _MaskEditorState extends State<MaskEditor> {
     final px = widget.pixels;
     final w = (px?.width ?? 1024).round(), h = (px?.height ?? (1024 / a)).round();
     final (nw, nh) = _ext.sizeOf(w, h);
-    final shapes = <(String, Extension)>[
-      ('Square', Extension.toAspect(a, 1, blend: _ext.blend)),
-      ('4:3', Extension.toAspect(a, 4 / 3, blend: _ext.blend)),
-      ('3:4', Extension.toAspect(a, 3 / 4, blend: _ext.blend)),
-      ('16:9', Extension.toAspect(a, 16 / 9, blend: _ext.blend)),
-      ('9:16', Extension.toAspect(a, 9 / 16, blend: _ext.blend)),
-      ('All round', Extension(left: 0.125, top: 0.125, right: 0.125, bottom: 0.125, blend: _ext.blend)),
-    ];
+    const shapes = <(String, double)>[('Square', 1), ('4:3', 4 / 3), ('3:4', 3 / 4), ('16:9', 16 / 9), ('9:16', 9 / 16)];
+    final round = Extension(left: 0.125, top: 0.125, right: 0.125, bottom: 0.125, blend: _ext.blend);
     bool same(Extension x) =>
         (x.left - _ext.left).abs() < 0.004 && (x.right - _ext.right).abs() < 0.004 && (x.top - _ext.top).abs() < 0.004 && (x.bottom - _ext.bottom).abs() < 0.004;
+    final lockedLabel = [for (final (label, t) in shapes) if (_locked != null && (_locked! - t).abs() < 1e-6) label].firstOrNull;
+    // Picking a shape takes the canvas to it keeping its longer side, and
+    // holds it there; picking it again lets it go.
+    void pickShape(double target) {
+      if (_locked != null && (_locked! - target).abs() < 1e-6) {
+        setState(() => _locked = null);
+        return;
+      }
+      _locked = target;
+      _setExtension(_ext.fitTo(a, target));
+    }
+
+    Widget chip(String key, String label, bool selected, VoidCallback onTap, String tip) => Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: Tooltip(
+            message: tip,
+            child: ChoiceChipButton(key: ValueKey<String>('mask-extend-$key'), label: label, selected: selected, onTap: onTap),
+          ),
+        );
     return Column(
       key: const ValueKey<String>('mask-extend-row'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2103,7 +2212,11 @@ class _MaskEditorState extends State<MaskEditor> {
               const TextSpan(text: '  to  ', style: TextStyle(color: Palette.faint)),
               TextSpan(text: '$nw × $nh', style: TextStyle(fontWeight: FontWeight.w600, color: _ext.any ? Palette.accent : Palette.muted)),
               TextSpan(
-                text: _ext.any ? '   ${(nw * nh / 1e6).toStringAsFixed(2)} MP' : '   Drag an edge out, or pick a shape',
+                text: lockedLabel != null
+                    ? '   ${(nw * nh / 1e6).toStringAsFixed(2)} MP, held at $lockedLabel: drag a corner'
+                    : _ext.any
+                        ? '   ${(nw * nh / 1e6).toStringAsFixed(2)} MP'
+                        : '   Drag an edge out, or pick a shape',
                 style: const TextStyle(color: Palette.faint),
               ),
             ],
@@ -2117,16 +2230,13 @@ class _MaskEditorState extends State<MaskEditor> {
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              for (final (label, e) in shapes)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: ChoiceChipButton(
-                    key: ValueKey<String>('mask-extend-$label'),
-                    label: label,
-                    selected: _ext.any && same(e),
-                    onTap: e.any ? () => _setExtension(e) : null,
-                  ),
-                ),
+              chip('Free', 'Free', _locked == null && !(_ext.any && same(round)), () => setState(() => _locked = null), 'Drag each edge on its own'),
+              for (final (label, t) in shapes)
+                chip(label, label, lockedLabel == label, () => pickShape(t), 'Take the canvas to $label, keeping its longer side, and hold it there'),
+              chip('All round', 'All round', _locked == null && _ext.any && same(round), () {
+                _locked = null;
+                _setExtension(round);
+              }, 'An eighth more on every side'),
             ],
           ),
         ),
@@ -2445,12 +2555,24 @@ class _Unfold extends StatelessWidget {
 /// picture's own edge redrawn with it, and while extending, a handle on
 /// each edge to pull it out by.
 class _ExtensionPainter extends CustomPainter {
-  _ExtensionPainter({required this.frame, required this.picture, required this.blend, required this.showMask, required this.handles, this.dragging});
+  _ExtensionPainter({
+    required this.frame,
+    required this.picture,
+    required this.blend,
+    required this.showMask,
+    required this.handles,
+    this.corners = false,
+    this.dragging,
+  });
   final Rect frame;
   final Rect picture;
   final double blend;
   final bool showMask;
   final bool handles;
+
+  /// Handles on the corners, for a canvas held to its shape, rather than
+  /// on each edge.
+  final bool corners;
   final int? dragging;
 
   @override
@@ -2483,6 +2605,32 @@ class _ExtensionPainter extends CustomPainter {
       ..strokeWidth = handles ? 1.5 : 1;
     canvas.drawRect(frame.deflate(0.5), edge);
     if (!handles) return;
+    if (corners) {
+      // An L on each corner, along its two edges.
+      final at = [frame.topLeft, frame.topRight, frame.bottomRight, frame.bottomLeft];
+      final dirs = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
+      for (var i = 0; i < 4; i++) {
+        final (sx, sy) = dirs[i];
+        final c = at[i];
+        final l = Path()
+          ..moveTo(c.dx + sx * 22, c.dy)
+          ..lineTo(c.dx, c.dy)
+          ..lineTo(c.dx, c.dy + sy * 22);
+        canvas.drawPath(l, Paint()
+          ..color = const Color(0xFF0E0E10)
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = 9);
+        canvas.drawPath(l, Paint()
+          ..color = dragging == i ? Palette.accent : Palette.text
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = 5);
+      }
+      return;
+    }
     // A pill on each edge's middle.
     final mids = [frame.centerLeft, frame.topCenter, frame.centerRight, frame.bottomCenter];
     for (var i = 0; i < 4; i++) {
@@ -2501,7 +2649,13 @@ class _ExtensionPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ExtensionPainter old) =>
-      old.frame != frame || old.picture != picture || old.blend != blend || old.showMask != showMask || old.handles != handles || old.dragging != dragging;
+      old.frame != frame ||
+      old.picture != picture ||
+      old.blend != blend ||
+      old.showMask != showMask ||
+      old.handles != handles ||
+      old.corners != corners ||
+      old.dragging != dragging;
 }
 
 class _LoupePainter extends CustomPainter {
