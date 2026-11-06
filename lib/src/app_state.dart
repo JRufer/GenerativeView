@@ -8,6 +8,8 @@ import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
+import 'core/detail_pass.dart' show RegionFinder;
+import 'core/object_select.dart' show ObjectSelector;
 import 'core/backends.dart' show cancelRemix, RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
 import 'core/media_image.dart';
 import 'core/presets.dart';
@@ -15,6 +17,7 @@ import 'core/model_download.dart';
 import 'core/models.dart';
 import 'core/native_core.dart';
 import 'core/taste.dart';
+import 'core/wildcards.dart' show wordListsFromJson;
 import 'core/thumb_cache.dart';
 import 'platform.dart' show PasteSource, TrashOutcome, scanMediaFiles, sharedFiles, trashFiles;
 
@@ -449,6 +452,21 @@ class AppState extends ChangeNotifier {
   /// picture folder. Uninstalling the app takes them too: see Export.
   List<Preset> presets = const [];
 
+  /// Shows the generation tools whose screens are built but whose work is
+  /// not yet: wildcards, extending the canvas and the hires fix in tiles.
+  /// Off in the app until each is finished; on in the screenshot tests.
+  bool previewTools = false;
+
+  /// Tap to select in the mask editor: what outlines objects in the picture
+  /// at a path. Null hides the Select tool.
+  ObjectSelector Function(String path)? objectSelectorFor;
+
+  /// What finds faces and hands for the detail pass. Null hides it.
+  RegionFinder? regionFinder;
+
+  /// Word lists for `__name__` in a prompt, by name, kept with the presets.
+  Map<String, List<String>> wordLists = const {};
+
   /// How Remixes and Breeds are kept: 'png' (as the server sent them) or 'jxl'.
   String remixFormat = 'png';
 
@@ -604,6 +622,7 @@ class AppState extends ChangeNotifier {
       for (final entry in _savedList(saved['presets']))
         if (entry is Map<String, dynamic>) Preset.fromJson(entry),
     ];
+    wordLists = wordListsFromJson(saved['word_lists']);
     remixFormat = (saved['remix_format'] as String?) ?? remixFormat;
     upscaleFormat = (saved['upscale_format'] as String?) ?? upscaleFormat;
     jxlQuality = (saved['jxl_quality'] as String?) ?? jxlQuality;
@@ -1511,6 +1530,23 @@ class AppState extends ChangeNotifier {
     list.insert(to, list.removeAt(from));
     _keepPresets(list);
   }
+
+  void _keepWordLists(Map<String, List<String>> lists) {
+    wordLists = lists;
+    _save('word_lists', jsonEncode(lists));
+    notifyListeners();
+  }
+
+  /// Add the word list [name], or change it; [was] is its old name when it
+  /// is renamed.
+  void saveWordList(String name, List<String> words, {String? was}) {
+    final lists = {...wordLists};
+    if (was != null && was != name) lists.remove(was);
+    lists[name] = [for (final w in words) if (w.trim().isNotEmpty) w.trim()];
+    _keepWordLists(lists);
+  }
+
+  void deleteWordList(String name) => _keepWordLists({...wordLists}..remove(name));
 
   /// Write every preset to the file at [path].
   Future<void> exportPresets(String path) => File(path).writeAsString(presetsToFile(presets), flush: true);

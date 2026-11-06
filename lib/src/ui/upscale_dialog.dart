@@ -12,16 +12,19 @@ import 'meta_panel.dart' show toast;
 import 'remix_dialog.dart' show openBackendSettings, snapSize;
 import 'kit.dart';
 import 'sheet.dart';
+import '../core/detail_pass.dart';
+import 'detail_ui.dart';
 
 /// Open the upscale panel for [item]: which model, how much bigger, and
 /// what to do with the metadata. The upscale itself runs on this device in
 /// the background; [UpscaleJobs] shows how it is going.
-Future<void> openUpscale(BuildContext context, AppState state, MediaItem item) =>
-    openUpscaleMany(context, state, [item]);
+Future<void> openUpscale(BuildContext context, AppState state, MediaItem item, {bool detail = false}) =>
+    openUpscaleMany(context, state, [item], detail: detail);
 
 /// The same for several pictures at once: one choice for all of them, and
 /// they are upscaled one after another. Videos among them are left out.
-Future<void> openUpscaleMany(BuildContext context, AppState state, List<MediaItem> targets) async {
+/// With [detail], it opens on fixing their faces and hands at their own size.
+Future<void> openUpscaleMany(BuildContext context, AppState state, List<MediaItem> targets, {bool detail = false}) async {
   final items = [for (final t in targets) if (!t.isVideo) t];
   if (items.isEmpty) {
     toast(context, 'Videos cannot be upscaled');
@@ -37,16 +40,22 @@ Future<void> openUpscaleMany(BuildContext context, AppState state, List<MediaIte
   if (!context.mounted) return;
   await showPanel<void>(
     context,
-    title: items.length == 1 ? 'Upscale ${items.single.name}' : 'Upscale ${items.length} images',
-    icon: Icons.photo_size_select_large,
-    width: 520,
-    builder: (context) => UpscalePanel(state: state, items: items, models: models),
+    title: detail
+        ? (items.length == 1 ? 'Fix faces and hands in ${items.single.name}' : 'Fix faces and hands in ${items.length} images')
+        : (items.length == 1 ? 'Upscale ${items.single.name}' : 'Upscale ${items.length} images'),
+    icon: detail ? Icons.face_retouching_natural : Icons.photo_size_select_large,
+    width: 560,
+    builder: (context) => UpscalePanel(state: state, items: items, models: models, detail: detail),
   );
 }
 
 class UpscalePanel extends StatefulWidget {
-  const UpscalePanel({super.key, required this.state, required this.items, required this.models});
+  const UpscalePanel({super.key, required this.state, required this.items, required this.models, this.detail = false});
   final AppState state;
+
+  /// Opened to fix faces and hands: at the picture's own size, with the
+  /// detail pass on.
+  final bool detail;
 
   /// The pictures to upscale: one, or several, each in turn.
   final List<MediaItem> items;
@@ -88,6 +97,22 @@ class _UpscalePanelState extends State<UpscalePanel> {
   /// How much bigger the refined picture is than the original; 1 sends it
   /// at its own size, with no upscale here.
   late double _hiresScale = defaultHiresScale(widget.items, _hiresScales);
+
+  /// A hires fix in tiles: when, how big, and how much each shares.
+  TileMode _tileMode = TileMode.auto;
+  int _tile = defaultTileSize;
+  int _overlap = defaultTileOverlap;
+
+  /// Faces and hands redrawn up close, and whether that is all (the
+  /// picture kept at its own size, nothing upscaled).
+  late DetailPass _detail = DetailPass(faces: widget.detail);
+  late bool _keepSize = widget.detail;
+
+  bool get _detailOffered => widget.state.regionFinder != null && _refinable;
+  bool get _detailOn => _detailOffered && _detail.on;
+
+  /// Only the detail pass: nothing upscaled or refined.
+  bool get _detailOnly => _detailOn && _keepSize && !_refine;
 
   /// The servers set up, in the usual order.
   List<String> get _servers => [
@@ -182,6 +207,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
   /// offer and a model; a hires fix at its own size needs neither here.
   bool get _canStart {
     if (_busy) return false;
+    if (_detailOnly) return _server != null;
     if (_refine && _server != null) return _hiresScale <= 1 || _chosen != null;
     return _chosen != null && _factor != null;
   }
@@ -213,11 +239,13 @@ class _UpscalePanelState extends State<UpscalePanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Runs on this device with Real-ESRGAN. No prompt is needed and nothing is uploaded; '
-            'the larger picture is saved next to the original.',
-            style: TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.4),
+          Text(
+            _detailOnly
+                ? 'Faces and hands are found on this device, each redrawn up close on a server, and put back. The rest of the picture is not touched.'
+                : 'Upscaled on this device with Real-ESRGAN; nothing is uploaded unless you refine on a server.',
+            style: const TextStyle(fontSize: 12.5, color: Palette.muted, height: 1.4),
           ),
+          if (!_detailOnly) ...[
           const PanelHeading('Model'),
           RadioGroup<String>(
             groupValue: _model,
@@ -242,18 +270,29 @@ class _UpscalePanelState extends State<UpscalePanel> {
               ],
             ),
           ),
+          ],
           const PanelHeading('Size'),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
+              if (!refine && _detailOn)
+                ChoiceChipButton(
+                  key: const ValueKey<String>('upscale-factor-same'),
+                  label: 'Same size',
+                  selected: _keepSize,
+                  onTap: _busy ? null : () => setState(() => _keepSize = true),
+                ),
               if (!refine)
                 for (final f in _factors)
                   ChoiceChipButton(
                     key: ValueKey<String>('upscale-factor-${scaleText(f)}'),
                     label: f == _maxFactor && !upscaleSteps.contains(f) ? '${scaleText(f)}× max' : '${scaleText(f)}×',
-                    selected: _factor == f,
-                    onTap: _busy ? null : () => setState(() => _factor = f),
+                    selected: !_detailOnly && _factor == f,
+                    onTap: _busy ? null : () => setState(() {
+                      _factor = f;
+                      _keepSize = false;
+                    }),
                   )
               else
                 for (final f in _hiresScales)
@@ -269,7 +308,16 @@ class _UpscalePanelState extends State<UpscalePanel> {
                   ),
             ],
           ),
-          if (!refine && _factor == null)
+          if (_detailOnly)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                many ? 'Each kept at its own size.' : 'Kept at ${item.width} × ${item.height}.',
+                key: const ValueKey<String>('upscale-size'),
+                style: const TextStyle(fontSize: 12, color: Palette.faint),
+              ),
+            )
+          else if (!refine && _factor == null)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
@@ -302,7 +350,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
                 style: const TextStyle(fontSize: 12, color: Palette.faint),
               ),
             ),
-          if (refine && !ownSize && math.max(w, h) > hiresLargeSide)
+          if (refine && !ownSize && math.max(w, h) > hiresLargeSide && !(widget.state.previewTools && usesTiles(_tileMode, w, h)))
             const Padding(
               padding: EdgeInsets.only(top: 4),
               child: Text(
@@ -321,6 +369,31 @@ class _UpscalePanelState extends State<UpscalePanel> {
                   )
                 : const SizedBox.shrink(),
           ),
+          if (_detailOffered) ...[
+            const PanelHeading('Faces and hands'),
+            DetailPassSection(
+              key: const ValueKey<String>('upscale-detail'),
+              pass: _detail,
+              onChanged: (p) => setState(() {
+                _detail = p;
+                if (!p.on) _keepSize = false;
+              }),
+              finder: widget.state.regionFinder,
+              path: many ? null : item.path,
+              aspect: item.width > 0 && item.height > 0 ? item.width / item.height : 1,
+              enabled: !_busy,
+            ),
+            if (_detailOn && servers.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Redrawing them needs a generation server.', style: TextStyle(fontSize: 12.5, color: Palette.muted))),
+                    TextButton(onPressed: _busy ? null : _setUpServer, child: const Text('Set up a server…')),
+                  ],
+                ),
+              ),
+          ],
           const PanelHeading('Metadata'),
           Wrap(
             spacing: 8,
@@ -411,7 +484,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
           state: widget.state,
           backend: _server,
           servers: servers,
-          showServers: _refine && servers.isNotEmpty,
+          showServers: (_refine || _detailOn) && servers.isNotEmpty,
           chipKey: (k) => ValueKey<String>('hires-server-$k'),
           onBackend: (k) => setState(() {
             _server = k;
@@ -423,7 +496,11 @@ class _UpscalePanelState extends State<UpscalePanel> {
           actionKey: const ValueKey<String>('upscale-start'),
           icon: Icons.photo_size_select_large,
           onSend: _canStart ? _start : null,
-          action: ownSize
+          action: _detailOnly
+              ? (many ? 'Fix ${widget.items.length}' : 'Fix faces and hands')
+              : _detailOn
+              ? (refine ? 'Upscale, refine and fix' : 'Upscale and fix')
+              : ownSize
               ? (many ? 'Refine ${widget.items.length}' : 'Refine')
               : _chosen?.installed == false
               ? (refine ? 'Download, upscale and refine' : 'Download and upscale')
@@ -453,10 +530,9 @@ class _UpscalePanelState extends State<UpscalePanel> {
           contentPadding: EdgeInsets.zero,
           title: const Text('Then refine on a server', style: TextStyle(fontSize: 13.5)),
           subtitle: Text(
-            'The upscale is sent as image to image with the picture\'s own prompt, settings and seed, '
-            'and redrawn lightly at the larger size, so the server adds real detail rather than sharpening.'
-            '${widget.items.any((i) => !i.generated) ? ' A picture with no generation data is refined with a prompt described from it.' : ''}',
-            style: TextStyle(fontSize: 12, color: Palette.muted, height: 1.35),
+            'Redrawn lightly at the larger size with its own prompt and seed, so the server adds real detail.'
+            '${widget.items.any((i) => !i.generated) ? ' One with no generation data gets a prompt described from it.' : ''}',
+            style: const TextStyle(fontSize: 12, color: Palette.muted, height: 1.35),
           ),
           onChanged: _busy ? null : (v) => setState(() => _refine = v),
         ),
@@ -474,10 +550,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
             ],
           ),
         if (_refine && servers.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.only(top: 2, bottom: 6),
-            child: Text('Pick the server beside the Upscale button.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
-          ),
+          const SizedBox(height: 6),
           Row(
             children: [
               const Text('Denoising strength', style: TextStyle(fontSize: 13)),
@@ -507,9 +580,33 @@ class _UpscalePanelState extends State<UpscalePanel> {
             ),
           ),
           const Text(
-            'Around 0.3 adds detail and keeps the picture as it was; higher starts to change faces and shapes.',
+            'Around 0.3 adds detail; higher starts to change faces and shapes.',
             style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
           ),
+          if (widget.state.previewTools && _hiresScale > 1) ...[
+            const SizedBox(height: 14),
+            Builder(
+              builder: (context) {
+                final item = widget.items.first;
+                final (w, h) = hiresSize(item.width, item.height, _hiresScale);
+                return TilesSection(
+                  mode: _tileMode,
+                  tile: _tile,
+                  overlap: _overlap,
+                  width: w,
+                  height: h,
+                  path: widget.items.length == 1 ? item.path : null,
+                  aspect: item.width > 0 && item.height > 0 ? item.width / item.height : 1,
+                  enabled: !_busy,
+                  onChanged: (mode, tile, overlap) => setState(() {
+                    _tileMode = mode;
+                    _tile = tile;
+                    _overlap = overlap;
+                  }),
+                );
+              },
+            ),
+          ],
         ],
       ],
     );

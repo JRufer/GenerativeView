@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../core/prompt_weights.dart';
 import '../core/spelling.dart';
+import '../core/wildcards.dart';
 import '../theme.dart';
 
 /// The text of a prompt, drawn with what the editor knows about it: words
@@ -23,6 +24,15 @@ class PromptController extends TextEditingController {
   }
 
   final Set<String> _ignored = {};
+
+  /// The word lists there are, so `__name__` can be told apart from one
+  /// that does not exist. Null draws no wildcards at all.
+  Map<String, List<String>>? get wordLists => _wordLists;
+  Map<String, List<String>>? _wordLists;
+  set wordLists(Map<String, List<String>>? value) {
+    _wordLists = value;
+    notifyListeners();
+  }
 
   Spelling? get spelling => _spelling;
   set spelling(Spelling? value) {
@@ -80,19 +90,44 @@ class PromptController extends TextEditingController {
         fresh.fillRange(at, at + phrase.length, true);
       }
     }
+    // Wildcards: a choice's braces and bars in the accent, its options on a
+    // faint wash; a word list in the accent, or the danger color if there
+    // is no list of that name.
+    final wild = List<int>.filled(t.length, 0);
+    const washed = 1, mark = 2, list = 3, missing = 4;
+    final lists = _wordLists;
+    if (lists != null && mayHaveWildcards(t)) {
+      for (final m in wildcardMarks(t, lists)) {
+        if (m.list != null) {
+          wild.fillRange(m.start, m.end, m.missing ? missing : list);
+        } else {
+          for (var i = m.start; i < m.end; i++) {
+            if (wild[i] == 0) wild[i] = washed;
+          }
+          wild[m.start] = mark;
+          wild[m.end - 1] = mark;
+          for (final b in m.bars) {
+            wild[b] = mark;
+          }
+        }
+      }
+    }
     final spans = <TextSpan>[];
     var from = 0;
     for (var i = 1; i <= t.length; i++) {
-      if (i < t.length && tints[i] == tints[from] && wrong[i] == wrong[from] && fresh[i] == fresh[from]) continue;
+      if (i < t.length && tints[i] == tints[from] && wrong[i] == wrong[from] && fresh[i] == fresh[from] && wild[i] == wild[from]) continue;
+      final w = wild[from];
+      final underline = wrong[from] || fresh[from] || w == missing;
       spans.add(
         TextSpan(
           text: t.substring(from, i),
           style: TextStyle(
-            backgroundColor: tints[from],
-            color: fresh[from] ? Palette.accent : null,
-            decoration: wrong[from] || fresh[from] ? TextDecoration.underline : null,
-            decorationStyle: wrong[from] ? TextDecorationStyle.wavy : null,
-            decorationColor: wrong[from] ? Palette.danger : (fresh[from] ? Palette.accent : null),
+            backgroundColor: tints[from] ?? (w == washed ? wildcardWash : null),
+            color: w == missing ? Palette.danger : (fresh[from] || w == mark || w == list ? Palette.accent : null),
+            fontWeight: w == mark ? FontWeight.w700 : null,
+            decoration: underline ? TextDecoration.underline : null,
+            decorationStyle: wrong[from] || w == missing ? TextDecorationStyle.wavy : null,
+            decorationColor: wrong[from] || w == missing ? Palette.danger : (fresh[from] ? Palette.accent : null),
           ),
         ),
       );
@@ -101,6 +136,9 @@ class PromptController extends TextEditingController {
     return TextSpan(style: style, children: spans);
   }
 }
+
+/// The faint wash under a wildcard choice's options.
+const Color wildcardWash = Color(0x147AA2F7);
 
 /// A prompt editor: spelling is checked as you type, and selecting words
 /// brings up a slider under them that sets their weight, `(words:1.2)`,

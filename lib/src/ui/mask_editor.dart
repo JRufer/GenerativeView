@@ -11,9 +11,11 @@ import '../app_state.dart';
 import '../core/backends.dart' show ImageInput;
 import '../core/media_image.dart';
 import '../core/models.dart' show HeatMap;
+import '../core/object_select.dart';
 import '../core/smear.dart';
 import '../theme.dart';
 import 'kit.dart';
+import 'sheet.dart' show ChoiceChipButton;
 
 // ---------------------------------------------------------------- the mask
 
@@ -62,12 +64,64 @@ class MaskOp {
   final Rect? area;
 }
 
-/// What was painted in the editor: where to redraw ([ops]), and the color
-/// painted into the picture first ([color]).
+/// What was painted in the editor: where to redraw ([ops]), the color
+/// painted into the picture first ([color]), and how far the canvas was
+/// extended past the picture's edges ([extend]).
 class MaskEdit {
-  const MaskEdit(this.ops, this.color);
+  const MaskEdit(this.ops, this.color, {this.extend = Extension.none});
   final List<MaskOp> ops;
   final List<MaskOp> color;
+  final Extension extend;
+}
+
+/// How far the canvas reaches past each edge of the picture, as fractions
+/// of the picture's width (left and right) and height (top and bottom).
+/// The new area is drawn to match the picture, and [blend] pixels of the
+/// picture's own edge are redrawn with it so the join does not show.
+class Extension {
+  const Extension({this.left = 0, this.top = 0, this.right = 0, this.bottom = 0, this.blend = 32});
+  static const Extension none = Extension();
+
+  /// The most each side may reach: as far again as the picture.
+  static const double most = 1;
+
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+  final int blend;
+
+  bool get any => left > 0 || top > 0 || right > 0 || bottom > 0;
+
+  Extension copyWith({double? left, double? top, double? right, double? bottom, int? blend}) => Extension(
+    left: (left ?? this.left).clamp(0.0, most),
+    top: (top ?? this.top).clamp(0.0, most),
+    right: (right ?? this.right).clamp(0.0, most),
+    bottom: (bottom ?? this.bottom).clamp(0.0, most),
+    blend: blend ?? this.blend,
+  );
+
+  /// The canvas's shape (width over height) for a picture shaped [aspect].
+  double aspectOf(double aspect) => aspect * (1 + left + right) / (1 + top + bottom);
+
+  /// The canvas's size in pixels for a picture [width] by [height], each
+  /// side a multiple of [step] as servers take.
+  (int, int) sizeOf(int width, int height, {int step = 16}) {
+    int snap(double v) => math.max(step, (v / step).round() * step);
+    return (snap(width * (1 + left + right)), snap(height * (1 + top + bottom)));
+  }
+
+  /// Reaching out evenly to the shape [target] (width over height), from a
+  /// picture shaped [aspect]: the sides grow if it is wider, else the top
+  /// and bottom.
+  static Extension toAspect(double aspect, double target, {int blend = 32}) {
+    if (target >= aspect) {
+      final extra = (target / aspect - 1).clamp(0.0, 2 * most);
+      return Extension(left: extra / 2, right: extra / 2, blend: blend);
+    }
+    final extra = (aspect / target - 1).clamp(0.0, 2 * most);
+    return Extension(top: extra / 2, bottom: extra / 2, blend: blend);
+  }
 }
 
 /// The brush radius under pen [pressure] (0 to 1): from 1 at the lightest
@@ -493,22 +547,40 @@ Future<MaskEdit?> editMask(
   AppState? state,
   List<String> phrases = const [],
   String? find,
+  Extension extend = Extension.none,
+  Size? pixels,
+  ObjectSelector? selector,
+  bool canExtend = false,
 }) {
   return Navigator.of(context).push<MaskEdit>(
     PageRouteBuilder<MaskEdit>(
       transitionDuration: const Duration(milliseconds: 140),
       reverseTransitionDuration: const Duration(milliseconds: 100),
-      pageBuilder: (_, _, _) => MaskEditor(path: path, name: name, aspect: aspect, ops: ops, color: color, state: state, phrases: phrases, find: find),
+      pageBuilder: (_, _, _) => MaskEditor(
+        path: path,
+        name: name,
+        aspect: aspect,
+        ops: ops,
+        color: color,
+        state: state,
+        phrases: phrases,
+        find: find,
+        extend: extend,
+        pixels: pixels,
+        selector: selector,
+        canExtend: canExtend,
+      ),
       transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: animation, child: child),
     ),
   );
 }
 
-enum MaskTool { brush, trace, find }
+enum MaskTool { brush, trace, select, find }
 
 /// Which layer is being painted: the color goes into the picture the remix
-/// starts from; the mask, above it, says where to redraw.
-enum MaskLayer { color, mask }
+/// starts from; the mask, above it, says where to redraw; extend takes the
+/// canvas out past the picture's edges, and the new area is drawn.
+enum MaskLayer { color, mask, extend }
 
 /// The picture, fitted, with the color painted on it and the mask over that
 /// in pink. One finger, a pen or the mouse paints with the brush or traces
@@ -530,6 +602,10 @@ class MaskEditor extends StatefulWidget {
     this.state,
     this.phrases = const [],
     this.find,
+    this.extend = Extension.none,
+    this.pixels,
+    this.selector,
+    this.canExtend = false,
   });
   final String path;
   final String name;
@@ -549,6 +625,19 @@ class MaskEditor extends StatefulWidget {
   /// A phrase to start on Find with.
   final String? find;
 
+  /// How far the canvas was extended, when it was.
+  final Extension extend;
+
+  /// The picture's size in pixels, to say what an extended canvas comes to.
+  final Size? pixels;
+
+  /// What outlines an object where the picture is tapped. Without it there
+  /// is no Select tool.
+  final ObjectSelector? selector;
+
+  /// Whether the canvas can be extended (image to image, not a hires fix).
+  final bool canExtend;
+
   @override
   State<MaskEditor> createState() => _MaskEditorState();
 }
@@ -564,8 +653,11 @@ class _MaskEditorState extends State<MaskEditor> {
   /// The layer being painted.
   List<MaskOp> get _list => _layer == MaskLayer.color ? _colorOps : _ops;
 
+
   /// The tool in use: the color layer has only the brush.
   MaskTool get _active => _layer == MaskLayer.color ? MaskTool.brush : _tool;
+
+  bool get _canSelect => _selector != null;
 
   /// The last color used and those before it, kept while the app runs.
   static Color _lastColor = Colors.white;
@@ -681,6 +773,7 @@ class _MaskEditorState extends State<MaskEditor> {
 
   @override
   void dispose() {
+    _selectModel?.cancel();
     _hex.dispose();
     _hexFocus.dispose();
     _sample?.dispose();
@@ -925,6 +1018,9 @@ class _MaskEditorState extends State<MaskEditor> {
   void initState() {
     super.initState();
     _hexFocus.addListener(() => setState(() {}));
+    _selectModel = widget.selector?.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     final find = widget.find;
     if (find != null && widget.state != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -971,15 +1067,164 @@ class _MaskEditorState extends State<MaskEditor> {
   Offset? _hover;
   Size _view = Size.zero;
 
-  /// Where the picture is drawn in the view.
-  Rect get _rect {
+  // Extending the canvas.
+  late Extension _ext = widget.extend;
+
+  /// The side whose edge is being dragged out (0 left, 1 top, 2 right,
+  /// 3 bottom), the pointer doing it, and where it started.
+  int? _edge;
+  int? _edgePointer;
+  Offset? _edgeFrom;
+  Extension? _edgeStart;
+  double _edgeScale = 1;
+
+  /// Room round the canvas while extending, to take hold of its edges.
+  double get _gutter => _layer == MaskLayer.extend ? 30 : 0;
+
+  /// Where the whole canvas, the picture and any extension, is drawn.
+  Rect get _frame {
     final view = _view;
     if (view.isEmpty) return Rect.zero;
-    final a = widget.aspect > 0 ? widget.aspect : 1.0;
-    final fitW = math.min(view.width, view.height * a);
-    final fit = Size(fitW, fitW / a);
+    final a = _ext.aspectOf(widget.aspect > 0 ? widget.aspect : 1.0);
+    final room = Size(math.max(1, view.width - 2 * _gutter), math.max(1, view.height - 2 * _gutter));
+    final fitW = math.min(room.width, room.height * a);
     final c = view.center(Offset.zero) + _pan;
-    return Rect.fromCenter(center: c, width: fit.width * _zoom, height: fit.height * _zoom);
+    return Rect.fromCenter(center: c, width: fitW * _zoom, height: fitW / a * _zoom);
+  }
+
+  /// Where the picture is drawn in the view.
+  Rect get _rect {
+    final f = _frame;
+    if (f.isEmpty) return f;
+    final w = f.width / (1 + _ext.left + _ext.right);
+    final h = f.height / (1 + _ext.top + _ext.bottom);
+    return Rect.fromLTWH(f.left + _ext.left * w, f.top + _ext.top * h, w, h);
+  }
+
+  /// The edge of the canvas near [local], if one is near enough to take.
+  int? _edgeAt(Offset local) {
+    final f = _frame;
+    const reach = 34.0;
+    final inY = local.dy > f.top - reach && local.dy < f.bottom + reach;
+    final inX = local.dx > f.left - reach && local.dx < f.right + reach;
+    final d = [
+      inY ? (local.dx - f.left).abs() : double.infinity,
+      inX ? (local.dy - f.top).abs() : double.infinity,
+      inY ? (local.dx - f.right).abs() : double.infinity,
+      inX ? (local.dy - f.bottom).abs() : double.infinity,
+    ];
+    var best = 0;
+    for (var i = 1; i < 4; i++) {
+      if (d[i] < d[best]) best = i;
+    }
+    return d[best] <= reach ? best : null;
+  }
+
+  void _dragEdge(Offset local) {
+    final from = _edgeFrom, start = _edgeStart, side = _edge;
+    if (from == null || start == null || side == null) return;
+    final dx = (local.dx - from.dx) / _edgeScale;
+    final dy = (local.dy - from.dy) / _edgeScale * (widget.aspect > 0 ? widget.aspect : 1.0);
+    setState(() {
+      _ext = switch (side) {
+        0 => start.copyWith(left: start.left - dx),
+        1 => start.copyWith(top: start.top - dy),
+        2 => start.copyWith(right: start.right + dx),
+        _ => start.copyWith(bottom: start.bottom + dy),
+      };
+    });
+  }
+
+  /// One pointer down while extending (an edge taken hold of, or else the
+  /// canvas moved) or selecting (a tap, unless it turns into a drag).
+  void _beginEdgeOrTap(PointerDownEvent e) {
+    if (_layer == MaskLayer.extend) {
+      final side = _edgeAt(e.localPosition);
+      if (side != null) {
+        _edge = side;
+        _edgePointer = e.pointer;
+        _edgeFrom = e.localPosition;
+        _edgeStart = _ext;
+        _edgeScale = math.max(1, _rect.width);
+        setState(() {});
+      } else {
+        _panning = true;
+        _lastPan = e.localPosition;
+      }
+      return;
+    }
+    _tapPointer = e.pointer;
+    _tapAt = e.localPosition;
+  }
+
+  void _setExtension(Extension e) => setState(() {
+        _ext = e;
+        _pan = Offset.zero;
+        _zoom = 1;
+      });
+
+  // Tap to select.
+  late final ObjectSelector? _selector = widget.selector;
+  StreamSubscription<SelectModelState>? _selectModel;
+  int? _tapPointer;
+  Offset? _tapAt;
+
+  /// Where a tap is being outlined, while it is.
+  Offset? _selectingAt;
+
+  /// How far each selection's outline is pushed out (or, below 0, in), in
+  /// pixels of the view.
+  double _selectEdge = 4;
+
+  /// The outline the last tap found, and where its ops start in [_ops], so
+  /// moving the edge slider redoes it.
+  List<Offset>? _lastOutline;
+  int? _lastSelectAt;
+  bool _lastSelectErase = false;
+  String? _selectError;
+
+  Future<void> _selectAt(Offset picturePoint) async {
+    final selector = _selector;
+    if (selector == null || !selector.model.installed) return;
+    setState(() {
+      _selectingAt = picturePoint;
+      _selectError = null;
+    });
+    try {
+      final outline = await selector.outline(picturePoint);
+      if (!mounted) return;
+      if (outline.length < 3) {
+        setState(() => _selectError = 'Nothing stands out there. Tap the middle of an object.');
+        return;
+      }
+      _lastOutline = outline;
+      _lastSelectAt = _ops.length;
+      _lastSelectErase = _erase;
+      _ops.addAll(_selectionOps(outline, _erase));
+    } catch (e) {
+      if (mounted) setState(() => _selectError = 'Could not select: $e');
+    } finally {
+      if (mounted) setState(() => _selectingAt = null);
+    }
+  }
+
+  /// The outline filled, then pushed out or in by [_selectEdge].
+  List<MaskOp> _selectionOps(List<Offset> outline, bool erase) {
+    final grow = _selectEdge / math.max(1, _rect.width);
+    return [
+      MaskOp(MaskKind.trace, erase: erase, points: outline),
+      if (_selectEdge.abs() > 0.5)
+        MaskOp(MaskKind.stroke, erase: erase ? _selectEdge > 0 : _selectEdge < 0, points: [...outline, outline.first], radius: grow.abs()),
+    ];
+  }
+
+  void _setSelectEdge(double v) {
+    setState(() => _selectEdge = v);
+    final at = _lastSelectAt, outline = _lastOutline;
+    if (at == null || outline == null || at > _ops.length) return;
+    _ops
+      ..removeRange(at, _ops.length)
+      ..addAll(_selectionOps(outline, _lastSelectErase));
   }
 
   Offset _toPicture(Offset local) {
@@ -1122,7 +1367,7 @@ class _MaskEditorState extends State<MaskEditor> {
 
   void _done() {
     if (_smearBusy) return;
-    Navigator.of(context).pop(MaskEdit(_simplified(_ops), _simplified(_colorOps)));
+    Navigator.of(context).pop(MaskEdit(_simplified(_ops), _simplified(_colorOps), extend: _ext));
   }
 
   /// [ops] without whatever a later clear wiped out.
@@ -1149,6 +1394,10 @@ class _MaskEditorState extends State<MaskEditor> {
       if (_picking) {
         _pickPointer = e.pointer;
         _pick(e.localPosition);
+      } else if (_layer == MaskLayer.extend || _active == MaskTool.select) {
+        // A pen takes hold of an edge or taps, as a finger does.
+        _penDown = null;
+        _beginEdgeOrTap(e);
       } else if (_active != MaskTool.find) {
         _hover = e.localPosition;
         _start(e);
@@ -1163,6 +1412,10 @@ class _MaskEditorState extends State<MaskEditor> {
       return;
     }
     _pointers[e.pointer] = e.localPosition;
+    if (_pointers.length == 1 && (_layer == MaskLayer.extend || _active == MaskTool.select)) {
+      _beginEdgeOrTap(e);
+      return;
+    }
     final mouse = e.kind == PointerDeviceKind.mouse;
     if (mouse && (e.buttons & (kSecondaryMouseButton | kMiddleMouseButton)) != 0) {
       _panning = true;
@@ -1201,6 +1454,16 @@ class _MaskEditorState extends State<MaskEditor> {
       _extend(e);
       return;
     }
+    if (e.pointer == _edgePointer) {
+      _dragEdge(e.localPosition);
+      return;
+    }
+    if (e.pointer == _tapPointer && _tapAt != null && (e.localPosition - _tapAt!).distance > 10) {
+      // Not a tap after all: a drag moves the picture.
+      _tapPointer = null;
+      _panning = true;
+      _lastPan = e.localPosition;
+    }
     if (!_pointers.containsKey(e.pointer)) return;
     _pointers[e.pointer] = e.localPosition;
     _hover = e.localPosition;
@@ -1235,6 +1498,22 @@ class _MaskEditorState extends State<MaskEditor> {
       return;
     }
     _pointers.remove(e.pointer);
+    if (e.pointer == _edgePointer) {
+      setState(() {
+        _edge = null;
+        _edgePointer = null;
+        _edgeFrom = null;
+        _edgeStart = null;
+      });
+      return;
+    }
+    if (e.pointer == _tapPointer) {
+      _tapPointer = null;
+      final at = _tapAt;
+      _tapAt = null;
+      if (e is! PointerCancelEvent && at != null) _selectAt(_toPicture(at));
+      return;
+    }
     if (_panning && _pointers.isEmpty) {
       _panning = false;
       _lastPan = null;
@@ -1307,6 +1586,12 @@ class _MaskEditorState extends State<MaskEditor> {
           if (_layer == MaskLayer.color) _setSmear(!_smear);
         },
         const SingleActivator(LogicalKeyboardKey.keyT): () => setState(() => _tool = MaskTool.trace),
+        const SingleActivator(LogicalKeyboardKey.keyV): () {
+          if (_canSelect) setState(() => _tool = MaskTool.select);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyX): () {
+          if (widget.canExtend) setState(() => _layer = MaskLayer.extend);
+        },
         const SingleActivator(LogicalKeyboardKey.keyF): () {
           if (_canFind) setState(() => _tool = MaskTool.find);
         },
@@ -1367,12 +1652,16 @@ class _MaskEditorState extends State<MaskEditor> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_picking ? 'Pick a color' : 'Fix the picture', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(_picking ? 'Pick a color' : (_layer == MaskLayer.extend ? 'Extend the picture' : 'Fix the picture'), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                 Text(
                   _picking
                       ? 'Touch the picture, slide, and let go'
                       : _layer == MaskLayer.color
                       ? 'Color: painted into the picture the remix starts from'
+                      : _layer == MaskLayer.extend
+                      ? (_ext.any ? 'Extend: the hatched canvas is drawn new to match the picture' : 'Extend: drag an edge out past the picture')
+                      : _tool == MaskTool.select
+                      ? (_selectingAt != null ? 'Selecting…' : (painted ? 'Mask: only the pink part is redrawn' : 'Select: tap an object to mask it'))
                       : _tool == MaskTool.find && _phrase != null
                       ? (_finding ? 'Finding “$_phrase”…' : (_findError ?? 'Found: where “$_phrase” fits best'))
                       : (painted ? 'Mask: only the pink part is redrawn' : 'Mask: nothing painted, so all of it is redrawn'),
@@ -1407,7 +1696,7 @@ class _MaskEditorState extends State<MaskEditor> {
         _view = Size(box.maxWidth, box.maxHeight);
         final r = _rect;
         final hover = _picking ? null : _hover;
-        final brushing = _active == MaskTool.brush;
+        final brushing = _active == MaskTool.brush && _layer != MaskLayer.extend;
         final ring = _drawing != null && _drawingRadii != null ? _drawingRadius : _brush;
         final pickAt = _pickAt;
         final sample = _sample;
@@ -1431,6 +1720,24 @@ class _MaskEditorState extends State<MaskEditor> {
             child: ClipRect(
               child: Stack(
                 children: [
+                  // The canvas past the picture's edges: hatched, and pink
+                  // on the mask since all of it is drawn new.
+                  if (_ext.any || _layer == MaskLayer.extend)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          key: const ValueKey<String>('mask-extension'),
+                          painter: _ExtensionPainter(
+                            frame: _frame,
+                            picture: r,
+                            blend: _ext.any ? _ext.blend * r.width / math.max(1, widget.pixels?.width ?? 1024) : 0,
+                            showMask: _layer != MaskLayer.color,
+                            handles: _layer == MaskLayer.extend,
+                            dragging: _edge,
+                          ),
+                        ),
+                      ),
+                    ),
                   Positioned.fromRect(
                     rect: r,
                     child: Image(
@@ -1484,6 +1791,20 @@ class _MaskEditorState extends State<MaskEditor> {
                         ),
                       ),
                     ),
+                  // A tap being outlined.
+                  if (_selectingAt case final at?)
+                    Positioned(
+                      left: r.left + at.dx * r.width - 14,
+                      top: r.top + at.dy * r.height - 14,
+                      child: const IgnorePointer(
+                        child: SizedBox(
+                          key: ValueKey<String>('mask-selecting'),
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                        ),
+                      ),
+                    ),
                   // The eyedropper's loupe, above the finger so it can be
                   // seen, or below it at the top of the screen.
                   if (pickAt != null && sample != null)
@@ -1514,144 +1835,341 @@ class _MaskEditorState extends State<MaskEditor> {
           onPressed: onTap,
           icon: Icon(icon, size: 20),
         );
+    final extending = _layer == MaskLayer.extend;
+    final layers = SegmentedButton<MaskLayer>(
+      key: const ValueKey<String>('mask-layer'),
+      showSelectedIcon: false,
+      segments: [
+        const ButtonSegment(value: MaskLayer.color, icon: Icon(Icons.palette_outlined, size: 17), label: Text('Color'), tooltip: 'Paint color into the picture (C)'),
+        const ButtonSegment(value: MaskLayer.mask, icon: Icon(Icons.brush, size: 17), label: Text('Mask'), tooltip: 'Paint where to redraw (M)'),
+        if (widget.canExtend)
+          const ButtonSegment(value: MaskLayer.extend, icon: Icon(Icons.open_in_full, size: 16), label: Text('Extend'), tooltip: 'Take the canvas out past the edges (X)'),
+      ],
+      selected: {_layer},
+      onSelectionChanged: (s) => setState(() {
+        _layer = s.first;
+        _picking = false;
+        _pan = Offset.zero;
+        _zoom = 1;
+      }),
+    );
+    // Undo and clear for the layer in use, always in the same place.
+    final history = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: extending
+          ? [
+              TextButton(
+                key: const ValueKey<String>('mask-extend-reset'),
+                onPressed: _ext.any ? () => _setExtension(Extension(blend: _ext.blend)) : null,
+                child: const Text('Reset'),
+              ),
+            ]
+          : [
+              icon(key: const ValueKey<String>('mask-undo'), tooltip: 'Undo (Ctrl Z)', icon: Icons.undo, onTap: _list.isEmpty ? null : _undo),
+              icon(
+                key: const ValueKey<String>('mask-clear'),
+                tooltip: _layer == MaskLayer.color ? 'Clear the color' : 'Clear the mask',
+                icon: Icons.layers_clear_outlined,
+                onTap: _list.isEmpty ? null : _clear,
+              ),
+              if (_zoom > 1.001) icon(key: const ValueKey<String>('mask-fit'), tooltip: 'Fit the picture again (0)', icon: Icons.fit_screen_outlined, onTap: _fit),
+            ],
+    );
+    final options = <Widget>[
+      if (_layer == MaskLayer.color) ...[
+        Tooltip(
+          message: 'The color: tap for the wheel',
+          child: InkWell(
+            key: const ValueKey<String>('mask-color'),
+            customBorder: const CircleBorder(),
+            onTap: () => _showWheel(!(_wheelChosen ?? MediaQuery.sizeOf(context).width >= 800)),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(color: _color, shape: BoxShape.circle, border: Border.all(color: Palette.text, width: 2)),
+            ),
+          ),
+        ),
+        icon(key: const ValueKey<String>('mask-pick'), tooltip: 'Pick a color from the picture (P)', icon: Icons.colorize, onTap: _picking ? null : _startPicking),
+        SegmentedButton<bool>(
+          key: const ValueKey<String>('mask-color-tool'),
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: false, icon: Icon(Icons.circle, size: 13), label: Text('Brush'), tooltip: 'Paint with the color (B)'),
+            ButtonSegment(value: true, icon: Icon(Icons.blur_on, size: 17), label: Text('Smear'), tooltip: 'Drag the colors and blur them together (S)'),
+          ],
+          selected: {_smear},
+          onSelectionChanged: (s) => _setSmear(s.first),
+        ),
+      ],
+      if (_layer == MaskLayer.mask)
+        SegmentedButton<MaskTool>(
+          key: const ValueKey<String>('mask-tool'),
+          showSelectedIcon: false,
+          segments: [
+            const ButtonSegment(value: MaskTool.brush, icon: Icon(Icons.circle, size: 13), label: Text('Brush'), tooltip: 'Paint with a round brush (B)'),
+            const ButtonSegment(value: MaskTool.trace, icon: Icon(Icons.gesture, size: 17), label: Text('Trace'), tooltip: 'Trace round a shape; it fills when you let go (T)'),
+            if (_canSelect)
+              const ButtonSegment(
+                value: MaskTool.select,
+                icon: Icon(Icons.touch_app_outlined, size: 17),
+                label: Text('Select'),
+                tooltip: 'Tap an object to mask all of it (V)',
+              ),
+            if (_canFind)
+              const ButtonSegment(
+                value: MaskTool.find,
+                icon: Icon(Icons.center_focus_strong_outlined, size: 17),
+                label: Text('Find'),
+                tooltip: 'Find where a phrase of the prompt is, or would fit (F)',
+              ),
+          ],
+          selected: {_tool},
+          onSelectionChanged: (s) {
+            setState(() => _tool = s.first);
+            if (s.first == MaskTool.find && _heat == null && !_finding) {
+              final first = _phrase ?? (widget.phrases.isEmpty ? null : widget.phrases.first);
+              if (first != null) _look(first);
+            }
+          },
+        ),
+      if (!extending && !(_smear && _layer == MaskLayer.color))
+        SegmentedButton<bool>(
+          key: const ValueKey<String>('mask-mode'),
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: false, icon: Icon(Icons.add, size: 17), label: Text('Paint'), tooltip: 'Add paint (E switches)'),
+            ButtonSegment(value: true, icon: Icon(Icons.remove, size: 17), label: Text('Erase'), tooltip: 'Take paint away (E switches)'),
+          ],
+          selected: {_erase},
+          onSelectionChanged: (s) => setState(() => _erase = s.first),
+        ),
+      if (!extending && _active == MaskTool.brush)
+        SizedBox(
+          width: 180,
+          child: Row(
+            children: [
+              const Tooltip(message: 'Brush size ([ and ], or Shift and the wheel)', child: Icon(Icons.circle_outlined, size: 14, color: Palette.muted)),
+              Expanded(
+                child: Slider(
+                  key: const ValueKey<String>('mask-brush'),
+                  value: _brush,
+                  min: _brushMin,
+                  max: _brushMax,
+                  onChanged: (v) => setState(() => _brush = v),
+                ),
+              ),
+            ],
+          ),
+        ),
+      if (!extending && _penSeen && _active == MaskTool.brush)
+        OutlinedButton.icon(
+          key: const ValueKey<String>('mask-pressure'),
+          onPressed: () => setState(() => _pressure = !_pressure),
+          icon: const Icon(Icons.draw_outlined, size: 16),
+          label: Text(_pressure ? 'Pen pressure: on' : 'Pen pressure: off'),
+        ),
+      if (_layer == MaskLayer.mask) ...[
+        icon(key: const ValueKey<String>('mask-invert'), tooltip: 'Swap the painted and unpainted parts (I)', icon: Icons.invert_colors, onTap: _invert),
+        icon(
+          key: const ValueKey<String>('mask-all'),
+          tooltip: 'Paint all of it',
+          icon: Icons.format_color_fill,
+          onTap: () {
+            _ops.add(const MaskOp(MaskKind.all));
+            _changed();
+          },
+        ),
+      ],
+    ];
     return Container(
       decoration: const BoxDecoration(
         color: Palette.panel,
         border: Border(top: BorderSide(color: Palette.line)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_active == MaskTool.find) ...[_findRow(), const SizedBox(height: 8)],
-          Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        alignment: WrapAlignment.center,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          SegmentedButton<MaskLayer>(
-            key: const ValueKey<String>('mask-layer'),
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: MaskLayer.color, icon: Icon(Icons.palette_outlined, size: 17), label: Text('Color'), tooltip: 'Paint color into the picture (C)'),
-              ButtonSegment(value: MaskLayer.mask, icon: Icon(Icons.brush, size: 17), label: Text('Mask'), tooltip: 'Paint where to redraw (M)'),
-            ],
-            selected: {_layer},
-            onSelectionChanged: (s) => setState(() {
-              _layer = s.first;
-              _picking = false;
-            }),
-          ),
-          if (_layer == MaskLayer.color) ...[
-            Tooltip(
-              message: 'The color: tap for the wheel',
-              child: InkWell(
-                key: const ValueKey<String>('mask-color'),
-                customBorder: const CircleBorder(),
-                onTap: () => _showWheel(!(_wheelChosen ?? MediaQuery.sizeOf(context).width >= 800)),
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(color: _color, shape: BoxShape.circle, border: Border.all(color: Palette.text, width: 2)),
-                ),
-              ),
-            ),
-            icon(key: const ValueKey<String>('mask-pick'), tooltip: 'Pick a color from the picture (P)', icon: Icons.colorize, onTap: _picking ? null : _startPicking),
-            SegmentedButton<bool>(
-              key: const ValueKey<String>('mask-color-tool'),
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: false, icon: Icon(Icons.circle, size: 13), label: Text('Brush'), tooltip: 'Paint with the color (B)'),
-                ButtonSegment(value: true, icon: Icon(Icons.blur_on, size: 17), label: Text('Smear'), tooltip: 'Drag the colors and blur them together (S)'),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final wide = box.maxWidth >= 900;
+          final optionWrap = Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: options);
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_layer == MaskLayer.mask && _active == MaskTool.find) ...[_findRow(), const SizedBox(height: 8)],
+              if (_layer == MaskLayer.mask && _active == MaskTool.select) ...[_selectRow(), const SizedBox(height: 8)],
+              if (extending) ...[_extendRow(), const SizedBox(height: 8)],
+              if (wide)
+                Row(
+                  children: [
+                    layers,
+                    const SizedBox(width: 16),
+                    Expanded(child: optionWrap),
+                    history,
+                  ],
+                )
+              else ...[
+                Row(children: [Flexible(child: layers), const Spacer(), history]),
+                if (options.isNotEmpty) ...[const SizedBox(height: 8), optionWrap],
               ],
-              selected: {_smear},
-              onSelectionChanged: (s) => _setSmear(s.first),
-            ),
-          ] else SegmentedButton<MaskTool>(
-            key: const ValueKey<String>('mask-tool'),
-            showSelectedIcon: false,
-            segments: [
-              const ButtonSegment(value: MaskTool.brush, icon: Icon(Icons.circle, size: 13), label: Text('Brush'), tooltip: 'Paint with a round brush (B)'),
-              const ButtonSegment(value: MaskTool.trace, icon: Icon(Icons.gesture, size: 17), label: Text('Trace'), tooltip: 'Trace round a shape; it fills when you let go (T)'),
-              if (_canFind)
-                const ButtonSegment(
-                  value: MaskTool.find,
-                  icon: Icon(Icons.center_focus_strong_outlined, size: 17),
-                  label: Text('Find'),
-                  tooltip: 'Find where a phrase of the prompt is, or would fit (F)',
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Extend's own row: what the canvas comes to, shapes to take it out to,
+  /// and how much of the picture's edge is redrawn to join it.
+  Widget _extendRow() {
+    final a = widget.aspect > 0 ? widget.aspect : 1.0;
+    final px = widget.pixels;
+    final w = (px?.width ?? 1024).round(), h = (px?.height ?? (1024 / a)).round();
+    final (nw, nh) = _ext.sizeOf(w, h);
+    final shapes = <(String, Extension)>[
+      ('Square', Extension.toAspect(a, 1, blend: _ext.blend)),
+      ('4:3', Extension.toAspect(a, 4 / 3, blend: _ext.blend)),
+      ('3:4', Extension.toAspect(a, 3 / 4, blend: _ext.blend)),
+      ('16:9', Extension.toAspect(a, 16 / 9, blend: _ext.blend)),
+      ('9:16', Extension.toAspect(a, 9 / 16, blend: _ext.blend)),
+      ('All round', Extension(left: 0.125, top: 0.125, right: 0.125, bottom: 0.125, blend: _ext.blend)),
+    ];
+    bool same(Extension x) =>
+        (x.left - _ext.left).abs() < 0.004 && (x.right - _ext.right).abs() < 0.004 && (x.top - _ext.top).abs() < 0.004 && (x.bottom - _ext.bottom).abs() < 0.004;
+    return Column(
+      key: const ValueKey<String>('mask-extend-row'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: '$w × $h', style: const TextStyle(color: Palette.muted)),
+              const TextSpan(text: '  →  ', style: TextStyle(color: Palette.faint)),
+              TextSpan(text: '$nw × $nh', style: TextStyle(fontWeight: FontWeight.w600, color: _ext.any ? Palette.accent : Palette.muted)),
+              TextSpan(
+                text: _ext.any ? '   ${(nw * nh / 1e6).toStringAsFixed(2)} MP' : '   Drag an edge out, or pick a shape',
+                style: const TextStyle(color: Palette.faint),
+              ),
+            ],
+          ),
+          key: const ValueKey<String>('mask-extend-size'),
+          style: const TextStyle(fontSize: 12.5, fontFeatures: [FontFeature.tabularFigures()]),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 34,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final (label, e) in shapes)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChipButton(
+                    key: ValueKey<String>('mask-extend-$label'),
+                    label: label,
+                    selected: _ext.any && same(e),
+                    onTap: e.any ? () => _setExtension(e) : null,
+                  ),
                 ),
             ],
-            selected: {_tool},
-            onSelectionChanged: (s) {
-              setState(() => _tool = s.first);
-              if (s.first == MaskTool.find && _heat == null && !_finding) {
-                final first = _phrase ?? (widget.phrases.isEmpty ? null : widget.phrases.first);
-                if (first != null) _look(first);
-              }
-            },
           ),
-          if (!(_smear && _layer == MaskLayer.color)) SegmentedButton<bool>(
-            key: const ValueKey<String>('mask-mode'),
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: false, icon: Icon(Icons.add, size: 17), label: Text('Paint'), tooltip: 'Add paint (E switches)'),
-              ButtonSegment(value: true, icon: Icon(Icons.remove, size: 17), label: Text('Erase'), tooltip: 'Take paint away (E switches)'),
-            ],
-            selected: {_erase},
-            onSelectionChanged: (s) => setState(() => _erase = s.first),
-          ),
-          if (_active == MaskTool.brush)
-            SizedBox(
-              width: 190,
-              child: Row(
-                children: [
-                  const Tooltip(message: 'Brush size ([ and ], or Shift and the wheel)', child: Icon(Icons.circle_outlined, size: 14, color: Palette.muted)),
-                  Expanded(
-                    child: Slider(
-                      key: const ValueKey<String>('mask-brush'),
-                      value: _brush,
-                      min: _brushMin,
-                      max: _brushMax,
-                      onChanged: (v) => setState(() => _brush = v),
-                    ),
-                  ),
-                ],
+        ),
+        Row(
+          children: [
+            const Tooltip(
+              message: 'How much of the picture next to the new canvas is redrawn too, so the join does not show',
+              child: Text('Blend', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+            ),
+            Expanded(
+              child: Slider(
+                key: const ValueKey<String>('mask-extend-blend'),
+                value: _ext.blend.toDouble(),
+                min: 0,
+                max: 128,
+                divisions: 16,
+                onChanged: (v) => setState(() => _ext = _ext.copyWith(blend: v.round())),
               ),
             ),
-          if (_penSeen && _active == MaskTool.brush)
-            OutlinedButton.icon(
-              key: const ValueKey<String>('mask-pressure'),
-              onPressed: () => setState(() => _pressure = !_pressure),
-              icon: const Icon(Icons.draw_outlined, size: 16),
-              label: Text(_pressure ? 'Pen pressure: on' : 'Pen pressure: off'),
-            ),
-          icon(key: const ValueKey<String>('mask-undo'), tooltip: 'Undo (Ctrl Z)', icon: Icons.undo, onTap: _list.isEmpty ? null : _undo),
-          if (_layer == MaskLayer.mask) ...[
-            icon(key: const ValueKey<String>('mask-invert'), tooltip: 'Swap the painted and unpainted parts (I)', icon: Icons.invert_colors, onTap: _invert),
-            icon(
-              key: const ValueKey<String>('mask-all'),
-              tooltip: 'Paint all of it',
-              icon: Icons.format_color_fill,
-              onTap: () {
-                _ops.add(const MaskOp(MaskKind.all));
-                _changed();
-              },
+            SizedBox(
+              width: 48,
+              child: Text('${_ext.blend} px', textAlign: TextAlign.end, style: const TextStyle(fontSize: 12.5, color: Palette.muted, fontFeatures: [FontFeature.tabularFigures()])),
             ),
           ],
-          icon(
-            key: const ValueKey<String>('mask-clear'),
-            tooltip: _layer == MaskLayer.color ? 'Clear the color' : 'Clear the mask',
-            icon: Icons.layers_clear_outlined,
-            onTap: _list.isEmpty ? null : _clear,
+        ),
+      ],
+    );
+  }
+
+  /// Select's own row: the model to fetch the first time, then what a tap
+  /// does and how far each outline is pushed out.
+  Widget _selectRow() {
+    final selector = _selector!;
+    final model = selector.model;
+    if (!model.installed) {
+      final mb = (selector.downloadBytes / (1 << 20)).round();
+      return Row(
+        key: const ValueKey<String>('mask-select-download'),
+        children: [
+          const Icon(Icons.download_outlined, size: 18, color: Palette.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: model.downloading
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Getting the selection model… ${model.progress == null ? '' : '${(model.progress! * 100).round()}%'}', style: const TextStyle(fontSize: 12.5, color: Palette.muted)),
+                      const SizedBox(height: 6),
+                      LinearProgressIndicator(value: model.progress, minHeight: 3),
+                    ],
+                  )
+                : Text(
+                    model.error ?? 'Select needs a $mb MB model, downloaded once and kept on this device.',
+                    style: TextStyle(fontSize: 12.5, color: model.error == null ? Palette.muted : Palette.danger, height: 1.35),
+                  ),
           ),
-          if (_zoom > 1.001)
-            icon(key: const ValueKey<String>('mask-fit'), tooltip: 'Fit the picture again (0)', icon: Icons.fit_screen_outlined, onTap: _fit),
+          const SizedBox(width: 10),
+          if (!model.downloading)
+            FilledButton(
+              key: const ValueKey<String>('mask-select-get'),
+              onPressed: selector.download,
+              child: Text(model.error == null ? 'Download' : 'Try again'),
+            ),
         ],
-          ),
-        ],
-      ),
+      );
+    }
+    final edge = _selectEdge.round();
+    return Column(
+      key: const ValueKey<String>('mask-select-row'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _selectError ?? (_erase ? 'Tap an object to take it out of the mask.' : 'Tap an object to add all of it to the mask. Tap more to add them too.'),
+          style: TextStyle(fontSize: 12.5, color: _selectError == null ? Palette.muted : Palette.danger),
+        ),
+        Row(
+          children: [
+            const Tooltip(
+              message: 'Push each outline out past the object, or in from its edge',
+              child: Text('Edge', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+            ),
+            Expanded(
+              child: Slider(
+                key: const ValueKey<String>('mask-select-edge'),
+                value: _selectEdge,
+                min: -16,
+                max: 32,
+                divisions: 48,
+                onChanged: _setSelectEdge,
+              ),
+            ),
+            SizedBox(
+              width: 48,
+              child: Text(edge > 0 ? '+$edge px' : '$edge px', textAlign: TextAlign.end, style: const TextStyle(fontSize: 12.5, color: Palette.muted, fontFeatures: [FontFeature.tabularFigures()])),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -1866,6 +2384,70 @@ class _Unfold extends StatelessWidget {
 
 /// The picture close up around [spot] (fractions of it), in a circle ringed
 /// with the color under it.
+/// The canvas round the picture when it is extended: the new area hatched
+/// (and tinted as mask, since it is all drawn new), the band of the
+/// picture's own edge redrawn with it, and while extending, a handle on
+/// each edge to pull it out by.
+class _ExtensionPainter extends CustomPainter {
+  _ExtensionPainter({required this.frame, required this.picture, required this.blend, required this.showMask, required this.handles, this.dragging});
+  final Rect frame;
+  final Rect picture;
+  final double blend;
+  final bool showMask;
+  final bool handles;
+  final int? dragging;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final outside = Path.combine(PathOperation.difference, Path()..addRect(frame), Path()..addRect(picture));
+    canvas.save();
+    canvas.clipPath(outside);
+    canvas.drawRect(frame, Paint()..color = const Color(0xFF1A1A20));
+    final hatch = Paint()
+      ..color = const Color(0x22FFFFFF)
+      ..strokeWidth = 1;
+    for (var x = frame.left - frame.height; x < frame.right; x += 12) {
+      canvas.drawLine(Offset(x, frame.bottom), Offset(x + frame.height, frame.top), hatch);
+    }
+    if (showMask) canvas.drawRect(frame, Paint()..color = maskTint.withValues(alpha: 0.32));
+    canvas.restore();
+    if (blend > 0.5 && frame != picture) {
+      // The picture's edge redrawn to join it, where it meets new canvas.
+      final band = Paint()
+        ..color = maskTint.withValues(alpha: showMask ? 0.22 : 0.12)
+        ..style = PaintingStyle.fill;
+      if (picture.left > frame.left + 0.5) canvas.drawRect(Rect.fromLTWH(picture.left, picture.top, blend, picture.height), band);
+      if (picture.right < frame.right - 0.5) canvas.drawRect(Rect.fromLTWH(picture.right - blend, picture.top, blend, picture.height), band);
+      if (picture.top > frame.top + 0.5) canvas.drawRect(Rect.fromLTWH(picture.left, picture.top, picture.width, blend), band);
+      if (picture.bottom < frame.bottom - 0.5) canvas.drawRect(Rect.fromLTWH(picture.left, picture.bottom - blend, picture.width, blend), band);
+    }
+    final edge = Paint()
+      ..color = handles ? Palette.accent : const Color(0x88FFFFFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = handles ? 1.5 : 1;
+    canvas.drawRect(frame.deflate(0.5), edge);
+    if (!handles) return;
+    // A pill on each edge's middle.
+    final mids = [frame.centerLeft, frame.topCenter, frame.centerRight, frame.bottomCenter];
+    for (var i = 0; i < 4; i++) {
+      final vertical = i.isEven;
+      final pill = RRect.fromRectAndRadius(
+        Rect.fromCenter(center: mids[i], width: vertical ? 10 : 44, height: vertical ? 44 : 10),
+        const Radius.circular(5),
+      );
+      canvas.drawRRect(pill, Paint()..color = dragging == i ? Palette.accent : Palette.text);
+      canvas.drawRRect(pill, Paint()
+        ..color = const Color(0xFF0E0E10)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ExtensionPainter old) =>
+      old.frame != frame || old.picture != picture || old.blend != blend || old.showMask != showMask || old.handles != handles || old.dragging != dragging;
+}
+
 class _LoupePainter extends CustomPainter {
   _LoupePainter(this.image, this.spot, this.color);
   final ui.Image image;
