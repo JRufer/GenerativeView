@@ -214,6 +214,45 @@ void main() {
       expect(const Extension(top: 0.25).sizeOf(1024, 1024), (1024, 1280));
       expect(const Extension().copyWith(left: 5).left, Extension.most);
     });
+
+    test('a shape keeps the longer side of the canvas as it is', () {
+      // A square picture pulled out to 2 wide and 1.5 high.
+      const pulled = Extension(left: 0.25, right: 0.75, top: 0.5);
+      final wide = pulled.fitTo(1, 16 / 9);
+      final (w, h) = wide.canvasOf(1);
+      expect(w, closeTo(2, 1e-9), reason: 'the longer side stays');
+      expect(w / h, closeTo(16 / 9, 1e-9));
+      expect(wide.left / wide.right, closeTo(1 / 3, 1e-9), reason: 'the picture keeps its place across');
+      final tall = pulled.fitTo(1, 9 / 16);
+      final (tw, th) = tall.canvasOf(1);
+      expect(th, closeTo(2, 1e-9));
+      expect(tw / th, closeTo(9 / 16, 1e-9));
+      // From no extension at all, the canvas grows to hold the picture.
+      final (sw, sh) = Extension.none.fitTo(1, 16 / 9).canvasOf(1);
+      expect((sw, sh), (closeTo(16 / 9, 1e-9), closeTo(1, 1e-9)));
+      // A side never goes past the most it may.
+      final far = const Extension(left: 1, right: 1).fitTo(1, 9 / 16);
+      for (final side in [far.left, far.right, far.top, far.bottom]) {
+        expect(side, lessThanOrEqualTo(Extension.most + 1e-9));
+      }
+    });
+
+    test('a corner resizes the canvas keeping its shape', () {
+      final start = Extension.none.fitTo(1, 16 / 9);
+      // The bottom right corner pulled out and down.
+      final bigger = cornerResize(start, 1, 2, const Offset(0.4, 0.1));
+      final (w, h) = bigger.canvasOf(1);
+      expect(w / h, closeTo(16 / 9, 1e-9));
+      expect(w, greaterThan(16 / 9));
+      expect(bigger.left, closeTo(start.left, 1e-9), reason: 'the opposite corner stays put');
+      expect(bigger.top, closeTo(start.top, 1e-9));
+      // Pulled in past the picture, it stops at the picture.
+      final smallest = cornerResize(start, 1, 0, const Offset(5, 5));
+      final (sw, sh) = smallest.canvasOf(1);
+      expect(sw / sh, closeTo(16 / 9, 1e-9));
+      expect(sh, closeTo(1, 1e-9));
+      expect(smallest.top, closeTo(0, 1e-9));
+    });
   });
 
   // ---------------------------------------------------------------- screens
