@@ -1,8 +1,10 @@
 // The mask painted for image to image: whether it paints anything, and how
 // the picture is cropped to a new shape (the mask is cropped the same way).
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'dart:ui' as ui show Image;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -118,6 +120,28 @@ void main() {
       int red(int x, int y) => data.getUint8((y * 64 + x) * 4);
       expect(red(10, 32), 255);
       expect(red(50, 32), lessThan(255));
+    });
+  });
+
+  testWidgets('a smear patch lands where it should, its soft edge keeping its color', (tester) async {
+    await tester.runAsync(() async {
+      final done = Completer<ui.Image>();
+      // Premultiplied: half covered, full red.
+      decodeImageFromPixels(Uint8List.fromList([128, 0, 0, 128]), 1, 1, PixelFormat.rgba8888, done.complete);
+      final patch = await done.future;
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      canvas.drawRect(const Rect.fromLTWH(0, 0, 10, 10), Paint()..color = const Color(0xFFFFFFFF));
+      paintMask(canvas, const Size(10, 10), [
+        MaskOp(MaskKind.patch, image: patch, area: const Rect.fromLTWH(0, 0, 0.5, 1)),
+      ], const Color(0x00000000));
+      final out = await recorder.endRecording().toImage(10, 10);
+      final data = (await out.toByteData())!;
+      int channel(int x, int k) => data.getUint8((5 * 10 + x) * 4 + k);
+      expect(channel(2, 0), greaterThan(250), reason: 'red over white');
+      expect(channel(2, 1), inInclusiveRange(120, 135), reason: 'half of the white still shows');
+      expect(channel(8, 1), 255, reason: 'outside the patch nothing changed');
+      expect(maskPaints([MaskOp(MaskKind.patch, image: patch, area: Rect.zero)]), isTrue);
     });
   });
 
