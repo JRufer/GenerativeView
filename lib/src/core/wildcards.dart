@@ -330,3 +330,32 @@ List<String> wordListFromText(String text) => [
   for (final line in const LineSplitter().convert(text))
     if (line.trim().isNotEmpty && !line.trimLeft().startsWith('#')) line.trim(),
 ];
+
+/// The prompt and negative for each of [count] pictures when either holds
+/// choices or known word lists; null when neither does, and one remix of
+/// [count] goes as it is. With [every], one of each combination in turn
+/// (the negative's changing fastest); otherwise random picks from [seed].
+List<(String, String)>? wildcardPicks(
+  String prompt,
+  String negative,
+  Map<String, List<String>> lists, {
+  required int count,
+  required bool every,
+  int seed = 0,
+}) {
+  final p = WildcardPrompt.parse(prompt, lists);
+  final n = WildcardPrompt.parse(negative, lists);
+  if (!p.hasChoices && !n.hasChoices) return null;
+  if (every) {
+    final prompts = p.every(limit: count);
+    final negatives = n.every(limit: count);
+    final pairs = <(String, String)>[
+      for (final a in prompts)
+        for (final b in negatives) (a, b),
+    ];
+    return [for (var i = 0; i < count; i++) pairs[i % pairs.length]];
+  }
+  final prompts = p.expand(count, all: false, seed: seed);
+  final negatives = n.expand(count, all: false, seed: seed + 1);
+  return [for (var i = 0; i < count; i++) (prompts[i], negatives[i])];
+}

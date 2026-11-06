@@ -121,8 +121,7 @@ class _RemixPanelState extends State<RemixPanel> {
 
   /// The word lists, for the prompts to show which `__lists__` exist.
   void _syncWordLists() {
-    // Highlighting wildcards waits on them being made, like the bar.
-    final lists = widget.state.previewTools ? widget.state.wordLists : null;
+    final lists = widget.state.wordLists;
     if (!identical(_prompt.wordLists, lists)) {
       _prompt.wordLists = lists;
       _negative.wordLists = lists;
@@ -466,32 +465,67 @@ class _RemixPanelState extends State<RemixPanel> {
           throw BackendException('Could not read the picture to start from: $e');
         }
       }
-      final ticket = await sendRemix(
-        kind,
-        widget.state.backendUrls[kind]!,
-        Remix(
-          info: _model == null ? info : withModel(info, _model!),
-          prompt: _prompt.text,
-          negative: _negative.text,
-          seed: int.tryParse(_seed.text.trim()) ?? 0,
-          randomSeed: _random || int.tryParse(_seed.text.trim()) == null,
-          count: _count,
-          width: width,
-          height: height,
-          steps: _sampling.sentSteps,
-          cfg: _sampling.sentCfg,
-          loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
-          init: init,
-        ),
+      final seed = int.tryParse(_seed.text.trim()) ?? 0;
+      final random = _random || int.tryParse(_seed.text.trim()) == null;
+      Remix remix({required String prompt, required String negative, required int seed, required int count}) => Remix(
+        info: _model == null ? info : withModel(info, _model!),
+        prompt: prompt,
+        negative: negative,
+        seed: seed,
+        randomSeed: random,
+        count: count,
+        width: width,
+        height: height,
+        steps: _sampling.sentSteps,
+        cfg: _sampling.sentCfg,
+        loras: _loras.isEmpty ? null : [for (final l in _loras) l.copy()],
+        init: init,
       );
-      // Waited for in the background, panel or no panel.
-      widget.state.collectRemix(widget.item, ticket);
+      final picks = wildcardPicks(
+        _prompt.text,
+        _negative.text,
+        widget.state.wordLists,
+        count: _pictures,
+        every: _wildMode == WildcardMode.every,
+        seed: seed,
+      );
+      final base = widget.state.backendUrls[kind]!;
+      if (picks == null) {
+        final ticket = await sendRemix(kind, base, remix(prompt: _prompt.text, negative: _negative.text, seed: seed, count: _count));
+        // Waited for in the background, panel or no panel.
+        widget.state.collectRemix(widget.item, ticket);
+        if (!mounted) return;
+        toast(
+          context,
+          '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
+          'saved beside the original and added to ${AppState.remixCollection}.',
+        );
+      } else {
+        // A prompt of its own for each picture: one remix each, sent at once
+        // and kept as one run, told of when all of them are back.
+        final batch = widget.state.openRemixBatch();
+        var sent = 0;
+        Object? failure;
+        try {
+          await Future.wait([
+            for (var i = 0; i < picks.length; i++)
+              sendRemix(kind, base, remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1)).then((ticket) {
+                widget.state.collectRemix(widget.item, ticket, batch: batch);
+                sent++;
+              }, onError: (Object e) => failure ??= e),
+          ]);
+        } finally {
+          widget.state.closeRemixBatch(batch);
+        }
+        if (failure != null) throw BackendException(sent == 0 ? '$failure' : 'Sent $sent of ${picks.length}, then: $failure');
+        if (!mounted) return;
+        toast(
+          context,
+          'Sent ${picks.length} pictures to ${backendNames[kind]}, each with its own prompt. They will be '
+          'saved beside the original and added to ${AppState.remixCollection}.',
+        );
+      }
       if (!mounted) return;
-      toast(
-        context,
-        '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
-        'saved beside the original and added to ${AppState.remixCollection}.',
-      );
       Navigator.of(context).maybePop();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -566,8 +600,7 @@ Widget build(BuildContext context) {
         maxLines: 5,
         onAddWord: widget.state.addUserWord,
       ),
-      if (widget.state.previewTools)
-        WildcardBar(
+      WildcardBar(
         state: widget.state,
         prompt: _prompt,
         negative: _negative,

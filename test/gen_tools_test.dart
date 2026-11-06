@@ -137,6 +137,16 @@ void main() {
       expect(marks[2].missing, isTrue);
     });
 
+    test('each picture gets its own prompt and negative', () {
+      expect(wildcardPicks('a fox', 'blur', lists, count: 3, every: false), isNull);
+      final every = wildcardPicks('a {red|blue} fox', '{blur|noise}', lists, count: 4, every: true)!;
+      expect(every, [('a red fox', 'blur'), ('a red fox', 'noise'), ('a blue fox', 'blur'), ('a blue fox', 'noise')]);
+      final picked = wildcardPicks('a fox, __lighting__', 'blur', lists, count: 5, every: false, seed: 3)!;
+      expect(picked.length, 5);
+      expect(picked.every((p) => p.$2 == 'blur' && !p.$1.contains('__')), isTrue);
+      expect(wildcardPicks('a fox, __lighting__', 'blur', lists, count: 5, every: false, seed: 3), picked);
+    });
+
     test('word list files: one option a line, no blanks or comments', () {
       expect(wordListFromText('# lighting\ngolden hour\n\n  overcast  \n'), ['golden hour', 'overcast']);
       expect(wordListsFromJson('{"a":["x","y"]}'), {'a': ['x', 'y']});

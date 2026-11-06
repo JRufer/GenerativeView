@@ -453,7 +453,7 @@ class AppState extends ChangeNotifier {
   List<Preset> presets = const [];
 
   /// Shows the generation tools whose screens are built but whose work is
-  /// not yet: wildcards, extending the canvas and the hires fix in tiles.
+  /// not yet: extending the canvas and the hires fix in tiles.
   /// Off in the app until each is finished; on in the screenshot tests.
   bool previewTools = false;
 
