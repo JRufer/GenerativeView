@@ -16,17 +16,51 @@ pub struct Tensor {
     pub data: Vec<f32>,
 }
 
+/// A checkpoint's pickled object and its storages by key, from either the
+/// zip archive PyTorch has written since 1.6 or the older format: a run of
+/// pickles (magic number, protocol, system info, the object, the storages'
+/// keys) and then each storage's bytes, after its element count.
+fn open_archive(bytes: &[u8], objects: bool) -> Result<(Value, HashMap<String, Vec<u8>>), String> {
+    if bytes.starts_with(b"PK") {
+        let files = unzip(bytes)?;
+        let (pkl_name, pkl) = files.iter().find(|(name, _)| name.ends_with("/data.pkl") || *name == "data.pkl").ok_or("not a PyTorch checkpoint: no data.pkl")?;
+        let prefix = format!("{}data/", pkl_name.strip_suffix("data.pkl").unwrap_or(""));
+        let root = Machine { objects, ..Default::default() }.run(pkl)?;
+        let storages = files.iter().filter_map(|(n, b)| n.strip_prefix(&prefix).map(|k| (k.to_string(), b.clone()))).collect();
+        return Ok((root, storages));
+    }
+    let mut m = Machine { objects, ..Default::default() };
+    let (_magic, at) = m.run_from(bytes, 0).map_err(|e| format!("not a PyTorch checkpoint: {e}"))?;
+    let (_protocol, at) = m.run_from(bytes, at)?;
+    let (_system, at) = m.run_from(bytes, at)?;
+    let (root, at) = m.run_from(bytes, at)?;
+    let (keys, mut at) = m.run_from(bytes, at)?;
+    let Value::List(keys) = keys else { return Err("checkpoint does not list its storages".into()) };
+    let size_of = |dtype: &str| match dtype {
+        "DoubleStorage" | "LongStorage" => 8,
+        "FloatStorage" | "IntStorage" => 4,
+        "HalfStorage" | "BFloat16Storage" | "ShortStorage" => 2,
+        _ => 1,
+    };
+    let mut storages = HashMap::new();
+    for k in keys {
+        let Value::Str(key) = k else { return Err("bad storage key".into()) };
+        let dtype = m.seen.iter().find(|(s, _)| *s == key).map(|(_, d)| d.clone()).unwrap_or_else(|| "FloatStorage".into());
+        let count = bytes.get(at..at + 8).map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as usize).ok_or("truncated checkpoint")?;
+        at += 8;
+        let len = count * size_of(&dtype);
+        let data = bytes.get(at..at + len).ok_or("truncated checkpoint")?;
+        at += len;
+        storages.insert(key, data.to_vec());
+    }
+    Ok((root, storages))
+}
+
 /// The tensors of a checkpoint by name, from its state dict (or the
 /// `params` / `params_ema` / `state_dict` dict inside it).
 pub fn load(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
-    let files = unzip(bytes)?;
-    let (pkl_name, pkl) = files.iter().find(|(name, _)| name.ends_with("/data.pkl") || *name == "data.pkl").ok_or("not a PyTorch checkpoint: no data.pkl")?;
-    let prefix = pkl_name.strip_suffix("data.pkl").unwrap_or("");
-    let storage = |key: &str| -> Result<&[u8], String> {
-        let name = format!("{prefix}data/{key}");
-        files.iter().find(|(n, _)| *n == name).map(|(_, b)| b.as_slice()).ok_or_else(|| format!("checkpoint is missing {name}"))
-    };
-    let root = Machine::default().run(pkl)?;
+    let (root, files) = open_archive(bytes, false)?;
+    let storage = |key: &str| -> Result<&[u8], String> { files.get(key).map(|b| b.as_slice()).ok_or_else(|| format!("checkpoint is missing storage {key}")) };
     let mut dict = match root {
         Value::Dict(d) => d,
         _ => return Err("checkpoint does not hold a dict".into()),
@@ -42,8 +76,9 @@ pub fn load(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
     let mut out = HashMap::new();
     for (key, value) in dict {
         let (Value::Str(name), Value::Tensor { key, dtype, offset, shape, stride }) = (key, value) else { continue };
-        if dtype != "FloatStorage" {
-            return Err(format!("{name}: {dtype} tensors are not supported"));
+        // Counters (a batch norm's num_batches_tracked) and the like.
+        if dtype != "FloatStorage" && dtype != "HalfStorage" {
+            continue;
         }
         let t = read_tensor(&name, storage(&key)?, &dtype, offset, shape, &stride)?;
         out.insert(name, t);
@@ -58,14 +93,8 @@ pub fn load(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
 /// precision. The model is found under the checkpoint's `ema` or `model`.
 /// Its classes are only named, never run.
 pub fn load_modules(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
-    let files = unzip(bytes)?;
-    let (pkl_name, pkl) = files.iter().find(|(name, _)| name.ends_with("/data.pkl") || *name == "data.pkl").ok_or("not a PyTorch checkpoint: no data.pkl")?;
-    let prefix = pkl_name.strip_suffix("data.pkl").unwrap_or("");
-    let storage = |key: &str| -> Result<&[u8], String> {
-        let name = format!("{prefix}data/{key}");
-        files.iter().find(|(n, _)| *n == name).map(|(_, b)| b.as_slice()).ok_or_else(|| format!("checkpoint is missing {name}"))
-    };
-    let root = Machine { objects: true, ..Default::default() }.run(pkl)?;
+    let (root, files) = open_archive(bytes, true)?;
+    let storage = |key: &str| -> Result<&[u8], String> { files.get(key).map(|b| b.as_slice()).ok_or_else(|| format!("checkpoint is missing storage {key}")) };
     let Value::Dict(dict) = root else { return Err("checkpoint does not hold a dict".into()) };
     let model = ["ema", "model"]
         .iter()
@@ -76,6 +105,9 @@ pub fn load_modules(bytes: &[u8]) -> Result<HashMap<String, Tensor>, String> {
     let mut out = HashMap::new();
     for (name, value) in found {
         let Value::Tensor { key, dtype, offset, shape, stride } = value else { continue };
+        if dtype != "FloatStorage" && dtype != "HalfStorage" {
+            continue;
+        }
         let t = read_tensor(&name, storage(key)?, dtype, *offset, shape.clone(), stride)?;
         out.insert(name, t);
     }
@@ -257,6 +289,8 @@ struct Machine {
     /// Make unknown classes into [`Value::Object`]s rather than refuse
     /// them: for a checkpoint that saves whole modules.
     objects: bool,
+    /// Every storage named, with its type, in the order first met.
+    seen: Vec<(String, String)>,
 }
 
 fn ints(v: &Value) -> Result<Vec<usize>, String> {
@@ -279,7 +313,14 @@ impl Machine {
     }
 
     fn run(mut self, code: &[u8]) -> Result<Value, String> {
-        let mut at = 0;
+        self.run_from(code, 0).map(|(v, _)| v)
+    }
+
+    /// Run the pickle that starts at `start`; its value, and where it ends.
+    fn run_from(&mut self, code: &[u8], start: usize) -> Result<(Value, usize), String> {
+        self.stack.clear();
+        self.memo.clear();
+        let mut at = start;
         let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
             let s = code.get(*at..*at + n).ok_or("truncated pickle")?;
             *at += n;
@@ -403,6 +444,9 @@ impl Machine {
                         Some(Value::Int(n)) => n.to_string(),
                         _ => return Err("bad storage key".into()),
                     };
+                    if !self.seen.iter().any(|(k, _)| *k == key) {
+                        self.seen.push((key.clone(), dtype.clone()));
+                    }
                     self.stack.push(Value::Storage(dtype, key));
                 }
                 b'R' => {
@@ -530,7 +574,7 @@ impl Machine {
                         _ => Value::Str(text.trim_matches(|c| c == '\'' || c == '"').to_string()),
                     });
                 }
-                b'.' => return self.pop(),
+                b'.' => return Ok((self.pop()?, at)),
                 other => return Err(format!("unsupported pickle opcode 0x{other:02x}")),
             }
         }

@@ -773,8 +773,10 @@ mod tests {
         let (x0, x1) = (xs.iter().cloned().fold(1.0, f32::min), xs.iter().cloned().fold(0.0, f32::max));
         let (y0, y1) = (ys.iter().cloned().fold(1.0, f32::min), ys.iter().cloned().fold(0.0, f32::max));
         println!("box {x0} {y0} {x1} {y1}");
-        // Her body: roughly the middle third across, from her shoulders down.
-        assert!(x0 > 0.15 && x1 < 0.85 && x1 - x0 > 0.25, "{x0} {x1}");
-        assert!(y1 > 0.9, "{y1}");
+        // PyTorch MobileSAM, given the same tap, masks the front of her robe
+        // from her collar to the foot of the picture, right edge 0.59.
+        assert!(inside(&outline.iter().map(|p| (p.0, p.1)).collect::<Vec<_>>(), 0.5, 0.7), "the tap is inside");
+        assert!((y0 - 0.485).abs() < 0.03 && (y1 - 0.882).abs() < 0.03, "{y0} {y1}");
+        assert!((x1 - 0.59).abs() < 0.03, "{x1}");
     }
 }
