@@ -42,7 +42,7 @@ jobs:
           mkdir -p out/screens
           flutter pub get > out/pub.txt 2>&1 || true
           flutter analyze > out/analyze.txt 2>&1 || true
-          tests=$(ls test/ui_audit_test.dart test/gen_tools_test.dart 2>/dev/null)
+          tests=$(ls test/ui_audit_test.dart test/gen_tools_test.dart 2>/dev/null || true)
           timeout 40m flutter test --reporter expanded $tests > out/test.txt 2>&1 || true
           echo "${{ github.sha }}" > out/RUN.txt
           tail -5 out/test.txt

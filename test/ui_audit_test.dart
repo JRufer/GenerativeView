@@ -113,8 +113,18 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   }
 
-  MediaItem item(AppState state, String name) => state.items.firstWhere((i) => i.name == name);
-  int indexOf(AppState state, String name) => state.items.indexWhere((i) => i.name == name);
+  int indexOf(AppState state, String name) {
+    for (var i = 0; i < state.items.length; i++) {
+      if (state.items[i].name == name) return i;
+    }
+    return -1;
+  }
+
+  MediaItem item(AppState state, String name) {
+    final at = indexOf(state, name);
+    if (at < 0) throw StateError('no $name');
+    return state.items[at];
+  }
   BuildContext ctx(WidgetTester tester) => tester.element(find.byType(MediaGrid));
 
   Future<void> shot(WidgetTester tester, String name) async {
