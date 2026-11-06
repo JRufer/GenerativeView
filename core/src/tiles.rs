@@ -97,6 +97,66 @@ pub fn merge(tiles: &[(PathBuf, Tile)], width: u32, height: u32, overlap: u32) -
     Ok(out)
 }
 
+/// Regions of a picture to redraw up close (the detail pass): each box
+/// (fractions of the picture) grown to take in what is round it, cut out,
+/// and enlarged so its long side is `side` (each side a multiple of 16, as
+/// servers take), written as `region-N.png` in `dir`. Returns each file,
+/// where it came from in the picture, and the size it was written at.
+pub fn crop_regions(source: &Path, boxes: &[[f32; 4]], side: u32, dir: &Path) -> Result<Vec<(PathBuf, Tile, (u32, u32))>, String> {
+    let picture = crate::jxl::open(source)?;
+    let (w, h) = (picture.width() as f32, picture.height() as f32);
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    let mut out = Vec::new();
+    for (i, b) in boxes.iter().enumerate() {
+        let (bw, bh) = ((b[2] - b[0]) * w, (b[3] - b[1]) * h);
+        // Half as much again round it, and at least 32 pixels.
+        let (gw, gh) = ((bw * 1.6).max(bw + 64.0), (bh * 1.6).max(bh + 64.0));
+        let (cx, cy) = ((b[0] + b[2]) / 2.0 * w, (b[1] + b[3]) / 2.0 * h);
+        let x0 = (cx - gw / 2.0).clamp(0.0, w - 1.0).floor() as u32;
+        let y0 = (cy - gh / 2.0).clamp(0.0, h - 1.0).floor() as u32;
+        let x1 = (cx + gw / 2.0).clamp(1.0, w).ceil() as u32;
+        let y1 = (cy + gh / 2.0).clamp(1.0, h).ceil() as u32;
+        let t = Tile { x: x0, y: y0, w: (x1 - x0).max(1), h: (y1 - y0).max(1) };
+        let scale = side as f32 / t.w.max(t.h) as f32;
+        let snap = |v: f32| (((v / 16.0).round() as u32) * 16).max(64);
+        let size = (snap(t.w as f32 * scale), snap(t.h as f32 * scale));
+        let piece = picture.crop_imm(t.x, t.y, t.w, t.h).resize_exact(size.0, size.1, FilterType::Lanczos3);
+        let path = dir.join(format!("region-{i}.png"));
+        DynamicImage::ImageRgb8(piece.to_rgb8()).save_with_format(&path, image::ImageFormat::Png).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        out.push((path, t, size));
+    }
+    Ok(out)
+}
+
+/// The picture at `base` with each redrawn piece put back where it came
+/// from, fitted to its place and faded in from its edges across `feather`
+/// of its shorter side, so no edge shows.
+pub fn paste_regions(base: &Path, pieces: &[(PathBuf, Tile)], feather: f32) -> Result<RgbImage, String> {
+    let mut out = crate::jxl::open(base)?.to_rgb8();
+    for (path, t) in pieces {
+        let piece = crate::jxl::open(path)?.resize_exact(t.w, t.h, FilterType::Lanczos3).to_rgb8();
+        let f = (t.w.min(t.h) as f32 * feather).max(1.0);
+        for py in 0..t.h {
+            for px in 0..t.w {
+                let (x, y) = (t.x + px, t.y + py);
+                if x >= out.width() || y >= out.height() {
+                    continue;
+                }
+                let edge = (px as f32 + 0.5).min(py as f32 + 0.5).min(t.w as f32 - px as f32 - 0.5).min(t.h as f32 - py as f32 - 0.5);
+                let a = (edge / f).clamp(0.0, 1.0);
+                // Smoothstep, so the fade has no visible start or end.
+                let a = a * a * (3.0 - 2.0 * a);
+                let new = piece.get_pixel(px, py).0;
+                let old = out.get_pixel_mut(x, y);
+                for c in 0..3 {
+                    old.0[c] = (old.0[c] as f32 * (1.0 - a) + new[c] as f32 * a).round() as u8;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +185,28 @@ mod tests {
                 assert!((a.0[c] as i32 - b.0[c] as i32).abs() <= 1);
             }
         }
+    }
+
+    #[test]
+    fn a_region_cut_out_and_pasted_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("p.png");
+        picture(400, 300).save(&src).unwrap();
+        let crops = crop_regions(&src, &[[0.4, 0.4, 0.5, 0.5]], 1024, &dir.path().join("r")).unwrap();
+        let (path, t, size) = &crops[0];
+        // 40 × 30 grown to 104 × 94 round its middle (200, 135).
+        assert_eq!((t.w, t.h), (104, 94));
+        assert!(t.x <= 160 && t.x + t.w >= 200);
+        assert_eq!(size.0.max(size.1) % 16, 0);
+        assert!(size.0.max(size.1) >= 1008);
+        // A white piece pasted back: white in its middle, untouched outside,
+        // blended at its edge.
+        let white = dir.path().join("w.png");
+        RgbImage::from_pixel(size.0, size.1, image::Rgb([255, 255, 255])).save(&white).unwrap();
+        let out = paste_regions(&src, &[(white, *t)], 0.15).unwrap();
+        assert_eq!(out.get_pixel(t.x + t.w / 2, t.y + t.h / 2).0, [255, 255, 255]);
+        assert_eq!(out.get_pixel(5, 5), picture(400, 300).get_pixel(5, 5));
+        let _ = path;
     }
 
     #[test]

@@ -18,9 +18,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - timeout-minutes: 10
+      - timeout-minutes: 12
+        continue-on-error: true
         run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          for i in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && break; done
           sudo apt-get -o Acquire::Retries=3 install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv ffmpeg
       - uses: Swatinem/rust-cache@v2
         with:
@@ -37,11 +38,11 @@ jobs:
         run: git clone --depth 1 https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
       - name: Detail models
         run: |
-          d="$RUNNER_TEMP/detail"; mkdir -p "$d"
-          curl -sSfL -o "$d/retinaface_mobilenet0.25.pth" https://huggingface.co/py-feat/retinaface/resolve/main/mobilenet0.25_Final.pth
-          curl -sSfL -o "$d/anime_face_v1.4_n.pt" https://huggingface.co/deepghs/anime_face_detection/resolve/main/face_detect_v1.4_n/model.pt
-          curl -sSfL -o "$d/anime_hand_v1.0_n.pt" https://huggingface.co/deepghs/anime_hand_detection/resolve/main/hand_detect_v1.0_n/model.pt
-          ls -l "$d"
+          d="$RUNNER_TEMP/detail"; mkdir -p "$d/retinaface" "$d/anime_face_v1.4_n" "$d/anime_hand_v1.0_n"
+          curl -sSfL -o "$d/retinaface/mobilenet0.25_Final.pth" https://huggingface.co/py-feat/retinaface/resolve/main/mobilenet0.25_Final.pth
+          curl -sSfL -o "$d/anime_face_v1.4_n/model.pt" https://huggingface.co/deepghs/anime_face_detection/resolve/main/face_detect_v1.4_n/model.pt
+          curl -sSfL -o "$d/anime_hand_v1.0_n/model.pt" https://huggingface.co/deepghs/anime_hand_detection/resolve/main/hand_detect_v1.0_n/model.pt
+          ls -lR "$d"
       - name: Detectors against the real models
         working-directory: core
         env:
@@ -61,7 +62,7 @@ jobs:
           import os
           from ultralytics import YOLO
           d, s = os.environ['D'], os.environ['S']
-          for model, th in [('anime_face_v1.4_n.pt', 0.278), ('anime_hand_v1.0_n.pt', 0.264)]:
+          for model, th in [('anime_face_v1.4_n/model.pt', 0.278), ('anime_hand_v1.0_n/model.pt', 0.264)]:
               m = YOLO(os.path.join(d, model))
               for name in ['flux/girl_in_field.png', 'chroma/fennec_girl_flowers.png', 'z_image/z_image_turbo_example.png', 'sdxl/sdxl_simple_example.png']:
                   r = m.predict(os.path.join(s, name), conf=th, imgsz=640, verbose=False)[0]

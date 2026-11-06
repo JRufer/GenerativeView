@@ -15,6 +15,7 @@ import 'kit.dart';
 import 'sheet.dart';
 import '../core/detail_pass.dart';
 import 'detail_ui.dart';
+import '../detail_run.dart';
 
 /// Open the upscale panel for [item]: which model, how much bigger, and
 /// what to do with the metadata. The upscale itself runs on this device in
@@ -107,6 +108,10 @@ class _UpscalePanelState extends State<UpscalePanel> {
   /// Faces and hands redrawn up close, and whether that is all (the
   /// picture kept at its own size, nothing upscaled).
   late DetailPass _detail = DetailPass(faces: widget.detail);
+
+  /// What the detail section found in the picture, for the boxes tapped
+  /// to be left alone.
+  List<DetailRegion> _found = const [];
   late bool _keepSize = widget.detail;
 
   bool get _detailOffered => widget.state.regionFinder != null && _refinable;
@@ -173,6 +178,38 @@ class _UpscalePanelState extends State<UpscalePanel> {
     }
     final server = _refine ? _server : null;
     final factor = _factor;
+    final state = widget.state;
+    final detail = _detailOn && _server != null ? _detail : null;
+    final skip = [for (final i in _detail.skipped) if (i < _found.length) _found[i]];
+    final fixOn = _server;
+    if (_detailOnly && fixOn != null) {
+      // Only the detail pass: the picture itself goes, nothing upscaled.
+      unawaited(state.startWithoutUpscale(
+        widget.items,
+        (original, path) => runDetailOn(state, original, path, kind: fixOn, pass: _detail, skip: widget.items.length == 1 ? skip : const []),
+        label: 'faces and hands on ${backendNames[fixOn]}',
+      ));
+      if (mounted) Navigator.of(context).maybePop();
+      return;
+    }
+    if (server == null && detail != null && fixOn != null) {
+      // Upscaled here, then faces and hands redrawn on the upscale, which
+      // is not kept without them.
+      if (factor == null) {
+        setState(() => _busy = false);
+        return;
+      }
+      await state.startUpscales(
+        widget.items,
+        model: model!.id,
+        factor: factor,
+        keepMetadata: _keepMetadata,
+        then: (original, upscaled) => runDetailOn(state, original, upscaled, kind: fixOn, pass: detail, skip: widget.items.length == 1 ? skip : const []),
+        thenLabel: 'then faces and hands on ${backendNames[fixOn]}',
+      );
+      if (mounted) Navigator.of(context).maybePop();
+      return;
+    }
     if (server == null) {
       if (factor == null) {
         setState(() => _busy = false);
@@ -180,13 +217,13 @@ class _UpscalePanelState extends State<UpscalePanel> {
       }
       await widget.state.startUpscales(widget.items, model: model!.id, factor: factor, keepMetadata: _keepMetadata);
     } else {
-      final state = widget.state;
       final strength = _hiresStrength;
       final scale = _hiresScale;
       final (tileMode, tile, overlap) = (_tileMode, _tile, _overlap);
       Future<String?> refine(MediaItem original, String upscaled) =>
           refineUpscale(state, original, upscaled,
-              kind: server, strength: strength, scale: scale, tiles: tileMode, tile: tile, overlap: overlap);
+              kind: server, strength: strength, scale: scale, tiles: tileMode, tile: tile, overlap: overlap,
+              detail: detail, skip: widget.items.length == 1 ? skip : const []);
       if (scale <= 1) {
         // At its own size: the picture itself goes, nothing is made here.
         unawaited(state.startWithoutUpscale(widget.items, refine, label: 'refining on ${backendNames[server]}'));
@@ -382,6 +419,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
                 if (!p.on) _keepSize = false;
               }),
               finder: widget.state.regionFinder,
+              onFound: (found) => _found = found,
               path: many ? null : item.path,
               aspect: item.width > 0 && item.height > 0 ? item.width / item.height : 1,
               enabled: !_busy,
@@ -764,8 +802,14 @@ Future<String?> refineUpscale(
   TileMode tiles = TileMode.whole,
   int tile = defaultTileSize,
   int overlap = defaultTileOverlap,
+  DetailPass? detail,
+  List<DetailRegion> skip = const [],
 }) async {
   final name = backendNames[kind] ?? kind;
+  // Faces and hands redrawn on what comes back, when asked for.
+  RemixTicket fixed(RemixTicket t, GenInfo info) => detail == null || !detail.on
+      ? t
+      : withDetailPass(t, state, kind: kind, base: state.backendUrls[kind] ?? '', info: info, prompt: info.prompt, negative: info.negative, pass: detail, skip: skip);
   final base = state.backendUrls[kind] ?? '';
   if (base.isEmpty) throw HiresNotSent('not refined: $name is no longer set up');
   final GenInfo info;
@@ -789,7 +833,7 @@ Future<String?> refineUpscale(
   if (usesTiles(tiles, width, height)) {
     final ticket = await _refineInTiles(state, original, upscaled, info,
         kind: kind, base: base, strength: strength, width: width, height: height, tile: tile, overlap: overlap);
-    state.collectRemix(original, ticket, label: 'hires');
+    state.collectRemix(original, fixed(ticket, info), label: 'hires');
     return 'Hires fix of ${original.name} at $width × $height: ${ticket.message}';
   }
   final ImageInput init;
@@ -819,7 +863,7 @@ Future<String?> refineUpscale(
   } catch (e) {
     throw HiresNotSent('$name did not take the refine: $e');
   }
-  state.collectRemix(original, ticket, label: 'hires');
+  state.collectRemix(original, fixed(ticket, info), label: 'hires');
   // What the server was given, model stand-ins and LoRAs left out included.
   return 'Hires fix of ${original.name} at $width × $height: ${ticket.message}';
 }

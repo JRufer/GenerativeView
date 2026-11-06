@@ -18,6 +18,7 @@ import '../core/wildcards.dart';
 import '../theme.dart';
 import 'audience_widgets.dart' show RemixAudienceSection;
 import 'detail_ui.dart';
+import '../detail_run.dart';
 import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
 import 'presets_ui.dart';
@@ -491,10 +492,15 @@ class _RemixPanelState extends State<RemixPanel> {
         seed: seed,
       );
       final base = widget.state.backendUrls[kind]!;
+      // Faces and hands redrawn in each picture before it is saved, with the
+      // prompt that picture was made with.
+      RemixTicket fixed(RemixTicket t, String prompt, String negative) => _detail.on
+          ? withDetailPass(t, widget.state, kind: kind, base: base, info: info, prompt: prompt, negative: negative, pass: _detail)
+          : t;
       if (picks == null) {
         final ticket = await sendRemix(kind, base, remix(prompt: _prompt.text, negative: _negative.text, seed: seed, count: _count));
         // Waited for in the background, panel or no panel.
-        widget.state.collectRemix(widget.item, ticket);
+        widget.state.collectRemix(widget.item, fixed(ticket, _prompt.text, _negative.text));
         if (!mounted) return;
         toast(
           context,
@@ -511,7 +517,7 @@ class _RemixPanelState extends State<RemixPanel> {
           await Future.wait([
             for (var i = 0; i < picks.length; i++)
               sendRemix(kind, base, remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1)).then((ticket) {
-                widget.state.collectRemix(widget.item, ticket, batch: batch);
+                widget.state.collectRemix(widget.item, fixed(ticket, picks[i].$1, picks[i].$2), batch: batch);
                 sent++;
               }, onError: (Object e) => failure ??= e),
           ]);

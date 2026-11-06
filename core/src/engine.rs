@@ -923,6 +923,35 @@ impl Engine {
                 Ok("{}".to_string())
             }
             "upscale" => self.start_upscale(args),
+            "detail_crop" => {
+                let boxes: Vec<[f32; 4]> = serde_json::from_value(args.get("boxes").cloned().unwrap_or_default()).map_err(|e| format!("boxes: {e}"))?;
+                let side = u32_arg(args, "side").unwrap_or(1024);
+                let crops = crate::tiles::crop_regions(Path::new(str_arg(args, "path")?), &boxes, side, Path::new(str_arg(args, "dir")?))?;
+                Ok(Value::Array(
+                    crops
+                        .iter()
+                        .map(|(p, t, (w, h))| json!({ "path": p.to_string_lossy(), "x": t.x, "y": t.y, "w": t.w, "h": t.h, "sent_w": w, "sent_h": h }))
+                        .collect(),
+                )
+                .to_string())
+            }
+            "detail_paste" => {
+                #[derive(serde::Deserialize)]
+                struct Placed {
+                    path: String,
+                    #[serde(flatten)]
+                    tile: crate::tiles::Tile,
+                }
+                let placed: Vec<Placed> = serde_json::from_value(args.get("pieces").cloned().unwrap_or_default()).map_err(|e| format!("pieces: {e}"))?;
+                let pieces: Vec<_> = placed.into_iter().map(|p| (std::path::PathBuf::from(p.path), p.tile)).collect();
+                let base = Path::new(str_arg(args, "path")?);
+                let out = crate::tiles::paste_regions(base, &pieces, 0.15)?;
+                // With the picture's own metadata.
+                let png = crate::upscale::png_with_metadata_of(base, &image::DynamicImage::ImageRgb8(out))?;
+                let dest = str_arg(args, "dest")?;
+                std::fs::write(dest, png).map_err(|e| format!("cannot write {dest}: {e}"))?;
+                Ok(json!({ "path": dest }).to_string())
+            }
             "detail_status" => {
                 let dir = crate::detect::model_dir(&self.data_dir);
                 Ok(json!({ "installed": crate::detect::Finder::installed(&dir), "dir": dir.to_string_lossy() }).to_string())

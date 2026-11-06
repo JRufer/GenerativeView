@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:generativeview/main.dart';
 import 'package:generativeview/src/app_state.dart';
 import 'package:generativeview/src/core/detail_pass.dart';
+import 'package:generativeview/src/detail_run.dart';
 import 'package:generativeview/src/core/models.dart';
 import 'package:generativeview/src/core/native_core.dart';
 import 'package:generativeview/src/core/object_select.dart';
@@ -355,6 +356,55 @@ void main() {
     expect((frame.image.width, frame.image.height), (1024, 1024));
     // The original's ComfyUI workflow came with it.
     expect(latin1.decode(bytes, allowInvalid: true), contains('"class_type"'));
+    await close(tester, state);
+  });
+
+  testWidgets('the detail pass: the face redrawn and put back, the rest as it was', skip: skip, (tester) async {
+    final saved = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = saved);
+    final sizes = <String>[];
+    final server = (await tester.runAsync(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>;
+        final (w, h) = (body['width'] as int, body['height'] as int);
+        sizes.add('${w}x$h');
+        // A white picture of the size asked for, as though redrawn.
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawRect(Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()), Paint()..color = const Color(0xFFFFFFFF));
+        final img = await recorder.endRecording().toImage(w, h);
+        final png = (await img.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'images': [base64Encode(png)], 'info': '{}'}));
+        await request.response.close();
+      });
+      return server;
+    }))!;
+    addTearDown(() => server.close(force: true));
+    final state = await launch(tester, tabUltra);
+    state.setBackendUrl('forge', 'http://127.0.0.1:${server.port}');
+    final girl = item(state, 'girl_in_field.png');
+    await tester.runAsync(() => runDetailOn(state, girl, girl.path, kind: 'forge', pass: const DetailPass(faces: true)));
+    await pumpUntil(tester, () => state.upscaled.value.isNotEmpty, what: 'the face put back', timeout: const Duration(seconds: 90));
+    expect(sizes.length, 1, reason: 'one face');
+    final (w, h) = (int.parse(sizes.single.split('x')[0]), int.parse(sizes.single.split('x')[1]));
+    expect(math.max(w, h), inInclusiveRange(1008, 1024));
+    final out = File(state.upscaled.value.single);
+    expect(out.path.replaceAll(r'\', '/'), endsWith('/girl_in_field_detail1.png'));
+    Future<ByteData> rgba(String path) async {
+      final codec = await ui.instantiateImageCodec(File(path).readAsBytesSync());
+      final frame = await codec.getNextFrame();
+      return (await frame.image.toByteData())!;
+    }
+
+    final fixed = (await tester.runAsync(() => rgba(out.path)))!;
+    final before = (await tester.runAsync(() => rgba(girl.path)))!;
+    int at(ByteData d, double fx, double fy) => d.getUint8(((fy * 1024).round() * 1024 + (fx * 1024).round()) * 4);
+    // The middle of the face (0.51, 0.37) is white now; a corner of the
+    // field is as it was.
+    expect(at(fixed, 0.51, 0.37), 255);
+    expect(at(fixed, 0.05, 0.9), at(before, 0.05, 0.9));
     await close(tester, state);
   });
 

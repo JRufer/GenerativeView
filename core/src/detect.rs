@@ -13,9 +13,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// The models' files, where the app puts them under the data folder.
-pub const RETINAFACE: &str = "retinaface_mobilenet0.25.pth";
-pub const ANIME_FACE: &str = "anime_face_v1.4_n.pt";
-pub const ANIME_HAND: &str = "anime_hand_v1.0_n.pt";
+/// Each in a folder of its own, under the name its source gives it.
+pub const RETINAFACE: &str = "retinaface/mobilenet0.25_Final.pth";
+pub const ANIME_FACE: &str = "anime_face_v1.4_n/model.pt";
+pub const ANIME_HAND: &str = "anime_hand_v1.0_n/model.pt";
 
 pub fn model_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("models").join("detail")

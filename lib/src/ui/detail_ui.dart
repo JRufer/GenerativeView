@@ -28,9 +28,13 @@ class DetailPassSection extends StatefulWidget {
     this.path,
     this.aspect = 1,
     this.enabled = true,
+    this.onFound,
   });
   final DetailPass pass;
   final ValueChanged<DetailPass> onChanged;
+
+  /// What was found in [path], once it is.
+  final ValueChanged<List<DetailRegion>>? onFound;
 
   /// What finds the faces and hands; its model may need fetching first.
   final RegionFinder? finder;
@@ -82,6 +86,7 @@ class _DetailPassSectionState extends State<DetailPassSection> {
     try {
       final found = await finder.find(path);
       if (mounted) setState(() => _found = found);
+      widget.onFound?.call(found);
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {

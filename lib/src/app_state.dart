@@ -8,6 +8,7 @@ import 'package:flutter/services.dart' show TextEditingValue, TextSelection;
 import 'package:flutter/widgets.dart' show FocusNode, TextEditingController;
 
 import 'core/audience.dart';
+import 'core/detail_models.dart';
 import 'core/detail_pass.dart' show RegionFinder;
 import 'core/object_select.dart' show ObjectSelector;
 import 'core/backends.dart' show cancelRemix, RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
@@ -173,6 +174,9 @@ class AppState extends ChangeNotifier {
     _events = core.events.listen(_onEvent);
     jxlPixels = core.jxlPixels;
     jxlToPng = (path, dest) => core.call('jxl_png', {'path': path, 'dest': dest});
+    final finder = DetailModels(core);
+    regionFinder = finder;
+    unawaited(finder.check());
   }
 
   final NativeCore core;
@@ -199,6 +203,11 @@ class AppState extends ChangeNotifier {
   /// the home page.
   final StreamController<String> _notices = StreamController.broadcast();
   Stream<String> get notices => _notices.stream;
+
+  /// Say [text] in a toast, as the app's own notices are.
+  void notice(String text) {
+    if (!_disposed) _notices.add(text);
+  }
 
   /// Zoom nudges from the keyboard for the picture in the focus view: one
   /// stop in (positive) or out (negative) per step.
@@ -2448,7 +2457,7 @@ class AppState extends ChangeNotifier {
     final id = ++_remixIds;
     final saved = <String>[];
     // How it is spoken of when something goes wrong.
-    final what = label == 'hires' ? 'Hires fix' : 'Remix';
+    final what = label == 'hires' ? 'Hires fix' : (label == 'detail' ? 'Detail pass' : 'Remix');
     final server = switch (ticket.kind) {
       'comfyui' => 'ComfyUI ',
       'invokeai' => 'InvokeAI ',
@@ -2490,7 +2499,7 @@ class AppState extends ChangeNotifier {
         // round button keeps it.
         if (!failed) _remixProblem('$what of $originalName', '${server}finished, but brought no picture back');
         list.removeAt(at);
-      } else if (label == 'hires') {
+      } else if (label == 'hires' || label == 'detail') {
         // An upscale, finished on the server: done with the upscales.
         list.removeAt(at);
         upscaled.value = [...upscaled.value, ...saved];
@@ -2550,6 +2559,10 @@ class AppState extends ChangeNotifier {
     };
     remixes.value = [...remixes.value, RemixJob(id, originalName, remaining: left, batch: batch, label: label)];
   }
+
+  /// Whether what a run of [label] makes is kept with the upscales: a hires
+  /// fix, or faces and hands fixed on a picture already made.
+  static bool _isUpscale(String label) => label == 'hires' || label == 'detail';
 
   /// Say that a remix went wrong, and keep it on the round button (in
   /// [problems]) until put away, so it is not missed.
@@ -2619,7 +2632,7 @@ class AppState extends ChangeNotifier {
       // picture.
       final part = File('$base.$name.part');
       await part.writeAsBytes(image.bytes, flush: true);
-      final jxl = label == 'hires' ? upscaleFormat == 'jxl' : remixFormat == 'jxl';
+      final jxl = _isUpscale(label) ? upscaleFormat == 'jxl' : remixFormat == 'jxl';
       if (jxl && !isJxl(path)) {
         final stem = path.substring(0, path.lastIndexOf('.'));
         var dest = '$stem.jxl';
@@ -2644,7 +2657,7 @@ class AppState extends ChangeNotifier {
       return null;
     }
     if (_disposed) return path;
-    final collection = label == 'hires' ? upscaleCollection : remixCollection;
+    final collection = _isUpscale(label) ? upscaleCollection : remixCollection;
     try {
       await core.call('notes_set', {
         'paths': [path],
@@ -3038,6 +3051,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    final finder = regionFinder;
+    if (finder is DetailModels) finder.dispose();
     _events.cancel();
     _sharedIn?.cancel();
     _reloadTimer?.cancel();
