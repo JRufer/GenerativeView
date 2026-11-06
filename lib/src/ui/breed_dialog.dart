@@ -418,8 +418,7 @@ class _BreedPanelState extends State<BreedPanel> {
           const SizedBox(
             width: 240,
             child: Text(
-              'Drag left or right to reorder: new pictures are made on the first one\'s model, size and server. '
-              'Underlines show which picture each phrase came from; blue words are new.',
+              'Drag to reorder: new pictures use the first one\'s model, size and server. Blue words are new.',
               style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
             ),
           ),

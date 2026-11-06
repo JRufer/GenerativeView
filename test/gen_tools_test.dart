@@ -199,7 +199,9 @@ void main() {
   });
 
   Future<AppState> launch(WidgetTester tester, Size size, {bool modelsInstalled = true}) async {
+    // Real shadows in the pictures; back as the test framework wants them after.
     debugDisableShadows = false;
+    addTearDown(() => debugDisableShadows = true);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -327,6 +329,8 @@ void main() {
       final state = await launch(tester, size);
       openUpscale(ctx(tester), state, item(state, 'girl_in_field.png'));
       await pumpUntil(tester, () => find.byKey(const ValueKey('hires-switch')).evaluate().isNotEmpty, what: 'upscale');
+      // A bottom sheet slides up; tap once it is in place.
+      await tester.pump(const Duration(milliseconds: 800));
       await tap(tester, find.byKey(const ValueKey('hires-switch')));
       await tap(tester, find.byKey(const ValueKey('hires-scale-3')));
       expect(find.byKey(const ValueKey('tiles-section')), findsOneWidget);

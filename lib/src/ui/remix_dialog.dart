@@ -575,8 +575,11 @@ Widget build(BuildContext context) {
         onMode: (m) => setState(() => _wildMode = m),
         seed: int.tryParse(_seed.text) ?? 0,
       ),
-      RemixAudienceSection(state: widget.state, prompt: _prompt, negative: _negative),
     ];
+    // Aiming the prompt at an audience: under the prompts on a narrow
+    // panel, and with the other settings on the right of a wide one, so
+    // the two columns come out about as long as each other.
+    final audience = RemixAudienceSection(state: widget.state, prompt: _prompt, negative: _negative);
     // How to make it.
     final how = <Widget>[
       const PanelHeading('Seed, size and count'),
@@ -672,6 +675,9 @@ Widget build(BuildContext context) {
             child: DetailPassSection(pass: _detail, onChanged: (p) => setState(() => _detail = p), finder: widget.state.regionFinder),
           ),
         ),
+    ];
+    // Where it goes and what to know about that: last, under everything.
+    final notes = <Widget>[
       if (_backend != null && (urls[_backend] ?? '').isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 10),
@@ -736,10 +742,10 @@ Widget build(BuildContext context) {
                   children: [
                     Expanded(flex: 5, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: what)),
                     const SizedBox(width: 24),
-                    Expanded(flex: 4, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: how)),
+                    Expanded(flex: 4, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...how, audience, ...notes])),
                   ],
                 )
-              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...what, ...how]),
+              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...what, audience, ...how, ...notes]),
         );
       },
     );

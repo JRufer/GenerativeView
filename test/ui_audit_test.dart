@@ -82,7 +82,9 @@ void main() {
   });
 
   Future<AppState> launch(WidgetTester tester, Size size) async {
+    // Real shadows in the pictures; back as the test framework wants them after.
     debugDisableShadows = false;
+    addTearDown(() => debugDisableShadows = true);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);

@@ -1659,7 +1659,7 @@ class _MaskEditorState extends State<MaskEditor> {
                       : _layer == MaskLayer.color
                       ? 'Color: painted into the picture the remix starts from'
                       : _layer == MaskLayer.extend
-                      ? (_ext.any ? 'Extend: the hatched canvas is drawn new to match the picture' : 'Extend: drag an edge out past the picture')
+                      ? (_ext.any ? 'The hatched area is drawn new' : 'Drag an edge out past the picture')
                       : _tool == MaskTool.select
                       ? (_selectingAt != null ? 'Selecting…' : (painted ? 'Mask: only the pink part is redrawn' : 'Select: tap an object to mask it'))
                       : _tool == MaskTool.find && _phrase != null
@@ -1720,24 +1720,6 @@ class _MaskEditorState extends State<MaskEditor> {
             child: ClipRect(
               child: Stack(
                 children: [
-                  // The canvas past the picture's edges: hatched, and pink
-                  // on the mask since all of it is drawn new.
-                  if (_ext.any || _layer == MaskLayer.extend)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          key: const ValueKey<String>('mask-extension'),
-                          painter: _ExtensionPainter(
-                            frame: _frame,
-                            picture: r,
-                            blend: _ext.any ? _ext.blend * r.width / math.max(1, widget.pixels?.width ?? 1024) : 0,
-                            showMask: _layer != MaskLayer.color,
-                            handles: _layer == MaskLayer.extend,
-                            dragging: _edge,
-                          ),
-                        ),
-                      ),
-                    ),
                   Positioned.fromRect(
                     rect: r,
                     child: Image(
@@ -1767,6 +1749,25 @@ class _MaskEditorState extends State<MaskEditor> {
                       ),
                     ),
                   ),
+                  // The canvas past the picture's edges, over the picture so its
+                  // handles show: hatched, and pink on the mask since all of it
+                  // is drawn new. Its blend band lies on the picture's edge.
+                  if (_ext.any || _layer == MaskLayer.extend)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          key: const ValueKey<String>('mask-extension'),
+                          painter: _ExtensionPainter(
+                            frame: _frame,
+                            picture: r,
+                            blend: _ext.any ? _ext.blend * r.width / math.max(1, widget.pixels?.width ?? 1024) : 0,
+                            showMask: _layer != MaskLayer.color,
+                            handles: _layer == MaskLayer.extend,
+                            dragging: _edge,
+                          ),
+                        ),
+                      ),
+                    ),
                   if (_active == MaskTool.find && _heat != null && _heatFor == _phrase)
                     Positioned.fromRect(
                       rect: r,
@@ -2009,7 +2010,13 @@ class _MaskEditorState extends State<MaskEditor> {
                   ],
                 )
               else ...[
-                Row(children: [Flexible(child: layers), const Spacer(), history]),
+                Row(
+                  children: [
+                    // Shrunk to fit rather than squeezed, so its labels never wrap.
+                    Expanded(child: Align(alignment: Alignment.centerLeft, child: FittedBox(fit: BoxFit.scaleDown, child: layers))),
+                    history,
+                  ],
+                ),
                 if (options.isNotEmpty) ...[const SizedBox(height: 8), optionWrap],
               ],
             ],
@@ -2044,7 +2051,7 @@ class _MaskEditorState extends State<MaskEditor> {
           TextSpan(
             children: [
               TextSpan(text: '$w × $h', style: const TextStyle(color: Palette.muted)),
-              const TextSpan(text: '  →  ', style: TextStyle(color: Palette.faint)),
+              const TextSpan(text: '  to  ', style: TextStyle(color: Palette.faint)),
               TextSpan(text: '$nw × $nh', style: TextStyle(fontWeight: FontWeight.w600, color: _ext.any ? Palette.accent : Palette.muted)),
               TextSpan(
                 text: _ext.any ? '   ${(nw * nh / 1e6).toStringAsFixed(2)} MP' : '   Drag an edge out, or pick a shape',
@@ -2074,7 +2081,7 @@ class _MaskEditorState extends State<MaskEditor> {
             ],
           ),
         ),
-        Row(
+        Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 520), child: Row(
           children: [
             const Tooltip(
               message: 'How much of the picture next to the new canvas is redrawn too, so the join does not show',
@@ -2095,7 +2102,7 @@ class _MaskEditorState extends State<MaskEditor> {
               child: Text('${_ext.blend} px', textAlign: TextAlign.end, style: const TextStyle(fontSize: 12.5, color: Palette.muted, fontFeatures: [FontFeature.tabularFigures()])),
             ),
           ],
-        ),
+        ))),
       ],
     );
   }
@@ -2147,7 +2154,7 @@ class _MaskEditorState extends State<MaskEditor> {
           _selectError ?? (_erase ? 'Tap an object to take it out of the mask.' : 'Tap an object to add all of it to the mask. Tap more to add them too.'),
           style: TextStyle(fontSize: 12.5, color: _selectError == null ? Palette.muted : Palette.danger),
         ),
-        Row(
+        Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 520), child: Row(
           children: [
             const Tooltip(
               message: 'Push each outline out past the object, or in from its edge',
@@ -2168,7 +2175,7 @@ class _MaskEditorState extends State<MaskEditor> {
               child: Text(edge > 0 ? '+$edge px' : '$edge px', textAlign: TextAlign.end, style: const TextStyle(fontSize: 12.5, color: Palette.muted, fontFeatures: [FontFeature.tabularFigures()])),
             ),
           ],
-        ),
+        ))),
       ],
     );
   }
