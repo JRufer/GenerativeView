@@ -4,6 +4,7 @@
 pub mod audience;
 pub mod clip;
 pub mod dates;
+pub mod detect;
 pub mod db;
 pub mod dupes;
 pub mod engine;
@@ -12,6 +13,7 @@ pub mod fsnav;
 pub mod index;
 pub mod jxl;
 pub mod meta;
+pub mod nn;
 pub mod notes;
 pub mod sr;
 pub mod taste;

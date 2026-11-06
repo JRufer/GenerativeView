@@ -33,6 +33,8 @@ pub struct Engine {
     /// The model of the user's taste, with a fingerprint of the ratings it
     /// learned from: fitted again only when they change.
     taste: parking_lot::Mutex<Option<(u64, Arc<Taste>)>>,
+    /// The face and hand finder, loaded the first time it is asked for.
+    finder: parking_lot::Mutex<Option<Arc<crate::detect::Finder>>>,
 }
 
 /// The taste model, or why there is none yet, with how many of the
@@ -78,7 +80,7 @@ impl Engine {
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
         let dupes = crate::dupes::Duplicates::open(data_dir);
-        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default() })
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default(), finder: Default::default() })
     }
 
     pub fn close(&self) {
@@ -921,6 +923,32 @@ impl Engine {
                 Ok("{}".to_string())
             }
             "upscale" => self.start_upscale(args),
+            "detail_status" => {
+                let dir = crate::detect::model_dir(&self.data_dir);
+                Ok(json!({ "installed": crate::detect::Finder::installed(&dir), "dir": dir.to_string_lossy() }).to_string())
+            }
+            "detail_find" => {
+                let finder = {
+                    let mut slot = self.finder.lock();
+                    match slot.as_ref() {
+                        Some(f) => f.clone(),
+                        None => {
+                            let f = Arc::new(crate::detect::Finder::load(&crate::detect::model_dir(&self.data_dir))?);
+                            *slot = Some(f.clone());
+                            f
+                        }
+                    }
+                };
+                let picture = crate::jxl::open(Path::new(str_arg(args, "path")?))?;
+                let found = finder.find(&picture)?;
+                Ok(Value::Array(
+                    found
+                        .iter()
+                        .map(|r| json!({ "kind": r.kind, "box": [r.x0, r.y0, r.x1, r.y1], "score": r.score }))
+                        .collect(),
+                )
+                .to_string())
+            }
             "tiles_split" => {
                 let tiles: Vec<crate::tiles::Tile> = serde_json::from_value(args.get("tiles").cloned().unwrap_or_default()).map_err(|e| format!("tiles: {e}"))?;
                 let paths = crate::tiles::split(

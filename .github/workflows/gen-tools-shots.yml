@@ -35,6 +35,40 @@ jobs:
         run: cargo build --release --lib
       - name: Sample images
         run: git clone --depth 1 https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
+      - name: Detail models
+        run: |
+          d="$RUNNER_TEMP/detail"; mkdir -p "$d"
+          curl -sSfL -o "$d/retinaface_mobilenet0.25.pth" https://huggingface.co/py-feat/retinaface/resolve/main/mobilenet0.25_Final.pth
+          curl -sSfL -o "$d/anime_face_v1.4_n.pt" https://huggingface.co/deepghs/anime_face_detection/resolve/main/face_detect_v1.4_n/model.pt
+          curl -sSfL -o "$d/anime_hand_v1.0_n.pt" https://huggingface.co/deepghs/anime_hand_detection/resolve/main/hand_detect_v1.0_n/model.pt
+          ls -l "$d"
+      - name: Detectors against the real models
+        working-directory: core
+        env:
+          GV_DETAIL_MODELS: ${{ runner.temp }}/detail
+          GV_SAMPLE_DIR: ${{ runner.temp }}/samples
+        run: |
+          mkdir -p ../out
+          cargo test --release --lib detect -- --nocapture > ../out/detect.txt 2>&1 || true
+          tail -30 ../out/detect.txt
+      - name: Reference boxes from Ultralytics (check only)
+        env:
+          D: ${{ runner.temp }}/detail
+          S: ${{ runner.temp }}/samples
+        run: |
+          pip install -q ultralytics > /dev/null 2>&1 || true
+          python3 - > out/reference.txt 2>&1 <<'PY' || true
+          import os
+          from ultralytics import YOLO
+          d, s = os.environ['D'], os.environ['S']
+          for model, th in [('anime_face_v1.4_n.pt', 0.278), ('anime_hand_v1.0_n.pt', 0.264)]:
+              m = YOLO(os.path.join(d, model))
+              for name in ['flux/girl_in_field.png', 'chroma/fennec_girl_flowers.png', 'z_image/z_image_turbo_example.png', 'sdxl/sdxl_simple_example.png']:
+                  r = m.predict(os.path.join(s, name), conf=th, imgsz=640, verbose=False)[0]
+                  w, h = r.orig_shape[1], r.orig_shape[0]
+                  print(model, name, [(round(float(b[0])/w, 3), round(float(b[1])/h, 3), round(float(b[2])/w, 3), round(float(b[3])/h, 3), round(float(c), 3)) for b, c in zip(r.boxes.xyxy, r.boxes.conf)])
+          PY
+          cat out/reference.txt
       - name: Analyze and test
         env:
           GV_SCREENSHOT_DIR: ${{ github.workspace }}/out/screens
