@@ -880,6 +880,10 @@ impl Engine {
                 let make = args.get("make").and_then(Value::as_bool).unwrap_or(false);
                 Ok(self.content.check_prompt(&normalize(str_arg(args, "path")?), str_arg(args, "prompt")?, make)?.to_string())
             }
+            "phrases_in_parts" => {
+                let boxes: Vec<[f32; 4]> = serde_json::from_value(args.get("boxes").cloned().unwrap_or_default()).map_err(|e| format!("boxes: {e}"))?;
+                Ok(self.content.phrases_in_parts(str_arg(args, "path")?, args.get("prompt").and_then(Value::as_str).unwrap_or(""), &boxes)?.to_string())
+            }
             "taste_status" => Ok(self.taste_status().to_string()),
             "audience_info" => self.audience_info(str_arg(args, "path")?, args.get("prompt").and_then(Value::as_str).unwrap_or("")),
             "audience_set" => {

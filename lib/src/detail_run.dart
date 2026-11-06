@@ -12,11 +12,13 @@ import 'app_state.dart';
 import 'core/backends.dart';
 import 'core/detail_pass.dart';
 import 'core/models.dart' show GenInfo, MediaItem;
+import 'core/piece_prompts.dart';
 
 /// [ticket], with the detail pass run on each picture it brings back before
-/// that picture is handed on. [prompt] and [negative] are what the regions
-/// are redrawn with ([DetailPass.extra] is added to the prompt). Regions
-/// that mostly cover one of [skip] are left alone.
+/// that picture is handed on. Each region is redrawn with the parts of
+/// [prompt] that hold in it (see [piecePrompts], with [DetailPass.extra]
+/// added) and [negative]. Regions that mostly cover one of [skip] are left
+/// alone.
 RemixTicket withDetailPass(
   RemixTicket ticket,
   AppState state, {
@@ -105,22 +107,33 @@ Future<RemixImage> _fix(
       'dir': dir.path,
     }) as List)
         .cast<Map<String, dynamic>>();
-    final words = pass.extra.trim();
+    // Each face or hand is asked for as one, with only the phrases seen
+    // around it: the whole prompt would draw its subject into every hand.
+    final prompts = await piecePrompts(
+      state.core.call,
+      path: picture,
+      prompt: prompt,
+      boxes: [
+        for (final c in crops) [c['x'] as num, c['y'] as num, (c['x'] as num) + (c['w'] as num), (c['y'] as num) + (c['h'] as num)],
+      ],
+      kinds: [for (final r in found) r.kind],
+      extra: pass.extra,
+    );
     final seed = int.tryParse(info.seed.trim());
     final tickets = await Future.wait([
-      for (final c in crops)
-        File(c['path'] as String).readAsBytes().then((bytes) => sendRemix(
+      for (var i = 0; i < crops.length; i++)
+        File(crops[i]['path'] as String).readAsBytes().then((bytes) => sendRemix(
               kind,
               base,
               Remix(
                 info: info,
-                prompt: words.isEmpty ? prompt : '$prompt, $words',
-                negative: negative,
+                prompt: prompts[i],
+                negative: pieceNegative(negative, kind: found[i].kind),
                 seed: seed ?? 0,
                 randomSeed: seed == null,
                 count: 1,
-                width: c['sent_w'] as int,
-                height: c['sent_h'] as int,
+                width: crops[i]['sent_w'] as int,
+                height: crops[i]['sent_h'] as int,
                 init: ImageInput(image: bytes, strength: pass.strength),
               ),
             )),

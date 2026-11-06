@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../core/backends.dart';
 import '../core/models.dart';
+import '../core/piece_prompts.dart';
 import '../theme.dart';
 import 'mask_editor.dart' show prepareImageInput;
 import 'meta_panel.dart' show toast;
@@ -882,7 +883,8 @@ Future<String?> refineUpscale(
 
 /// A hires fix sent in tiles: [upscaled] cut into overlapping tiles of
 /// [tile] pixels, each redrawn on the server as an ordinary image to image
-/// job with the picture's own prompt and seed, and put back together here
+/// job with the picture's own seed and the part of its prompt that is in
+/// that tile (see [piecePrompts]), and put back together here
 /// with each fading into its neighbours, carrying the original's metadata.
 ///
 /// One ticket for all of it, bringing back the one picture, and saying how
@@ -922,6 +924,16 @@ Future<RemixTicket> _refineInTiles(
     throw HiresNotSent('not refined: could not cut the upscale into tiles ($e)');
   }
   final seed = int.tryParse(info.seed.trim());
+  // Each tile is asked for only what is in it, or every tile grows the
+  // prompt's whole subject again.
+  final prompts = await piecePrompts(
+    state.core.call,
+    path: upscaled,
+    prompt: info.prompt,
+    boxes: [
+      for (final t in plan) [t['x']!, t['y']!, t['x']! + t['w']!, t['y']! + t['h']!],
+    ],
+  );
   final tickets = <RemixTicket>[];
   try {
     tickets.addAll(await Future.wait([
@@ -931,7 +943,7 @@ Future<RemixTicket> _refineInTiles(
               base,
               Remix(
                 info: info,
-                prompt: info.prompt,
+                prompt: prompts[i],
                 negative: info.negative,
                 seed: seed ?? 0,
                 randomSeed: seed == null,

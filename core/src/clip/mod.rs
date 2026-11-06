@@ -467,6 +467,103 @@ impl ContentSearch {
             .collect();
         Ok(json!({ "phrases": list, "seen": seen, "checked": scored.len() }))
     }
+
+    /// Which phrases of `prompt` each part of the picture at `path` shows,
+    /// for redrawing the parts one at a time (tiles of a hires fix, faces
+    /// and hands): a part sent with the whole prompt has every subject of
+    /// it drawn into it again. `boxes` are left, top, right, bottom in the
+    /// picture's pixels.
+    ///
+    /// The phrases come as [`prompt_phrases`] cuts them, each marked
+    /// `quality` (only asks for quality) or `look` (the kind of picture or
+    /// its light, which holds everywhere in it). `parts` lists, for each
+    /// box, the other phrases the model sees in it; it is null when the
+    /// model is not installed, and then only the marks can be gone by.
+    pub fn phrases_in_parts(&self, path: &str, prompt: &str, boxes: &[[f32; 4]]) -> Result<Value, String> {
+        let phrases = prompt_phrases(prompt);
+        let list = marked_phrases(&phrases);
+        let scored: Vec<usize> = (0..phrases.len()).filter(|&i| !is_quality_phrase(&phrases[i]) && !is_look_phrase(&phrases[i])).collect();
+        let inner = &self.inner;
+        if !inner.installed() || boxes.is_empty() {
+            return Ok(json!({ "phrases": list, "parts": Value::Null }));
+        }
+        let parts: Vec<Vec<usize>> = if scored.is_empty() {
+            vec![Vec::new(); boxes.len()]
+        } else {
+            let img = ::image::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+            let (w, h) = (img.width(), img.height());
+            let encoder = model::Vision::load(&inner.model_dir)?;
+            let prepared: Result<Vec<Vec<f32>>, String> = boxes
+                .par_iter()
+                .map(|b| {
+                    let x0 = (b[0].max(0.0) as u32).min(w.saturating_sub(1));
+                    let y0 = (b[1].max(0.0) as u32).min(h.saturating_sub(1));
+                    let x1 = (b[2].max(0.0) as u32).clamp(x0 + 1, w);
+                    let y1 = (b[3].max(0.0) as u32).clamp(y0 + 1, h);
+                    image::prepare(&img.crop_imm(x0, y0, x1 - x0, y1 - y0), encoder.image_size)
+                })
+                .collect();
+            let vectors = encoder.embed(&prepared?.concat());
+            let reference = inner.reference()?;
+            let texts: Vec<String> = scored.iter().map(|&i| phrases[i].to_lowercase()).collect();
+            let wanted = inner.phrase_vectors(&texts)?;
+            vectors
+                .chunks_exact(encoder.dim)
+                .map(|v| {
+                    let packed = store::pack(v);
+                    let usual = usual(&reference, &packed);
+                    scored
+                        .iter()
+                        .zip(&wanted)
+                        .filter(|(_, t)| usual.fit(store::score(t, &packed)).level() >= 1.0)
+                        .map(|(&i, _)| i)
+                        .collect()
+                })
+                .collect()
+        };
+        Ok(json!({ "phrases": list, "parts": parts }))
+    }
+}
+
+/// `phrases`, each marked whether it only asks for quality and whether it
+/// is about the look of the whole picture.
+fn marked_phrases(phrases: &[String]) -> Vec<Value> {
+    phrases.iter().map(|p| json!({ "text": p, "quality": is_quality_phrase(p), "look": is_look_phrase(p) })).collect()
+}
+
+/// Words that say what kind of picture it is or how it is lit, which holds
+/// in every part of it.
+const LOOK_WORDS: &[&str] = &[
+    "painting", "painted", "photograph", "photography", "photo", "illustration", "anime", "manga", "style", "lighting", "light",
+    "lit", "art", "artwork", "render", "sketch", "drawing", "drawn", "watercolor", "watercolour", "oil", "acrylic", "ink",
+    "cinematic", "film", "grain", "bokeh", "colors", "colours", "colorful", "palette", "shading", "lineart", "cel", "pastel",
+    "vibrant", "muted", "monochrome", "noir", "impressionist", "impressionism", "surreal", "surrealism", "fantasy", "concept",
+    "digital", "3d", "pixel", "vector", "comic", "cartoon", "ukiyo", "baroque", "renaissance", "gothic", "cyberpunk", "steampunk",
+    "vintage", "retro", "polaroid", "glow", "glowing", "rim", "volumetric", "dramatic", "soft", "warm", "cool", "golden", "hour",
+    "moody", "atmospheric", "texture", "textured", "brushstrokes", "canvas", "matte", "gouache", "charcoal", "pencil", "chiaroscuro",
+];
+
+/// Words that say how the whole picture is framed: wrong for a part of it.
+const FRAMING_WORDS: &[&str] =
+    &["close-up", "closeup", "full", "body", "upper", "wide", "angle", "aerial", "shot", "portrait", "view", "cowboy", "panorama", "panoramic"];
+
+/// Whether `phrase` says how the picture looks rather than what is in it
+/// ("oil painting", "soft lighting", "by an artist"), and not how it is
+/// framed ("a close-up", "full body shot").
+pub fn is_look_phrase(phrase: &str) -> bool {
+    let lower = phrase.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| c.is_whitespace() || c == '_' || c == ',').filter(|w| !w.is_empty()).collect();
+    if words.is_empty() || words.iter().any(|w| FRAMING_WORDS.contains(w) || w.contains("close-up")) {
+        return false;
+    }
+    // Every word has to be about the look: "soft lighting", but not "golden
+    // hair" or "fantasy castle", which would draw a thing into every part.
+    let all_look = words.iter().all(|w| LOOK_WORDS.contains(w) || QUALITY_WORDS.contains(w) || w.chars().all(|c| c.is_ascii_digit()));
+    (all_look && words.iter().any(|w| LOOK_WORDS.contains(w)))
+        || lower.starts_with("by ")
+        || lower.starts_with("art by ")
+        || lower.starts_with("in the style of")
+        || lower.starts_with("style of")
 }
 
 /// What a picture can be described by, beyond the everyday things in it:
@@ -1262,6 +1359,25 @@ mod tests {
         for phrase in ["a red fox", "snow", "detailed fur", "golden hour"] {
             assert!(!is_quality_phrase(phrase), "{phrase}");
         }
+    }
+
+    #[test]
+    fn look_phrases_hold_everywhere_but_things_do_not() {
+        for phrase in ["oil painting", "soft lighting", "golden hour", "anime style", "by greg rutkowski", "warm colors", "film grain", "watercolor"] {
+            assert!(is_look_phrase(phrase), "{phrase}");
+        }
+        for phrase in ["a red fox", "golden hair", "fantasy castle", "full body shot", "a close-up", "1girl", "portrait photography", "sword"] {
+            assert!(!is_look_phrase(phrase), "{phrase}");
+        }
+    }
+
+    #[test]
+    fn phrases_are_marked_for_parts() {
+        let marks: Vec<(String, bool, bool)> = marked_phrases(&prompt_phrases("masterpiece, a red fox, oil painting <lora:x:1>"))
+            .iter()
+            .map(|p| (p["text"].as_str().unwrap().to_string(), p["quality"].as_bool().unwrap(), p["look"].as_bool().unwrap()))
+            .collect();
+        assert_eq!(marks, vec![("masterpiece".into(), true, false), ("a red fox".into(), false, false), ("oil painting".into(), false, true)]);
     }
 
     #[test]
