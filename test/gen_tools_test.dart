@@ -6,6 +6,7 @@
 // GV_SAMPLE_DIR (the ComfyUI examples) are set.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -25,7 +26,7 @@ import 'package:generativeview/src/core/wildcards.dart';
 import 'package:generativeview/src/ui/mask_editor.dart';
 import 'package:generativeview/src/ui/media_grid.dart' show MediaGrid;
 import 'package:generativeview/src/ui/remix_dialog.dart' show openRemix;
-import 'package:generativeview/src/ui/upscale_dialog.dart' show openUpscale;
+import 'package:generativeview/src/ui/upscale_dialog.dart' show openUpscale, refineUpscale;
 import 'package:generativeview/src/ui/wildcards_ui.dart' show openWordLists;
 
 import 'support.dart';
@@ -250,7 +251,6 @@ void main() {
     tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     final state = AppState(core: core, thumbs: ThumbCache(core, maxBytes: 128 << 20))
-      ..previewTools = true
       ..objectSelectorFor = ((_) => StandInSelector(installed: modelsInstalled))
       ..regionFinder = StandInFinder(installed: modelsInstalled);
     await tester.pumpWidget(RepaintBoundary(key: boundary, child: GenerativeViewApp(state: state)));
@@ -318,6 +318,45 @@ void main() {
     await pumpUntil(tester, () => find.byKey(const ValueKey('mask-canvas')).evaluate().isNotEmpty, what: 'the mask editor');
     await settle(tester);
   }
+
+  testWidgets('a hires fix in tiles: each tile redrawn, put back whole, with the original\'s metadata', skip: skip, (tester) async {
+    // A Forge that sends each tile straight back, as though redrawn.
+    final saved = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = saved);
+    var asked = 0;
+    final sizes = <String>[];
+    final server = (await tester.runAsync(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>;
+        asked++;
+        sizes.add('${body['width']}x${body['height']}');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'images': [(body['init_images'] as List).first], 'info': '{}'}));
+        await request.response.close();
+      });
+      return server;
+    }))!;
+    addTearDown(() => server.close(force: true));
+    final state = await launch(tester, tabUltra);
+    state.setBackendUrl('forge', 'http://127.0.0.1:${server.port}');
+    final girl = item(state, 'girl_in_field.png');
+    await tester.runAsync(() => refineUpscale(state, girl, girl.path,
+        kind: 'forge', strength: 0.3, scale: 1, tiles: TileMode.tiles, tile: 768, overlap: 128));
+    await pumpUntil(tester, () => state.upscaled.value.isNotEmpty, what: 'the tiles put back', timeout: const Duration(seconds: 90));
+    expect(asked, 4, reason: '1024 square in tiles of 768 is two by two');
+    expect(sizes.toSet(), {'768x768'});
+    final out = File(state.upscaled.value.single);
+    expect(out.path.replaceAll(r'\', '/'), endsWith('/girl_in_field_hires1.png'));
+    final bytes = out.readAsBytesSync();
+    final codec = (await tester.runAsync(() => ui.instantiateImageCodec(bytes)))!;
+    final frame = (await tester.runAsync(codec.getNextFrame))!;
+    expect((frame.image.width, frame.image.height), (1024, 1024));
+    // The original's ComfyUI workflow came with it.
+    expect(latin1.decode(bytes, allowInvalid: true), contains('"class_type"'));
+    await close(tester, state);
+  });
 
   for (final (name, size) in [('fold-closed', foldClosed), ('fold-open', foldOpen), ('tab', tabUltra)]) {
     testWidgets('wildcards in remix, on the $name', skip: skip, (tester) async {

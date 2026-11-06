@@ -16,5 +16,6 @@ pub mod notes;
 pub mod sr;
 pub mod taste;
 pub mod thumbs;
+pub mod tiles;
 pub mod upscale;
 pub mod works;

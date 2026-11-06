@@ -452,11 +452,6 @@ class AppState extends ChangeNotifier {
   /// picture folder. Uninstalling the app takes them too: see Export.
   List<Preset> presets = const [];
 
-  /// Shows the generation tools whose screens are built but whose work is
-  /// not yet: the hires fix in tiles.
-  /// Off in the app until each is finished; on in the screenshot tests.
-  bool previewTools = false;
-
   /// Tap to select in the mask editor: what outlines objects in the picture
   /// at a path. Null hides the Select tool.
   ObjectSelector Function(String path)? objectSelectorFor;
@@ -2475,6 +2470,7 @@ class AppState extends ChangeNotifier {
       });
     }
     late final StreamSubscription<RemixImage> sub;
+    StreamSubscription<int>? remainingSub;
     var ended = false;
     void finish() {
       if (ended) return;
@@ -2482,6 +2478,7 @@ class AppState extends ChangeNotifier {
       _remixCancels.remove(id);
       _remixSubs.remove(sub);
       finishedSub?.cancel();
+      remainingSub?.cancel();
       // However it ended, nothing of it is waited for any more.
       if (record != null && _pendingRemixes.remove(record)) _savePendingRemixes();
       if (_disposed) return;
@@ -2516,6 +2513,12 @@ class AppState extends ChangeNotifier {
       remixes.value = list;
     }
 
+    // A ticket that brings one picture back from many renders says itself
+    // how many are left.
+    remainingSub = ticket.remaining?.listen((n) {
+      left = n + 1;
+      oneLess();
+    });
     sub = results.listen(
       (image) {
         oneLess();

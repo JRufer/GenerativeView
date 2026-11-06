@@ -62,6 +62,10 @@ fn join(dir: &str, name: &str) -> String {
     }
 }
 
+fn u32_arg(args: &Value, key: &str) -> Result<u32, String> {
+    args.get(key).and_then(Value::as_u64).map(|v| v as u32).ok_or_else(|| format!("missing number {key}"))
+}
+
 fn bool_arg(args: &Value, key: &str) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -917,6 +921,33 @@ impl Engine {
                 Ok("{}".to_string())
             }
             "upscale" => self.start_upscale(args),
+            "tiles_split" => {
+                let tiles: Vec<crate::tiles::Tile> = serde_json::from_value(args.get("tiles").cloned().unwrap_or_default()).map_err(|e| format!("tiles: {e}"))?;
+                let paths = crate::tiles::split(
+                    Path::new(str_arg(args, "path")?),
+                    u32_arg(args, "width")?,
+                    u32_arg(args, "height")?,
+                    &tiles,
+                    Path::new(str_arg(args, "dir")?),
+                )?;
+                Ok(json!({ "paths": paths.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>() }).to_string())
+            }
+            "tiles_merge" => {
+                #[derive(serde::Deserialize)]
+                struct Placed {
+                    path: String,
+                    #[serde(flatten)]
+                    tile: crate::tiles::Tile,
+                }
+                let placed: Vec<Placed> = serde_json::from_value(args.get("tiles").cloned().unwrap_or_default()).map_err(|e| format!("tiles: {e}"))?;
+                let tiles: Vec<_> = placed.into_iter().map(|p| (std::path::PathBuf::from(p.path), p.tile)).collect();
+                let merged = crate::tiles::merge(&tiles, u32_arg(args, "width")?, u32_arg(args, "height")?, u32_arg(args, "overlap").unwrap_or(128))?;
+                // With the original's metadata, as an upscale keeps it.
+                let png = crate::upscale::png_with_metadata_of(Path::new(str_arg(args, "source")?), &image::DynamicImage::ImageRgb8(merged))?;
+                let dest = str_arg(args, "dest")?;
+                std::fs::write(dest, png).map_err(|e| format!("cannot write {dest}: {e}"))?;
+                Ok(json!({ "path": dest }).to_string())
+            }
             "upscale_cancel" => {
                 let job = args.get("job").and_then(Value::as_u64).ok_or("missing argument: job")?;
                 self.upscales.lock().retain(|j| *j != job);

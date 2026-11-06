@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -182,8 +183,10 @@ class _UpscalePanelState extends State<UpscalePanel> {
       final state = widget.state;
       final strength = _hiresStrength;
       final scale = _hiresScale;
+      final (tileMode, tile, overlap) = (_tileMode, _tile, _overlap);
       Future<String?> refine(MediaItem original, String upscaled) =>
-          refineUpscale(state, original, upscaled, kind: server, strength: strength, scale: scale);
+          refineUpscale(state, original, upscaled,
+              kind: server, strength: strength, scale: scale, tiles: tileMode, tile: tile, overlap: overlap);
       if (scale <= 1) {
         // At its own size: the picture itself goes, nothing is made here.
         unawaited(state.startWithoutUpscale(widget.items, refine, label: 'refining on ${backendNames[server]}'));
@@ -350,7 +353,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
                 style: const TextStyle(fontSize: 12, color: Palette.faint),
               ),
             ),
-          if (refine && !ownSize && math.max(w, h) > hiresLargeSide && !(widget.state.previewTools && usesTiles(_tileMode, w, h)))
+          if (refine && !ownSize && math.max(w, h) > hiresLargeSide && !usesTiles(_tileMode, w, h))
             const Padding(
               padding: EdgeInsets.only(top: 4),
               child: Text(
@@ -583,7 +586,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
             'Around 0.3 adds detail; higher starts to change faces and shapes.',
             style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
           ),
-          if (widget.state.previewTools && _hiresScale > 1) ...[
+          if (_hiresScale > 1) ...[
             const SizedBox(height: 14),
             Builder(
               builder: (context) {
@@ -758,6 +761,9 @@ Future<String?> refineUpscale(
   required String kind,
   required double strength,
   required double scale,
+  TileMode tiles = TileMode.whole,
+  int tile = defaultTileSize,
+  int overlap = defaultTileOverlap,
 }) async {
   final name = backendNames[kind] ?? kind;
   final base = state.backendUrls[kind] ?? '';
@@ -780,6 +786,12 @@ Future<String?> refineUpscale(
   if (w <= 0 || h <= 0) (w, h) = recipeSize(info);
   if (w <= 0 || h <= 0) throw HiresNotSent('not refined: its size is not known');
   final (width, height) = hiresSize(w, h, scale);
+  if (usesTiles(tiles, width, height)) {
+    final ticket = await _refineInTiles(state, original, upscaled, info,
+        kind: kind, base: base, strength: strength, width: width, height: height, tile: tile, overlap: overlap);
+    state.collectRemix(original, ticket, label: 'hires');
+    return 'Hires fix of ${original.name} at $width × $height: ${ticket.message}';
+  }
   final ImageInput init;
   try {
     init = await prepareImageInput(path: upscaled, width: width, height: height, strength: strength, ops: const []);
@@ -810,4 +822,124 @@ Future<String?> refineUpscale(
   state.collectRemix(original, ticket, label: 'hires');
   // What the server was given, model stand-ins and LoRAs left out included.
   return 'Hires fix of ${original.name} at $width × $height: ${ticket.message}';
+}
+
+/// A hires fix sent in tiles: [upscaled] cut into overlapping tiles of
+/// [tile] pixels, each redrawn on the server as an ordinary image to image
+/// job with the picture's own prompt and seed, and put back together here
+/// with each fading into its neighbours, carrying the original's metadata.
+///
+/// One ticket for all of it, bringing back the one picture, and saying how
+/// many tiles are still out as they land. It cannot be picked up again
+/// after the app is closed, since the tiles are put together here.
+Future<RemixTicket> _refineInTiles(
+  AppState state,
+  MediaItem original,
+  String upscaled,
+  GenInfo info, {
+  required String kind,
+  required String base,
+  required double strength,
+  required int width,
+  required int height,
+  required int tile,
+  required int overlap,
+}) async {
+  final name = backendNames[kind] ?? kind;
+  final plan = [
+    for (final r in planTiles(width, height, tile: tile, overlap: overlap))
+      {'x': r.left.round(), 'y': r.top.round(), 'w': r.width.round(), 'h': r.height.round()},
+  ];
+  final dir = await Directory.systemTemp.createTemp('gv-tiles-');
+  void tidy() {
+    try {
+      dir.deleteSync(recursive: true);
+    } catch (_) {}
+  }
+
+  final List<String> pieces;
+  try {
+    final reply = await state.core.call('tiles_split', {'path': upscaled, 'width': width, 'height': height, 'tiles': plan, 'dir': dir.path});
+    pieces = [for (final p in (reply as Map)['paths'] as List) '$p'];
+  } catch (e) {
+    tidy();
+    throw HiresNotSent('not refined: could not cut the upscale into tiles ($e)');
+  }
+  final seed = int.tryParse(info.seed.trim());
+  final tickets = <RemixTicket>[];
+  try {
+    tickets.addAll(await Future.wait([
+      for (var i = 0; i < plan.length; i++)
+        File(pieces[i]).readAsBytes().then((bytes) => sendRemix(
+              kind,
+              base,
+              Remix(
+                info: info,
+                prompt: info.prompt,
+                negative: info.negative,
+                seed: seed ?? 0,
+                randomSeed: seed == null,
+                count: 1,
+                width: plan[i]['w']!,
+                height: plan[i]['h']!,
+                init: ImageInput(image: bytes, strength: strength),
+              ),
+            )),
+    ]));
+  } catch (e) {
+    for (final t in tickets) {
+      t.stop();
+      unawaited(cancelRemix(kind, base, t.jobs).catchError((Object _) {}));
+    }
+    tidy();
+    throw HiresNotSent('$name did not take the tiles: $e');
+  }
+  final left = StreamController<int>();
+  var stopped = false;
+  Stream<RemixImage> results() async* {
+    try {
+      var out = plan.length;
+      final back = await Future.wait([
+        for (var i = 0; i < tickets.length; i++)
+          tickets[i].results.first.then((image) async {
+            final path = '${dir.path}/done-$i.${image.extension}';
+            await File(path).writeAsBytes(image.bytes, flush: true);
+            if (!left.isClosed) left.add(--out);
+            return path;
+          }),
+      ]);
+      if (stopped) return;
+      final merged = '${dir.path}/merged.png';
+      await state.core.call('tiles_merge', {
+        'source': original.path,
+        'width': width,
+        'height': height,
+        'overlap': overlap,
+        'dest': merged,
+        'tiles': [
+          for (var i = 0; i < plan.length; i++) {'path': back[i], ...plan[i]},
+        ],
+      });
+      yield RemixImage(await File(merged).readAsBytes());
+    } finally {
+      await left.close();
+      tidy();
+    }
+  }
+
+  return RemixTicket(
+    'Sent ${plan.length} tiles of $tile to $name',
+    plan.length,
+    results(),
+    kind: kind,
+    base: base,
+    remaining: left.stream,
+    stop: () {
+      stopped = true;
+      for (final t in tickets) {
+        t.stop();
+        unawaited(cancelRemix(kind, base, t.jobs).catchError((Object _) {}));
+      }
+    },
+  );
 }

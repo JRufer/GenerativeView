@@ -88,6 +88,19 @@ pub fn save_as(source: &Path, picture: &DynamicImage, metadata: Metadata, jxl: O
     Ok(dest)
 }
 
+/// `picture` as a PNG carrying `source`'s metadata: the original's own
+/// chunks byte for byte when it is a PNG, else its texts as iTXt chunks.
+pub(crate) fn png_with_metadata_of(source: &Path, picture: &DynamicImage) -> Result<Vec<u8>, String> {
+    let original = std::fs::read(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    let png = encode(Format::Png, picture, &original, Metadata::Strip)?;
+    if sniff(&original) == Some(Format::Png) {
+        return Ok(png_with_chunks(&png, &png_meta_chunks(&original)));
+    }
+    let texts = crate::meta::container::read_raw(source).map(|r| r.texts).unwrap_or_default();
+    let chunks: Vec<Vec<u8>> = texts.iter().map(|(k, v)| itxt_chunk(k, v)).collect();
+    Ok(png_with_chunks(&png, &chunks))
+}
+
 /// [`save`], from an encoded picture.
 pub fn save_bytes(source: &Path, result: &[u8], metadata: Metadata) -> Result<PathBuf, String> {
     let picture = image::load_from_memory(result).map_err(|e| format!("cannot read the upscaled picture: {e}"))?;

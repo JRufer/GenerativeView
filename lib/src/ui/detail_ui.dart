@@ -392,7 +392,7 @@ class TilesSection extends StatelessWidget {
     final tiles = tiled ? planTiles(width, height, tile: tile, overlap: overlap) : const <Rect>[];
     final caption = tiled
         ? '${tiles.length} tiles of ${tiles.first.width.round()} × ${tiles.first.height.round()}, sharing $overlap px. '
-              'The server only ever draws one tile at a time, so any size fits.'
+              'The server only ever draws one tile at a time, so any size fits. Keep the app open until they are all back.'
         : mode == TileMode.auto
         ? 'Sent whole at $width × $height. Pictures over $autoTileAbove px on a side go in tiles.'
         : 'Sent whole at $width × $height.';
