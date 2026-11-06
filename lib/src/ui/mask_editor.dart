@@ -282,6 +282,10 @@ Rect coverRect(Size source, int width, int height) {
 /// The picture at [path] made ready to start a remix from: [width] ×
 /// [height] (the middle of it, if the shape changed), with [color] painted
 /// into it and [ops] as a mask the same size, both as PNGs.
+/// The least strength an extended canvas is redrawn at: the new area is
+/// only a blur of the picture until it is drawn.
+const double extendMinStrength = 0.9;
+
 Future<ImageInput> prepareImageInput({
   required String path,
   required int width,
@@ -289,11 +293,20 @@ Future<ImageInput> prepareImageInput({
   required double strength,
   required List<MaskOp> ops,
   List<MaskOp> color = const [],
+  Extension extend = Extension.none,
 }) async {
   final codec = await pictureCodec(path);
   final frame = await codec.getNextFrame();
   final source = frame.image;
-  final full = Size(source.width.toDouble(), source.height.toDouble());
+  final picture = Size(source.width.toDouble(), source.height.toDouble());
+  // The canvas, in the picture's own pixels: the picture, and as much again
+  // round it as it was extended. The picture sits at [at] in it.
+  final full = Size(
+    picture.width * (1 + extend.left + extend.right),
+    picture.height * (1 + extend.top + extend.bottom),
+  );
+  final at = Offset(picture.width * extend.left, picture.height * extend.top);
+  final placed = at & picture;
   final crop = coverRect(full, width, height);
   final out = Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
 
@@ -310,31 +323,66 @@ Future<ImageInput> prepareImageInput({
     }
   }
 
-  // The mask is drawn in the picture's own space, then cropped and scaled
-  // exactly as the picture is.
+  /// Into the canvas's space, cropped and scaled as the output is.
+  void toCanvas(Canvas canvas) {
+    canvas.scale(width / crop.width, height / crop.height);
+    canvas.translate(-crop.left, -crop.top);
+  }
+
+  // The mask is drawn in the picture's own space, then placed on the canvas,
+  // cropped and scaled exactly as the picture is. An extended canvas adds
+  // the new area and the band of the picture's edge beside it, softened so
+  // the join does not show.
   void maskInto(Canvas canvas, Color background, Color paint) {
     canvas.drawRect(out, Paint()..color = background);
     canvas.save();
-    canvas.scale(width / crop.width, height / crop.height);
-    canvas.translate(-crop.left, -crop.top);
-    paintMask(canvas, full, ops, paint);
+    toCanvas(canvas);
+    if (extend.any) {
+      final band = extend.blend.toDouble();
+      final soft = Paint()
+        ..color = paint
+        ..imageFilter = band > 1 ? ui.ImageFilter.blur(sigmaX: band / 3, sigmaY: band / 3) : null;
+      canvas.saveLayer(Offset.zero & full, soft);
+      final keep = Rect.fromLTRB(
+        placed.left + (extend.left > 0 ? band : 0),
+        placed.top + (extend.top > 0 ? band : 0),
+        placed.right - (extend.right > 0 ? band : 0),
+        placed.bottom - (extend.bottom > 0 ? band : 0),
+      );
+      canvas.drawPath(
+        Path.combine(PathOperation.difference, Path()..addRect(Offset.zero & full), Path()..addRect(keep)),
+        Paint()..color = paint,
+      );
+      canvas.restore();
+    }
+    canvas.translate(at.dx, at.dy);
+    paintMask(canvas, picture, ops, paint);
     canvas.restore();
   }
 
   try {
     final image = await render((canvas) {
-      canvas.drawImageRect(source, crop, out, Paint()..filterQuality = FilterQuality.high);
-      if (color.isEmpty) return;
       canvas.save();
-      canvas.scale(width / crop.width, height / crop.height);
-      canvas.translate(-crop.left, -crop.top);
-      paintMask(canvas, full, color, Colors.transparent);
+      toCanvas(canvas);
+      if (extend.any) {
+        // The new area starts as the picture stretched over the canvas and
+        // blurred: its colours carry on, with nothing in it to keep.
+        final blur = math.max(full.width, full.height) / 24;
+        canvas.saveLayer(Offset.zero & full, Paint()..imageFilter = ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur, tileMode: TileMode.clamp));
+        canvas.drawImageRect(source, Offset.zero & picture, Offset.zero & full, Paint()..filterQuality = FilterQuality.low);
+        canvas.restore();
+      }
+      canvas.drawImageRect(source, Offset.zero & picture, placed, Paint()..filterQuality = FilterQuality.high);
+      if (color.isNotEmpty) {
+        canvas.translate(at.dx, at.dy);
+        paintMask(canvas, picture, color, Colors.transparent);
+      }
       canvas.restore();
     });
-    final masked = maskPaints(ops);
+    final masked = extend.any || maskPaints(ops);
     return ImageInput(
       image: image,
-      strength: strength,
+      strength: extend.any ? math.max(strength, extendMinStrength) : strength,
       mask: masked ? await render((c) => maskInto(c, Colors.black, Colors.white)) : null,
       keepMask: masked ? await render((c) => maskInto(c, Colors.white, Colors.black)) : null,
     );

@@ -460,6 +460,7 @@ class _RemixPanelState extends State<RemixPanel> {
             strength: _strength,
             ops: _mask,
             color: _color,
+            extend: _extend,
           );
         } catch (e) {
           throw BackendException('Could not read the picture to start from: $e');
@@ -1058,7 +1059,8 @@ Widget build(BuildContext context) {
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              'Extended to ${_width.text} × ${_height.text}, blending ${_extend.blend} px of its edge.',
+              'Extended to ${_width.text} × ${_height.text}, blending ${_extend.blend} px of its edge'
+              '${_strength < extendMinStrength ? ', redrawn at ${extendMinStrength.toStringAsFixed(2)} so the new canvas is drawn' : ''}.',
               key: const ValueKey<String>('remix-extend-status'),
               style: const TextStyle(fontSize: 12.5, color: Palette.accent, height: 1.35),
             ),

@@ -8,6 +8,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -170,6 +172,36 @@ void main() {
       expect(usesTiles(TileMode.tiles, 1024, 1024), isTrue);
       expect(usesTiles(TileMode.whole, 4096, 4096), isFalse);
     });
+  });
+
+  testWidgets('an extended canvas is sent at its size, masked where it is new', (tester) async {
+    final dir = Directory.systemTemp.createTempSync('gv-extend-');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final file = File('${dir.path}/p.png')..writeAsBytesSync(pngWithText(64, 64, 3, const {}));
+    final input = (await tester.runAsync(() => prepareImageInput(
+      path: file.path,
+      width: 128,
+      height: 64,
+      strength: 0.5,
+      ops: const [],
+      extend: const Extension(left: 0.5, right: 0.5, blend: 4),
+    )))!;
+    expect(input.strength, extendMinStrength);
+    Future<(int, int, ByteData)> pixels(Uint8List png) async {
+      final codec = await ui.instantiateImageCodec(png);
+      final frame = await codec.getNextFrame();
+      final data = await frame.image.toByteData();
+      return (frame.image.width, frame.image.height, data!);
+    }
+
+    final (w, h, mask) = (await tester.runAsync(() => pixels(input.mask!)))!;
+    expect((w, h), (128, 64));
+    int at(int x, int y) => mask.getUint8((y * w + x) * 4);
+    expect(at(4, 32), greaterThan(200), reason: 'the new area on the left is redrawn');
+    expect(at(123, 32), greaterThan(200), reason: 'and on the right');
+    expect(at(64, 32), lessThan(40), reason: 'the picture itself is kept');
+    final (iw, ih, _) = (await tester.runAsync(() => pixels(input.image)))!;
+    expect((iw, ih), (128, 64));
   });
 
   group('extending the canvas', () {
