@@ -553,7 +553,7 @@ Widget build(BuildContext context) {
       ),
       const SizedBox(height: 4),
       const Text(
-        'Select words to weight them; the caret in an underlined word offers corrections.',
+        'Select words to weight them; tap an underlined word for corrections.',
         style: TextStyle(fontSize: 11.5, color: Palette.faint),
       ),
       _suggestions(),
