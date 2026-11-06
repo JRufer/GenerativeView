@@ -519,7 +519,9 @@ class _RemixPanelState extends State<RemixPanel> {
               sendRemix(kind, base, remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1)).then((ticket) {
                 widget.state.collectRemix(widget.item, fixed(ticket, picks[i].$1, picks[i].$2), batch: batch);
                 sent++;
-              }, onError: (Object e) => failure ??= e),
+              }, onError: (Object e) {
+                failure ??= e;
+              }),
           ]);
         } finally {
           widget.state.closeRemixBatch(batch);

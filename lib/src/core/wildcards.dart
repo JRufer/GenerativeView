@@ -59,10 +59,10 @@ class WildcardPrompt {
   int get choiceCount => _all(parts).whereType<WildChoice>().length;
 
   /// The word lists named, in order, without repeats.
-  List<String> get listNames => [
+  List<String> get listNames => <String>{
     for (final p in _all(parts))
       if (p is WildList) p.name,
-  ].toSet().toList();
+  }.toList();
 
   /// Lists named that do not exist.
   List<String> get missingLists => [for (final n in listNames) if (!lists.containsKey(n.toLowerCase())) n];
