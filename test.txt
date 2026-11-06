@@ -1,0 +1,281 @@
+Resolving dependencies...
+Downloading packages...
+  archive 4.5.2 (4.6.0 available)
+  code_assets 1.2.1 (2.1.0 available)
+  crypto 3.0.7 (3.0.8 available)
+  hooks 2.0.2 (2.2.0 available)
+  jni 1.1.0 (1.1.2 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.3 available)
+  permission_handler_android 14.1.0 (14.1.1 available)
+  permission_handler_apple 9.6.2 (9.6.5 available)
+  permission_handler_windows 0.2.2 (0.2.4 available)
+  petitparser 7.0.2 (7.1.0 available)
+  posix 6.5.2 (6.5.4 available)
+  record_use 0.6.0 (1.1.1 available)
+  safe_local_storage 2.0.6 (2.0.7 available)
+  synchronized 3.5.0 (3.6.1 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.4 available)
+  vm_service 15.3.0 (15.4.0 available)
+  wakelock_plus 1.8.1 (1.8.2 available)
+  web 1.1.1 (1.1.2 available)
+  xml 7.0.1 (7.1.0 available)
+Got dependencies!
+22 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart
+00:00 +0: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI its own SDXL picture text to image: the prompt as edited
+00:00 +1: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI its own SDXL picture text to image: the prompt as edited
+00:00 +2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: cancelRemix ComfyUI: waiting jobs are deleted, and only our running one interrupted
+00:00 +3: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: cancelRemix ComfyUI: waiting jobs are deleted, and only our running one interrupted
+00:00 +4: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI its own SDXL picture text to image: the size set
+00:00 +5: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: cancelRemix ComfyUI: someone else's running job is left alone
+00:00 +6: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI its own SDXL picture text to image: steps and CFG set
+00:00 +7: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: cancelRemix a job already gone is no error; a refusal is
+00:00 +8: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI its own SDXL picture text to image: the model the picture was made with
+00:00 +9: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +10: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +11: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +12: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +13: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +14: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +15: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +16: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +17: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +18: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +19: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +20: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +21: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +22: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +23: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +24: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +25: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +26: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +28: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +29: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +30: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +31: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +32: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:00 +33: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI an SDXL picture from elsewhere text to image: the size set
+00:00 +34: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: picture types are told apart by their bytes
+00:00 +35: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI an SDXL picture from elsewhere text to image: steps and CFG set
+00:00 +36: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: settings are written into a PNG that lacks them, once
+00:00 +37: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI an SDXL picture from elsewhere text to image: the model the picture was made with
+00:00 +38: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +39: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +40: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +41: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +42: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +43: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +44: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +45: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +46: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +47: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: queued, waited for, and what Save wrote fetched
+00:00 +48: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI a Krea 2 picture from elsewhere text to image: the seed asked for, then one more per picture
+00:00 +49: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a failed run is reported
+00:00 +50: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a failed run is reported
+00:00 +51: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI a Krea 2 picture from elsewhere text to image: steps and CFG set
+00:00 +52: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +53: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +54: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +55: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +56: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +57: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: queue items waited for, kept pictures fetched
+00:00 +58: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: ComfyUI a Krea 2 picture from elsewhere image to image: started from the picture at the strength set
+00:00 +59: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +60: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +61: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +62: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +63: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +64: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +65: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +66: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +67: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +68: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +69: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +70: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +71: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +72: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +73: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +74: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +75: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +76: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +77: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +78: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +79: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +80: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +81: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +82: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +83: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +84: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +85: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +86: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +87: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +88: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +89: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +90: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +91: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +92: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +93: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +94: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:00 +95: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +96: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +97: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +98: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +99: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +100: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +101: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +102: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +103: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +104: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +105: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +106: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +107: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +108: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +109: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +110: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +111: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +112: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +113: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +114: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +115: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +116: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +117: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +118: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +119: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +120: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +121: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +122: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +123: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +124: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +125: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +126: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +127: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +128: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +129: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +130: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +131: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +132: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +133: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +134: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +135: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +136: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +137: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +138: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +139: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +140: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +141: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +142: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +143: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +144: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +145: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +146: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +147: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +148: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +149: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +150: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +151: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +152: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +153: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +154: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +155: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +156: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +157: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +158: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +159: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +160: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +161: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +162: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +163: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +164: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +165: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +166: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +167: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +168: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +169: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +170: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +171: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +172: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +173: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:01 +174: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +175: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: any picture with settings can go to every server
+00:05 +176: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: samplers are understood in each program's words
+00:05 +177: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a picture from elsewhere gets a workflow built from its settings
+00:05 +178: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a model it does not have is said plainly
+00:05 +179: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a picture from elsewhere gets an SDXL graph built from its settings
+00:05 +180: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a kind of model it cannot build for is said plainly
+00:05 +181: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 picture from elsewhere gets a Krea 2 graph, as InvokeAI builds one
+00:05 +182: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 hires fix starts from the picture, encoded with the same VAE
+00:05 +183: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 model installed as Diffusers needs nothing more; one file without a VAE says so
+00:05 +184: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 remix asks the server for its VAEs and encoders, and sends the Krea 2 graph
+00:05 +185: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 picture whose file the server lacks gets its closest Krea 2 model instead
+00:05 +186: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 remix with a stand-in model says which it used
+00:05 +187: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: LoRA tags in a prompt follow the switches and sliders
+00:05 +188: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: trigger words are found in a prompt and put at its start
+00:05 +189: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a LoRA choice knows how far it has moved, CLIP weight and all
+00:05 +190: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a LoRA turned off leaves the workflow, one moved is reweighted
+00:05 +191: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a LoRA turned off leaves the graph and its metadata
+00:05 +192: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the LoRAs as set go in the prompt it is sent
+00:05 +193: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a graph built from settings leaves out a LoRA turned off
+00:05 +194: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a workflow starts from the picture instead of an empty latent
+00:05 +195: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: an advanced sampler starts part way through its steps
+00:05 +196: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a workflow with no empty latent is said plainly
+00:05 +197: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: image to image uploads the picture and mask, then queues
+00:05 +198: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a picture from elsewhere gets a built graph that starts from it
+00:05 +199: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 graph starts from the picture, encoded by its own VAE
+00:05 +200: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: other families get their matching encoder
+00:05 +201: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: image to image of an InvokeAI picture uses its own graph
+00:05 +202: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: each run gets its own seed, though the graph keeps it in a node
+00:05 +203: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: steps and CFG set in the sampler, a second pass left alone
+00:05 +204: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: steps and CFG set, wired in from a node or not, metadata too
+00:05 +205: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: steps and CFG as set, else as the picture had them
+00:05 +206: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a built graph takes the steps and CFG as set
+00:05 +207: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a remix sent earlier is picked up again by its job
+00:06 +208: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a sent remix it no longer has is given up on, not waited for
+00:06 +209: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a queue item it no longer has is given up on
+00:06 +210: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a ticket says which jobs to pick up again; Forge has none to give
+00:06 +211: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: image to image goes to img2img with the picture and mask
+00:06 +212: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 picture from elsewhere is loaded the way ComfyUI's own Krea 2 template loads it
+00:06 +213: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 Raw picture gets the Raw file, and its negative prompt with CFG on
+00:06 +214: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 GGUF file is loaded with the GGUF loader
+00:06 +215: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: what a Krea 2 picture is missing is said plainly
+00:06 +216: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 remix asks for the loaders' files and says which model stood in
+00:06 +217: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: an SDXL picture whose checkpoint is there asks for nothing more
+00:06 +218: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: an InvokeAI run gives back only the pictures it made, not the ones it was given
+00:08 +219: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: (setUpAll)
+00:08 +219: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +220: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +221: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +222: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +223: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +224: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +225: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +226: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: (setUpAll)
+00:08 +226: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: tiles tiles cover the picture evenly, sharing the overlap or more
+00:08 +227: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:08 +228: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:08 +229: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:08 +230: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:11 +231: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:12 +232: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:21 +233: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:30 +234: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+00:31 +235: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+00:41 +236: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-open
+00:52 +237: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-open
+00:52 +238: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:01 +239: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the tab
+01:13 +240: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the tab
+01:14 +241: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+01:24 +242: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-open
+01:35 +243: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-open
+01:44 +244: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-open
+01:55 +245: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the tab
+02:07 +246: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the tab
+02:18 +247: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+02:27 +248: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the tab
+02:38 +249: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: (tearDownAll)
+02:38 +249: All tests passed!

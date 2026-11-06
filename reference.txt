@@ -1,0 +1,11 @@
+Creating new Ultralytics Settings v0.0.8 file ✅ 
+View Ultralytics Settings with 'yolo settings' or at '/home/runner/.config/Ultralytics/settings.json'
+Update Settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'. For help see https://docs.ultralytics.com/usage/settings
+anime_face_v1.4_n/model.pt flux/girl_in_field.png [(0.403, 0.256, 0.6, 0.483, 0.865)]
+anime_face_v1.4_n/model.pt chroma/fennec_girl_flowers.png [(0.471, 0.325, 0.687, 0.516, 0.865)]
+anime_face_v1.4_n/model.pt z_image/z_image_turbo_example.png [(0.449, 0.24, 0.574, 0.366, 0.857)]
+anime_face_v1.4_n/model.pt sdxl/sdxl_simple_example.png []
+anime_hand_v1.0_n/model.pt flux/girl_in_field.png []
+anime_hand_v1.0_n/model.pt chroma/fennec_girl_flowers.png [(0.365, 0.671, 0.424, 0.728, 0.316)]
+anime_hand_v1.0_n/model.pt z_image/z_image_turbo_example.png [(0.727, 0.612, 0.783, 0.665, 0.738), (0.342, 0.674, 0.401, 0.742, 0.719)]
+anime_hand_v1.0_n/model.pt sdxl/sdxl_simple_example.png []

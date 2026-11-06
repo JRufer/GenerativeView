@@ -1,0 +1,120 @@
+   Compiling cfg-if v1.0.5
+   Compiling bitflags v2.13.2
+   Compiling libm v0.2.16
+   Compiling bytemuck v1.25.2
+   Compiling crossbeam-utils v0.8.23
+   Compiling zerocopy v0.8.62
+   Compiling libc v0.2.190
+   Compiling crossbeam-epoch v0.9.21
+   Compiling crossbeam-deque v0.8.8
+   Compiling rayon-core v1.13.0
+   Compiling num-traits v0.2.19
+   Compiling raw-cpuid v11.6.0
+   Compiling either v1.19.0
+   Compiling reborrow v0.5.5
+   Compiling pulp-wasm-simd-flag v0.1.1
+   Compiling num-complex v0.4.6
+   Compiling once_cell v1.21.4
+   Compiling dyn-stack v0.13.2
+   Compiling rayon v1.12.0
+   Compiling simd-adler32 v0.3.10
+   Compiling adler2 v2.0.1
+   Compiling thiserror v2.0.21
+   Compiling crc32fast v1.5.2
+   Compiling miniz_oxide v0.9.1
+   Compiling pulp v0.22.3
+   Compiling rustix v1.1.5
+   Compiling smallvec v1.16.2
+   Compiling getrandom v0.4.3
+   Compiling jxl_simd v0.4.3
+   Compiling half v2.7.1
+   Compiling foldhash v0.1.5
+   Compiling hashbrown v0.15.5
+   Compiling jxl_transforms v0.4.3
+   Compiling flate2 v1.1.10
+   Compiling serde_core v1.0.229
+   Compiling inotify-sys v0.1.8
+   Compiling miniz_oxide v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling color_quant v1.1.0
+   Compiling byteorder-lite v0.1.0
+   Compiling gemm-common v0.19.0
+   Compiling same-file v1.0.6
+   Compiling scopeguard v1.2.0
+   Compiling hashbrown v0.17.1
+   Compiling gemm-f32 v0.19.0
+   Compiling equivalent v1.0.2
+   Compiling array-init v2.1.0
+   Compiling log v0.4.34
+   Compiling byteorder v1.5.0
+   Compiling zune-core v0.5.3
+   Compiling linux-raw-sys v0.12.1
+   Compiling pxfm v0.1.30
+   Compiling weezl v0.1.12
+   Compiling quick-error v2.0.1
+   Compiling image-webp v0.2.4
+   Compiling gif v0.14.2
+   Compiling zune-jpeg v0.5.15
+   Compiling moxcms v0.8.1
+   Compiling jxl v0.4.3
+   Compiling mio v1.2.4
+   Compiling gemm-f16 v0.19.0
+   Compiling indexmap v2.14.2
+   Compiling gemm-f64 v0.19.0
+   Compiling gemm-c32 v0.19.0
+   Compiling gemm-c64 v0.19.0
+   Compiling lock_api v0.4.14
+   Compiling walkdir v2.5.0
+   Compiling png v0.18.1
+   Compiling inotify v0.11.5
+   Compiling libsqlite3-sys v0.35.0
+   Compiling hashlink v0.10.0
+   Compiling gamut-jxl-sys v0.1.1
+   Compiling parking_lot_core v0.9.12
+   Compiling zmij v1.0.23
+   Compiling gamut-core v3.0.0
+   Compiling notify-types v2.1.0
+   Compiling fastrand v2.5.0
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling tinyvec v1.13.3
+   Compiling gamut-codec-abi v0.1.2
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling atomic v0.5.3
+   Compiling fallible-iterator v0.3.0
+   Compiling allo-isolate v0.1.27
+   Compiling rusqlite v0.37.0
+   Compiling gamut-jxl v0.5.0
+   Compiling serde_json v1.0.151
+   Compiling unicode-normalization v0.1.25
+   Compiling notify v8.2.0
+   Compiling tempfile v3.27.0
+   Compiling serde v1.0.229
+   Compiling parking_lot v0.12.5
+   Compiling image v0.25.10
+   Compiling gemm v0.19.0
+   Compiling fast_image_resize v5.5.0
+   Compiling crossbeam-channel v0.5.17
+   Compiling xxhash-rust v0.8.19
+   Compiling unicode-properties v0.1.4
+   Compiling jpeg-encoder v0.6.1
+   Compiling gvcore v0.1.0 (/home/runner/work/GenerativeView/GenerativeView/core)
+    Finished `release` profile [optimized] target(s) in 1m 37s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/release/deps/gvcore-a40faf7f7598b17d)
+
+running 3 tests
+test detect::tests::finds_the_face_in_the_field ... girl_in_field: [Region { kind: "face", x0: 0.4187805, y0: 0.24202129, x1: 0.58132875, y1: 0.46790743, score: 0.999091 }]
+chroma/fennec_girl_flowers.png: [Region { kind: "face", x0: 0.4703166, y0: 0.32391343, x1: 0.6872558, y1: 0.51641643, score: 0.8615564 }]
+z_image/z_image_turbo_example.png: [Region { kind: "face", x0: 0.45300156, y0: 0.23836859, x1: 0.55533326, y1: 0.35458285, score: 0.927414 }, Region { kind: "hand", x0: 0.72723037, y0: 0.6123122, x1: 0.7830864, y1: 0.6647879, score: 0.74269974 }, Region { kind: "hand", x0: 0.342141, y0: 0.67369145, x1: 0.40073586, y1: 0.7425221, score: 0.7199966 }]
+sdxl/sdxl_simple_example.png: []
+ok
+test sam::tests::outlines_the_woman_in_the_field ... encoded in 2.595725955s; embedding mean -0.0024106905
+outlined in 117.732969ms: 24 points: [(0.45117188, 0.48492333), (0.41998968, 0.5175781), (0.41848692, 0.5410156), (0.42773438, 0.5791012), (0.44681776, 0.6269531), (0.4855431, 0.6933594), (0.46130726, 0.7792969), (0.44274867, 0.8730469), (0.44726563, 0.87861496), (0.48242188, 0.88317066), (0.48890978, 0.8808594), (0.51949054, 0.7480469), (0.5881528, 0.5488281), (0.5906566, 0.5214844), (0.5644531, 0.49341896), (0.5506644, 0.48632813), (0.54835695, 0.49414063), (0.55345976, 0.5019531), (0.55427223, 0.5136719), (0.55122936, 0.5292969), (0.5193343, 0.6074219), (0.5019531, 0.63782966), (0.4707622, 0.5761719), (0.45650738, 0.5292969)]
+box 0.41848692 0.48492333 0.5906566 0.88317066
+ok
+test sam::tests::the_edge_of_a_disc_is_a_loop_round_it ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 94 filtered out; finished in 5.50s
+
