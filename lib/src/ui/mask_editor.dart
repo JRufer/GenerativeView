@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -10,6 +11,7 @@ import '../app_state.dart';
 import '../core/backends.dart' show ImageInput;
 import '../core/media_image.dart';
 import '../core/models.dart' show HeatMap;
+import '../core/smear.dart';
 import '../theme.dart';
 import 'kit.dart';
 
@@ -28,6 +30,9 @@ enum MaskKind {
 
   /// The painted part becomes the unpainted part, and the other way round.
   invert,
+
+  /// Pixels the smear brush moved: [MaskOp.image] over [MaskOp.area].
+  patch,
 }
 
 /// One thing done to a mask. Points are fractions of the picture's width
@@ -36,7 +41,7 @@ enum MaskKind {
 ///
 /// The same strokes make the color layer: there each carries its [color].
 class MaskOp {
-  const MaskOp(this.kind, {this.erase = false, this.points = const [], this.radius = 0, this.radii, this.color});
+  const MaskOp(this.kind, {this.erase = false, this.points = const [], this.radius = 0, this.radii, this.color, this.image, this.area});
   final MaskKind kind;
 
   /// Takes paint away rather than adding it.
@@ -50,6 +55,11 @@ class MaskOp {
 
   /// What a stroke of the color layer paints with.
   final Color? color;
+
+  /// A patch's pixels, premultiplied, and where they go in fractions of the
+  /// picture. Held in memory only, like the rest of an edit.
+  final ui.Image? image;
+  final Rect? area;
 }
 
 /// What was painted in the editor: where to redraw ([ops]), and the color
@@ -161,6 +171,18 @@ void paintMask(Canvas canvas, Size size, List<MaskOp> ops, Color color) {
             ..strokeCap = StrokeCap.round
             ..strokeJoin = StrokeJoin.round,
         );
+      case MaskKind.patch:
+        final image = op.image;
+        final area = op.area;
+        if (image == null || area == null) continue;
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+          Rect.fromLTRB(area.left * size.width, area.top * size.height, area.right * size.width, area.bottom * size.height),
+          Paint()
+            ..filterQuality = FilterQuality.medium
+            ..isAntiAlias = true,
+        );
     }
     // Fill and stroke settings are per use; leave the shared paints plain.
     add.style = PaintingStyle.fill;
@@ -178,7 +200,7 @@ bool maskPaints(List<MaskOp> ops) {
     switch (op.kind) {
       case MaskKind.all:
         painted = !op.erase;
-      case MaskKind.invert:
+      case MaskKind.invert || MaskKind.patch:
         painted = true;
       case MaskKind.stroke || MaskKind.trace:
         if (!op.erase) painted = true;
@@ -556,6 +578,12 @@ class _MaskEditorState extends State<MaskEditor> {
   /// colors. Until chosen, it is on a wide screen.
   bool? _wheelChosen;
 
+  void _setSmear(bool smear) {
+    setState(() => _smear = smear);
+    // Ready before the first stroke, so it starts under the pen.
+    if (smear && _smearCanvas == null) _loadSmear();
+  }
+
   void _showWheel(bool open) => setState(() => _wheelChosen = open);
 
   void _setColor(Color color, {bool typed = false}) {
@@ -579,17 +607,15 @@ class _MaskEditorState extends State<MaskEditor> {
   Offset? _pickAt;
   Color? _picked;
 
-  Future<void> _startPicking() async {
-    setState(() {
-      _picking = true;
-      _picked = null;
-      _pickAt = null;
-    });
+  /// The picture with the color on it, at most [longest] pixels along its
+  /// longer side.
+  Future<ui.Image> _renderPainted(int longest) async {
     final codec = await pictureCodec(widget.path);
     final frame = await codec.getNextFrame();
     final source = frame.image;
-    final width = math.min(source.width, 1024);
-    final height = math.max(1, (source.height * width / source.width).round());
+    final scale = math.min(1.0, longest / math.max(source.width, source.height));
+    final width = math.max(1, (source.width * scale).round());
+    final height = math.max(1, (source.height * scale).round());
     final size = Size(width.toDouble(), height.toDouble());
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, Offset.zero & size);
@@ -601,9 +627,19 @@ class _MaskEditorState extends State<MaskEditor> {
     );
     paintMask(canvas, size, _colorOps, Colors.transparent);
     final image = await recorder.endRecording().toImage(width, height);
-    final pixels = await image.toByteData();
     source.dispose();
     codec.dispose();
+    return image;
+  }
+
+  Future<void> _startPicking() async {
+    setState(() {
+      _picking = true;
+      _picked = null;
+      _pickAt = null;
+    });
+    final image = await _renderPainted(1024);
+    final pixels = await image.toByteData();
     if (!mounted || !_picking || pixels == null) {
       image.dispose();
       return;
@@ -658,10 +694,191 @@ class _MaskEditorState extends State<MaskEditor> {
 
   static bool _isPen(PointerDeviceKind kind) => kind == PointerDeviceKind.stylus || kind == PointerDeviceKind.invertedStylus;
 
+  /// How hard [e] presses (0 to 1), or null if it has no pressure to give.
+  double? _pressOf(PointerEvent e) {
+    if (!_pressure || !_isPen(e.kind) || e.pressureMax <= e.pressureMin) return null;
+    return ((e.pressure - e.pressureMin) / (e.pressureMax - e.pressureMin)).clamp(0.0, 1.0);
+  }
+
   /// The radius [e]'s pressure asks for, or null if it has none to give.
   double? _pressed(PointerEvent e) {
-    if (!_pressure || !_isPen(e.kind) || e.pressureMax <= e.pressureMin) return null;
-    return pressureRadius((e.pressure - e.pressureMin) / (e.pressureMax - e.pressureMin), _brush);
+    final press = _pressOf(e);
+    return press == null ? null : pressureRadius(press, _brush);
+  }
+
+  // The smear brush: it works on pixels, not on strokes, so what it did goes
+  // into the color layer as a patch when it is done.
+
+  /// The longest side smearing works at. Plenty for something blurred, and
+  /// small enough to keep up with a pen.
+  static const int _smearSize = 1280;
+
+  /// Whether the color layer's brush smears rather than paints.
+  bool _smear = false;
+
+  /// The picture and its color, kept between strokes.
+  SmearCanvas? _smearCanvas;
+  Future<SmearCanvas?>? _smearLoading;
+
+  /// Bumped whenever the color changes other than by smearing, which makes
+  /// anything rendered or decoded before it out of date.
+  int _smearTicket = 0;
+
+  bool _drawingSmear = false;
+
+  /// The stroke's points not yet smeared: where, radius in fractions of the
+  /// picture's width, and strength.
+  final List<(Offset, double, double)> _smearQueue = [];
+  double _smearRadiusNow = 0;
+  double _smearStrengthNow = 0;
+  bool _smearBegun = false;
+  bool _smearEnded = false;
+  bool _smearPublishing = false;
+  bool _smearAgain = false;
+
+  /// The stroke as far as it has been shown.
+  MaskOp? _smearShown;
+
+  /// A stroke is still on its way into the layer.
+  bool get _smearBusy => _drawingSmear;
+
+  /// How firmly [e] smears: by pressure with a pen.
+  double _smearStrength(PointerEvent e) {
+    final press = _pressOf(e);
+    return press == null ? 0.55 : 0.2 + 0.55 * press;
+  }
+
+  /// How wide [e] smears. A light touch stays broad enough to blend with;
+  /// the pressure mostly goes to the strength.
+  double _smearRadius(PointerEvent e) {
+    final press = _pressOf(e);
+    return press == null ? _brush : _brush * (0.4 + 0.6 * press);
+  }
+
+  void _forgetSmear() {
+    _smearTicket++;
+    _smearCanvas = null;
+    _smearLoading = null;
+  }
+
+  Future<SmearCanvas?> _loadSmear() {
+    return _smearLoading ??= () async {
+      final ticket = _smearTicket;
+      final image = await _renderPainted(_smearSize);
+      final data = await image.toByteData();
+      final width = image.width;
+      final height = image.height;
+      image.dispose();
+      if (data == null || !mounted || ticket != _smearTicket) return null;
+      return _smearCanvas = SmearCanvas(data.buffer.asUint8List(), width, height);
+    }();
+  }
+
+  void _smearBegin(PointerEvent e) {
+    final r = _rect;
+    _drawingSmear = true;
+    _smearBegun = false;
+    _smearEnded = false;
+    _smearShown = null;
+    _smearRadiusNow = _smearRadius(e) / r.width;
+    _smearStrengthNow = _smearStrength(e);
+    _smearQueue
+      ..clear()
+      ..add((_toPicture(e.localPosition), _smearRadiusNow, _smearStrengthNow));
+    _smearWork();
+  }
+
+  void _smearExtend(PointerEvent e) {
+    final r = _rect;
+    final p = _toPicture(e.localPosition);
+    final radius = _smearRadius(e) / r.width;
+    final strength = _smearStrength(e);
+    // Eased, so a jitter of the pen does not show as lumps in the smear.
+    _smearRadiusNow += (radius - _smearRadiusNow) * 0.5;
+    _smearStrengthNow += (strength - _smearStrengthNow) * 0.5;
+    _smearQueue.add((p, _smearRadiusNow, _smearStrengthNow));
+    _smearWork();
+  }
+
+  /// Smear what is waiting, and show it.
+  Future<void> _smearWork() async {
+    final ticket = _smearTicket;
+    final canvas = _smearCanvas ?? await _loadSmear();
+    if (!mounted || ticket != _smearTicket || !_drawingSmear) return;
+    if (canvas == null) {
+      _smearDrop();
+      return;
+    }
+    for (final (p, radius, strength) in _smearQueue) {
+      final x = p.dx * canvas.width;
+      final y = p.dy * canvas.height;
+      final r = radius * canvas.width;
+      if (_smearBegun) {
+        canvas.to(x, y, r, strength);
+      } else {
+        canvas.begin(x, y, r, strength);
+        _smearBegun = true;
+      }
+    }
+    _smearQueue.clear();
+    await _smearPublish(canvas);
+  }
+
+  /// Turn the stroke so far into a patch on screen, one at a time so a
+  /// quick pen never queues them up. Ends the stroke once the pen has lifted.
+  Future<void> _smearPublish(SmearCanvas canvas) async {
+    if (_smearPublishing) {
+      _smearAgain = true;
+      return;
+    }
+    _smearPublishing = true;
+    final ticket = _smearTicket;
+    try {
+      do {
+        _smearAgain = false;
+        final patch = canvas.patch();
+        if (patch == null) break;
+        final done = Completer<ui.Image>();
+        ui.decodeImageFromPixels(patch.pixels, patch.width, patch.height, ui.PixelFormat.rgba8888, done.complete);
+        final image = await done.future;
+        if (!mounted || ticket != _smearTicket || !_drawingSmear) return;
+        setState(() {
+          _smearShown = MaskOp(
+            MaskKind.patch,
+            image: image,
+            area: Rect.fromLTWH(
+              patch.left / canvas.width,
+              patch.top / canvas.height,
+              patch.width / canvas.width,
+              patch.height / canvas.height,
+            ),
+          );
+        });
+      } while (_smearAgain);
+    } finally {
+      _smearPublishing = false;
+    }
+    if (_smearEnded && _smearQueue.isEmpty) _smearCommit();
+  }
+
+  void _smearCommit() {
+    final shown = _smearShown;
+    setState(() {
+      if (shown != null) _colorOps.add(shown);
+      _smearShown = null;
+      _drawingSmear = false;
+    });
+  }
+
+  /// Give up on the stroke. The pixels already moved must go too.
+  void _smearDrop() {
+    _forgetSmear();
+    _smearQueue.clear();
+    if (!mounted) return;
+    setState(() {
+      _smearShown = null;
+      _drawingSmear = false;
+    });
   }
 
   /// The picture, as it is now on disk (not an older file of the same name
@@ -801,14 +1018,18 @@ class _MaskEditorState extends State<MaskEditor> {
   // ------------------------------------------------------------ drawing
 
   void _start(PointerDownEvent e) {
+    // One smear at a time: the last is a moment from landing.
+    if (_smearBusy) return;
     final radius = _pressed(e);
     _drawingPointer = e.pointer;
     _drawing = [_toPicture(e.localPosition)];
     _drawingRadii = radius == null ? null : [radius / _rect.width];
     _drawingRadius = radius ?? _brush;
-    _drawingErase = _erase ||
+    final smearing = _layer == MaskLayer.color && _smear;
+    _drawingErase = (_erase && !smearing) ||
         e.kind == PointerDeviceKind.invertedStylus ||
         (_isPen(e.kind) && (e.buttons & kPrimaryStylusButton) != 0);
+    if (smearing && !_drawingErase) _smearBegin(e);
     _changed();
   }
 
@@ -827,6 +1048,10 @@ class _MaskEditorState extends State<MaskEditor> {
       if (dx * dx + dy * dy < 2) return;
     }
     d.add(p);
+    if (_drawingSmear) {
+      _smearExtend(e);
+      return;
+    }
     if (radius != null) {
       // Eased, so a jitter of the pen does not show as lumps in the line.
       _drawingRadius += (radius - _drawingRadius) * 0.5;
@@ -850,6 +1075,15 @@ class _MaskEditorState extends State<MaskEditor> {
     _drawing = null;
     _drawingPointer = null;
     if (d == null) return;
+    if (_drawingSmear) {
+      _smearEnded = true;
+      final canvas = _smearCanvas;
+      // Still loading or showing: the work in hand ends it.
+      if (canvas != null && _smearQueue.isEmpty && !_smearPublishing) _smearCommit();
+      _changed();
+      return;
+    }
+    if (_layer == MaskLayer.color) _forgetSmear();
     if (_active == MaskTool.trace) {
       if (d.length >= 3) _ops.add(MaskOp(MaskKind.trace, erase: _drawingErase, points: d));
     } else {
@@ -863,18 +1097,21 @@ class _MaskEditorState extends State<MaskEditor> {
   void _abandon() {
     _drawing = null;
     _drawingPointer = null;
+    if (_drawingSmear) _smearDrop();
     _changed();
   }
 
   void _undo() {
     if (_list.isEmpty) return;
     _list.removeLast();
+    _forgetSmear();
     _changed();
   }
 
   void _clear() {
     if (_list.isEmpty) return;
     _list.add(const MaskOp(MaskKind.all, erase: true));
+    _forgetSmear();
     _changed();
   }
 
@@ -883,7 +1120,10 @@ class _MaskEditorState extends State<MaskEditor> {
     _changed();
   }
 
-  void _done() => Navigator.of(context).pop(MaskEdit(_simplified(_ops), _simplified(_colorOps)));
+  void _done() {
+    if (_smearBusy) return;
+    Navigator.of(context).pop(MaskEdit(_simplified(_ops), _simplified(_colorOps)));
+  }
 
   /// [ops] without whatever a later clear wiped out.
   List<MaskOp> _simplified(List<MaskOp> ops) {
@@ -1059,7 +1299,13 @@ class _MaskEditorState extends State<MaskEditor> {
         },
         const SingleActivator(LogicalKeyboardKey.keyZ, control: true): _undo,
         const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): _undo,
-        const SingleActivator(LogicalKeyboardKey.keyB): () => setState(() => _tool = MaskTool.brush),
+        const SingleActivator(LogicalKeyboardKey.keyB): () => setState(() {
+          _tool = MaskTool.brush;
+          _smear = false;
+        }),
+        const SingleActivator(LogicalKeyboardKey.keyS): () {
+          if (_layer == MaskLayer.color) _setSmear(!_smear);
+        },
         const SingleActivator(LogicalKeyboardKey.keyT): () => setState(() => _tool = MaskTool.trace),
         const SingleActivator(LogicalKeyboardKey.keyF): () {
           if (_canFind) setState(() => _tool = MaskTool.find);
@@ -1205,7 +1451,8 @@ class _MaskEditorState extends State<MaskEditor> {
                         ],
                         color: [
                           ..._colorOps,
-                          if (_drawing != null && _layer == MaskLayer.color) _stroke(_drawing!),
+                          if (_smearShown case final shown?) shown,
+                          if (_drawing != null && _layer == MaskLayer.color && !_drawingSmear) _stroke(_drawing!),
                         ],
                         showMask: _layer == MaskLayer.mask,
                         trace: _active == MaskTool.trace ? _drawing : null,
@@ -1230,7 +1477,7 @@ class _MaskEditorState extends State<MaskEditor> {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: _erase ? Colors.white : (_layer == MaskLayer.color ? _color : maskTint),
+                              color: _erase || (_smear && _layer == MaskLayer.color) ? Colors.white : (_layer == MaskLayer.color ? _color : maskTint),
                               width: 1.5,
                             ),
                           ),
@@ -1312,6 +1559,16 @@ class _MaskEditorState extends State<MaskEditor> {
               ),
             ),
             icon(key: const ValueKey<String>('mask-pick'), tooltip: 'Pick a color from the picture (P)', icon: Icons.colorize, onTap: _picking ? null : _startPicking),
+            SegmentedButton<bool>(
+              key: const ValueKey<String>('mask-color-tool'),
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: false, icon: Icon(Icons.circle, size: 13), label: Text('Brush'), tooltip: 'Paint with the color (B)'),
+                ButtonSegment(value: true, icon: Icon(Icons.blur_on, size: 17), label: Text('Smear'), tooltip: 'Drag the colors and blur them together (S)'),
+              ],
+              selected: {_smear},
+              onSelectionChanged: (s) => _setSmear(s.first),
+            ),
           ] else SegmentedButton<MaskTool>(
             key: const ValueKey<String>('mask-tool'),
             showSelectedIcon: false,
@@ -1335,7 +1592,7 @@ class _MaskEditorState extends State<MaskEditor> {
               }
             },
           ),
-          SegmentedButton<bool>(
+          if (!(_smear && _layer == MaskLayer.color)) SegmentedButton<bool>(
             key: const ValueKey<String>('mask-mode'),
             showSelectedIcon: false,
             segments: const [
