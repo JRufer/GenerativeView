@@ -124,6 +124,15 @@ impl Weights {
         self.read(entry.offset, entry.bytes)
     }
 
+    /// Every float tensor in the file, by name.
+    pub fn all(&self) -> Result<HashMap<String, crate::sr::pth::Tensor>, String> {
+        let mut out = HashMap::new();
+        for (name, e) in &self.entries {
+            out.insert(name.clone(), crate::sr::pth::Tensor { shape: e.shape.clone(), data: self.read(e.offset, e.bytes)? });
+        }
+        Ok(out)
+    }
+
     /// One row of a two-dimensional tensor.
     pub fn row(&self, name: &str, row: usize) -> Result<Vec<f32>, String> {
         let entry = self.entry(name)?;

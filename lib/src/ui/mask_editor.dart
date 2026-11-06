@@ -822,6 +822,7 @@ class _MaskEditorState extends State<MaskEditor> {
   @override
   void dispose() {
     _selectModel?.cancel();
+    _selector?.dispose();
     _hex.dispose();
     _hexFocus.dispose();
     _sample?.dispose();

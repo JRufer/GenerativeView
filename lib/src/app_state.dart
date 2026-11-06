@@ -11,6 +11,7 @@ import 'core/audience.dart';
 import 'core/detail_models.dart';
 import 'core/detail_pass.dart' show RegionFinder;
 import 'core/object_select.dart' show ObjectSelector;
+import 'core/select_model.dart';
 import 'core/backends.dart' show cancelRemix, RemixImage, RemixTicket, resumeRemix, remixPatience, remixPollEvery;
 import 'core/media_image.dart';
 import 'core/presets.dart';
@@ -177,6 +178,10 @@ class AppState extends ChangeNotifier {
     final finder = DetailModels(core);
     regionFinder = finder;
     unawaited(finder.check());
+    final select = SelectModel(core);
+    _selectModel = select;
+    objectSelectorFor = select.selectorFor;
+    unawaited(select.check());
   }
 
   final NativeCore core;
@@ -464,6 +469,7 @@ class AppState extends ChangeNotifier {
   /// Tap to select in the mask editor: what outlines objects in the picture
   /// at a path. Null hides the Select tool.
   ObjectSelector Function(String path)? objectSelectorFor;
+  SelectModel? _selectModel;
 
   /// What finds faces and hands for the detail pass. Null hides it.
   RegionFinder? regionFinder;
@@ -3053,6 +3059,7 @@ class AppState extends ChangeNotifier {
     _disposed = true;
     final finder = regionFinder;
     if (finder is DetailModels) finder.dispose();
+    _selectModel?.dispose();
     _events.cancel();
     _sharedIn?.cancel();
     _reloadTimer?.cancel();

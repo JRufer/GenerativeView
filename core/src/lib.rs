@@ -15,6 +15,7 @@ pub mod jxl;
 pub mod meta;
 pub mod nn;
 pub mod notes;
+pub mod sam;
 pub mod sr;
 pub mod taste;
 pub mod thumbs;

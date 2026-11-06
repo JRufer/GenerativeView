@@ -35,6 +35,10 @@ pub struct Engine {
     taste: parking_lot::Mutex<Option<(u64, Arc<Taste>)>>,
     /// The face and hand finder, loaded the first time it is asked for.
     finder: parking_lot::Mutex<Option<Arc<crate::detect::Finder>>>,
+    /// Tap to select: the model once loaded, and the pictures lately made
+    /// ready for it (newest last), so each tap is quick.
+    sam: parking_lot::Mutex<Option<Arc<crate::sam::Sam>>>,
+    prepared: parking_lot::Mutex<Vec<(String, Arc<crate::sam::Prepared>)>>,
 }
 
 /// The taste model, or why there is none yet, with how many of the
@@ -68,6 +72,36 @@ fn u32_arg(args: &Value, key: &str) -> Result<u32, String> {
     args.get(key).and_then(Value::as_u64).map(|v| v as u32).ok_or_else(|| format!("missing number {key}"))
 }
 
+impl Engine {
+    /// The picture at `path` made ready to tap: encoded once, then kept
+    /// (the last two).
+    fn select_prepared(&self, path: &str) -> Result<Arc<crate::sam::Prepared>, String> {
+        if let Some((_, p)) = self.prepared.lock().iter().find(|(k, _)| k == path) {
+            return Ok(p.clone());
+        }
+        let sam = {
+            let mut slot = self.sam.lock();
+            match slot.as_ref() {
+                Some(s) => s.clone(),
+                None => {
+                    let s = Arc::new(crate::sam::Sam::load(&crate::sam::model_dir(&self.data_dir).join(crate::sam::FILE))?);
+                    *slot = Some(s.clone());
+                    s
+                }
+            }
+        };
+        let picture = crate::jxl::open(Path::new(path))?;
+        let p = Arc::new(sam.prepare(&picture)?);
+        let mut list = self.prepared.lock();
+        list.retain(|(k, _)| k != path);
+        list.push((path.to_string(), p.clone()));
+        if list.len() > 2 {
+            list.remove(0);
+        }
+        Ok(p)
+    }
+}
+
 fn bool_arg(args: &Value, key: &str) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -80,7 +114,7 @@ impl Engine {
         let notes = Arc::new(Notes::new());
         let indexer = Indexer::start(db.clone(), notes.clone(), sink.clone());
         let dupes = crate::dupes::Duplicates::open(data_dir);
-        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default(), finder: Default::default() })
+        Ok(Engine { db, thumbs, indexer, content, notes, dupes, data_dir: data_dir.to_path_buf(), sink, upscales: Default::default(), taste: Default::default(), finder: Default::default(), sam: Default::default(), prepared: Default::default() })
     }
 
     pub fn close(&self) {
@@ -951,6 +985,24 @@ impl Engine {
                 let dest = str_arg(args, "dest")?;
                 std::fs::write(dest, png).map_err(|e| format!("cannot write {dest}: {e}"))?;
                 Ok(json!({ "path": dest }).to_string())
+            }
+            "select_status" => {
+                let dir = crate::sam::model_dir(&self.data_dir);
+                Ok(json!({ "installed": dir.join(crate::sam::FILE).is_file(), "dir": dir.to_string_lossy() }).to_string())
+            }
+            "select_prepare" => {
+                let path = normalize(str_arg(args, "path")?);
+                self.select_prepared(&path)?;
+                Ok("{}".into())
+            }
+            "select_outline" => {
+                let path = normalize(str_arg(args, "path")?);
+                let p = self.select_prepared(&path)?;
+                let x = args.get("x").and_then(Value::as_f64).ok_or("missing number x")? as f32;
+                let y = args.get("y").and_then(Value::as_f64).ok_or("missing number y")? as f32;
+                let sam = self.sam.lock().clone().ok_or("the selection model is not loaded")?;
+                let outline = sam.outline(&p, x, y);
+                Ok(Value::Array(outline.iter().map(|(x, y)| json!([x, y])).collect()).to_string())
             }
             "detail_status" => {
                 let dir = crate::detect::model_dir(&self.data_dir);

@@ -42,15 +42,19 @@ jobs:
           curl -sSfL -o "$d/retinaface/mobilenet0.25_Final.pth" https://huggingface.co/py-feat/retinaface/resolve/main/mobilenet0.25_Final.pth
           curl -sSfL -o "$d/anime_face_v1.4_n/model.pt" https://huggingface.co/deepghs/anime_face_detection/resolve/main/face_detect_v1.4_n/model.pt
           curl -sSfL -o "$d/anime_hand_v1.0_n/model.pt" https://huggingface.co/deepghs/anime_hand_detection/resolve/main/hand_detect_v1.0_n/model.pt
-          ls -lR "$d"
+          mkdir -p "$RUNNER_TEMP/sam"
+          curl -sSfL -o "$RUNNER_TEMP/sam/model.safetensors" https://huggingface.co/nielsr/mobilesam/resolve/main/model.safetensors
+          curl -sSfL -o "$RUNNER_TEMP/sam/mobile_sam.pt" https://huggingface.co/dhkim2810/MobileSAM/resolve/main/mobile_sam.pt
+          ls -lR "$d" "$RUNNER_TEMP/sam"
       - name: Detectors against the real models
         working-directory: core
         env:
           GV_DETAIL_MODELS: ${{ runner.temp }}/detail
+          GV_SAM_MODEL: ${{ runner.temp }}/sam/model.safetensors
           GV_SAMPLE_DIR: ${{ runner.temp }}/samples
         run: |
           mkdir -p ../out
-          cargo test --release --lib detect -- --nocapture > ../out/detect.txt 2>&1 || true
+          cargo test --release --lib -- detect:: sam:: --nocapture --test-threads=1 > ../out/detect.txt 2>&1 || true
           tail -30 ../out/detect.txt
       - name: Reference boxes from Ultralytics (check only)
         env:
@@ -70,6 +74,29 @@ jobs:
                   print(model, name, [(round(float(b[0])/w, 3), round(float(b[1])/h, 3), round(float(b[2])/w, 3), round(float(b[3])/h, 3), round(float(c), 3)) for b, c in zip(r.boxes.xyxy, r.boxes.conf)])
           PY
           cat out/reference.txt
+      - name: Reference mask from MobileSAM in PyTorch (check only)
+        env:
+          M: ${{ runner.temp }}/sam/mobile_sam.pt
+          S: ${{ runner.temp }}/samples
+        run: |
+          pip install -q timm "git+https://github.com/ChaoningZhang/MobileSAM.git" > /dev/null 2>&1 || true
+          python3 - > out/sam_reference.txt 2>&1 <<'PY' || true
+          import os, numpy as np, torch
+          from PIL import Image
+          from mobile_sam import sam_model_registry, SamPredictor
+          sam = sam_model_registry["vit_t"](checkpoint=os.environ['M']).eval()
+          p = SamPredictor(sam)
+          img = np.array(Image.open(os.path.join(os.environ['S'], 'flux/girl_in_field.png')).convert('RGB'))
+          p.set_image(img)
+          print('embedding mean', float(p.features.mean()))
+          h, w = img.shape[:2]
+          masks, scores, _ = p.predict(point_coords=np.array([[0.5 * w, 0.7 * h]]), point_labels=np.array([1]), multimask_output=True)
+          m = masks[int(np.argmax(scores))]
+          ys, xs = np.nonzero(m)
+          print('scores', scores.tolist())
+          print('box', xs.min() / w, ys.min() / h, xs.max() / w, ys.max() / h, 'area', m.mean())
+          PY
+          cat out/sam_reference.txt
       - name: Analyze and test
         env:
           GV_SCREENSHOT_DIR: ${{ github.workspace }}/out/screens

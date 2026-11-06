@@ -40,6 +40,7 @@ pub enum Act {
     Relu,
     Silu,
     Leaky(f32),
+    Gelu,
 }
 
 fn act(v: &mut [f32], a: Act) {
@@ -52,6 +53,7 @@ fn act(v: &mut [f32], a: Act) {
                 *x *= s
             }
         }),
+        Act::Gelu => gelu(v),
     }
 }
 
@@ -243,6 +245,150 @@ impl Conv {
     }
 }
 
+// ---------------------------------------------------------------- transformers
+
+/// `a` (m × k) times `b` (k × n), both row-major; `bt` says `b` is given
+/// transposed (n × k), as a linear layer's weight is.
+pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize, bt: bool) -> Vec<f32> {
+    let mut out = vec![0.0f32; m * n];
+    let (b_cs, b_rs) = if bt { (k as isize, 1) } else { (1, n as isize) };
+    // SAFETY: the sizes and strides are those of the slices.
+    unsafe {
+        gemm::gemm(m, n, k, out.as_mut_ptr(), 1, n as isize, false, a.as_ptr(), 1, k as isize, b.as_ptr(), b_cs, b_rs, 0.0, 1.0, false, false, false, threads());
+    }
+    out
+}
+
+/// A linear layer: `weight` out × in, and a bias.
+#[derive(Debug, Clone)]
+pub struct Linear {
+    pub inputs: usize,
+    pub outputs: usize,
+    weight: Vec<f32>,
+    bias: Vec<f32>,
+}
+
+impl Linear {
+    pub fn named(t: &mut HashMap<String, Tensor>, prefix: &str) -> Result<Linear, String> {
+        let w = take(t, &format!("{prefix}.weight"))?;
+        if w.shape.len() != 2 {
+            return Err(format!("{prefix} is not a linear layer"));
+        }
+        let (outputs, inputs) = (w.shape[0], w.shape[1]);
+        let bias = t.remove(&format!("{prefix}.bias")).map(|b| b.data).unwrap_or_else(|| vec![0.0; outputs]);
+        Ok(Linear { inputs, outputs, weight: w.data, bias })
+    }
+
+    /// `rows` (n × inputs) to n × outputs.
+    pub fn apply(&self, rows: &[f32]) -> Vec<f32> {
+        let n = rows.len() / self.inputs;
+        let mut out = matmul(rows, &self.weight, n, self.inputs, self.outputs, true);
+        for row in out.chunks_exact_mut(self.outputs) {
+            row.iter_mut().zip(&self.bias).for_each(|(v, b)| *v += b);
+        }
+        out
+    }
+}
+
+/// Layer norm over each row of `width`.
+#[derive(Debug, Clone)]
+pub struct Norm {
+    weight: Vec<f32>,
+    bias: Vec<f32>,
+    eps: f32,
+}
+
+impl Norm {
+    pub fn named(t: &mut HashMap<String, Tensor>, prefix: &str, eps: f32) -> Result<Norm, String> {
+        Ok(Norm { weight: take(t, &format!("{prefix}.weight"))?.data, bias: take(t, &format!("{prefix}.bias"))?.data, eps })
+    }
+
+    pub fn apply(&self, rows: &mut [f32]) {
+        let w = self.weight.len();
+        for row in rows.chunks_exact_mut(w) {
+            let mean = row.iter().sum::<f32>() / w as f32;
+            let var = row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / w as f32;
+            let inv = 1.0 / (var + self.eps).sqrt();
+            for (i, v) in row.iter_mut().enumerate() {
+                *v = (*v - mean) * inv * self.weight[i] + self.bias[i];
+            }
+        }
+    }
+
+    /// Over the channels at each place of a planar feature map, as SAM's
+    /// LayerNorm2d does.
+    pub fn apply_channels(&self, x: &mut Feat) {
+        let hw = x.h * x.w;
+        for at in 0..hw {
+            let mean = (0..x.c).map(|c| x.data[c * hw + at]).sum::<f32>() / x.c as f32;
+            let var = (0..x.c).map(|c| (x.data[c * hw + at] - mean).powi(2)).sum::<f32>() / x.c as f32;
+            let inv = 1.0 / (var + self.eps).sqrt();
+            for c in 0..x.c {
+                let v = &mut x.data[c * hw + at];
+                *v = (*v - mean) * inv * self.weight[c] + self.bias[c];
+            }
+        }
+    }
+}
+
+/// The error function, to about seven decimal places (Abramowitz & Stegun
+/// 7.1.26).
+fn erf(x: f32) -> f32 {
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let poly = t * (0.254_829_592 + t * (-0.284_496_736 + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let y = 1.0 - poly * (-x * x).exp();
+    if x < 0.0 {
+        -y
+    } else {
+        y
+    }
+}
+
+pub fn gelu(v: &mut [f32]) {
+    use rayon::prelude::*;
+    v.par_chunks_mut(4096).for_each(|c| c.iter_mut().for_each(|x| *x = 0.5 * *x * (1.0 + erf(*x * std::f32::consts::FRAC_1_SQRT_2))));
+}
+
+pub fn relu_rows(v: &mut [f32]) {
+    v.iter_mut().for_each(|x| *x = x.max(0.0));
+}
+
+/// Softmax over each row of `width`, in place.
+pub fn softmax_rows(v: &mut [f32], width: usize) {
+    for row in v.chunks_exact_mut(width) {
+        let m = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0;
+        row.iter_mut().for_each(|x| {
+            *x = (*x - m).exp();
+            sum += *x;
+        });
+        row.iter_mut().for_each(|x| *x /= sum);
+    }
+}
+
+/// Planar `c × h × w` as `h·w` rows of `c`, and back.
+pub fn to_rows(x: &Feat) -> Vec<f32> {
+    let hw = x.h * x.w;
+    let mut out = vec![0.0; x.data.len()];
+    for c in 0..x.c {
+        for at in 0..hw {
+            out[at * x.c + c] = x.data[c * hw + at];
+        }
+    }
+    out
+}
+
+pub fn from_rows(rows: &[f32], c: usize, h: usize, w: usize) -> Feat {
+    let hw = h * w;
+    let mut data = vec![0.0; c * hw];
+    for at in 0..hw {
+        for ch in 0..c {
+            data[ch * hw + at] = rows[at * c + ch];
+        }
+    }
+    Feat { c, h, w, data }
+}
+
 /// Max pooling, `k` square, stride 1, padded to keep the size.
 pub fn max_pool_same(x: &Feat, k: usize) -> Feat {
     let p = (k / 2) as isize;
@@ -379,6 +525,17 @@ mod tests {
         let x = Feat { c: 2, h: 1, w: 2, data: vec![1.0, 2.0, 3.0, 4.0] };
         let y = conv.forward(&x).unwrap();
         assert_eq!(y.data, vec![2.5, 4.5, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_product_with_the_second_given_transposed() {
+        // [1 2; 3 4] × [5 6; 7 8] = [19 22; 43 50], and with B given as its
+        // transpose, the same.
+        let a = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(matmul(&a, &[5.0, 6.0, 7.0, 8.0], 2, 2, 2, false), vec![19.0, 22.0, 43.0, 50.0]);
+        assert_eq!(matmul(&a, &[5.0, 7.0, 6.0, 8.0], 2, 2, 2, true), vec![19.0, 22.0, 43.0, 50.0]);
+        // Not square: 1×3 times 3×2.
+        assert_eq!(matmul(&[1.0, 2.0, 3.0], &[1.0, 0.0, 0.0, 1.0, 1.0, 1.0], 1, 3, 2, false), vec![4.0, 5.0]);
     }
 
     #[test]
