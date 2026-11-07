@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'src/app_state.dart';
 import 'src/core/native_core.dart';
 import 'src/core/thumb_cache.dart';
+import 'src/desktop_integration.dart';
 import 'src/licenses.dart';
 import 'src/platform.dart';
 import 'src/remix_alerts.dart';
@@ -48,12 +49,12 @@ Future<void> main(List<String> args) async {
       pollMs: pollIntervalMs,
       videoPlayback: videoPlayback,
     );
-    // `generativeview /some/folder` opens that folder.
-    final requested = args.where((a) => !a.startsWith('-')).firstOrNull;
-    final initial = requested != null && Directory(requested).existsSync()
-        ? Directory(requested).absolute.path
-        : null;
-    await state.restore(initialFolder: initial);
+    // `generativeview /some/folder` opens that folder; `generativeview
+    // picture.png` (what a double-click in the file manager runs) opens the
+    // picture's folder with it in the focus view.
+    final launch = launchTarget(args);
+    await state.restore(initialFolder: launch.folder, initialFile: launch.file);
+    unawaited(registerWithDesktop());
     unawaited(state.checkCoreBuild(buildCommit, NativeCore.loadedFrom));
   } catch (e) {
     failure = e;

@@ -597,7 +597,19 @@ class AppState extends ChangeNotifier {
   // ================================================================ startup
 
   /// Load saved settings and reopen the last folder.
-  Future<void> restore({String? initialFolder}) async {
+  /// Start up: settings back as they were, and the folder last open (or
+  /// [initialFolder], asked for on the command line). With [initialFile],
+  /// a picture opened from the file manager, its folder opens with that
+  /// picture in the focus view, to step through the rest from there.
+  Future<void> restore({String? initialFolder, String? initialFile}) async {
+    if (initialFile != null) {
+      final file = normalizePath(initialFile);
+      final cut = file.lastIndexOf('/');
+      if (cut > 0) {
+        initialFolder ??= file.substring(0, cut);
+        _openWhenListed = file;
+      }
+    }
     Map<String, dynamic> saved = const {};
     try {
       saved = (await core.call('settings')) as Map<String, dynamic>;

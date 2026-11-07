@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../core/media_image.dart';
 import '../core/models.dart';
+import '../desktop_integration.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show toast;
 import '../platform.dart' show trashAsksFirst;
@@ -190,8 +191,62 @@ class _General extends StatelessWidget {
         value: state.followNew,
         onChanged: (_) => state.toggleFollowNew(),
       ),
+      const _DefaultViewer(),
     ],
   );
+}
+
+/// On Linux, a way to make this the program pictures open in when
+/// double-clicked in the file manager. Not shown where that can't be done.
+class _DefaultViewer extends StatefulWidget {
+  const _DefaultViewer();
+
+  @override
+  State<_DefaultViewer> createState() => _DefaultViewerState();
+}
+
+class _DefaultViewerState extends State<_DefaultViewer> {
+  bool? _isDefault;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    final value = await isDefaultImageViewer();
+    if (mounted) setState(() => _isDefault = value);
+  }
+
+  Future<void> _make() async {
+    setState(() => _busy = true);
+    final ok = await makeDefaultImageViewer();
+    await _check();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!ok) toast(context, 'The desktop would not change it');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDefault = _isDefault;
+    if (isDefault == null) return const SizedBox.shrink();
+    return _Line(
+      title: 'Open pictures with GenerativeView',
+      detail: isDefault
+          ? 'Double-clicking a picture in the file manager opens it here, with the rest of its folder a swipe away.'
+          : 'Make this the program a double-click on a picture opens. It is under "Open With" either way.',
+      child: isDefault
+          ? const Icon(Icons.check_circle, color: Palette.accent, size: 22)
+          : OutlinedButton(
+              key: const ValueKey<String>('settings-default-viewer'),
+              onPressed: _busy ? null : _make,
+              child: const Text('Make default'),
+            ),
+    );
+  }
 }
 
 class _Grid extends StatelessWidget {
