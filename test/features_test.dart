@@ -91,7 +91,7 @@ void main() {
     } catch (_) {}
   });
 
-  Future<AppState> launch(WidgetTester tester, {Size size = const Size(1440, 900)}) async {
+  Future<AppState> launch(WidgetTester tester, {Size size = const Size(1440, 900), String? file}) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -100,7 +100,8 @@ void main() {
     final state = AppState(core: core, thumbs: ThumbCache(core, maxBytes: 64 << 20));
     await tester.pumpWidget(RepaintBoundary(key: boundary, child: GenerativeViewApp(state: state)));
     var done = false;
-    state.restore(initialFolder: library.path).whenComplete(() => done = true);
+    (file == null ? state.restore(initialFolder: library.path) : state.restore(initialFile: file))
+        .whenComplete(() => done = true);
     await pumpUntil(tester, () => done, what: 'the folder to open');
     return state;
   }
@@ -1874,6 +1875,26 @@ void main() {
     state.applySearch('');
     await tester.runAsync(() => state.openFolder(library.path));
     await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'back to the library');
+    await close(tester, state);
+  });
+
+  testWidgets('a picture opened from the file manager opens its folder at that picture', (tester) async {
+    final state = await launch(tester, file: '${library.path}/fox_02.png');
+    await pumpUntil(tester, () => state.mode == ViewMode.focus && state.selected?.name == 'fox_02.png', what: 'the picture open');
+    expect(normalizePath(state.folder!), normalizePath(library.path), reason: 'its folder is the one open');
+    expect(state.query, '');
+    expect(state.rightOpen, isTrue, reason: 'the generation data shows');
+    expect(state.items.length, greaterThan(1));
+    final at = state.selectedIndex;
+    state.move(at == state.items.length - 1 ? -1 : 1);
+    await settle(tester);
+    expect(state.selectedIndex, isNot(at), reason: 'the rest of the folder is a step away');
+    expect(state.mode, ViewMode.focus);
+    state.closeFocus();
+    await settle(tester);
+    expect(state.mode, ViewMode.grid, reason: 'back leaves the folder showing');
+    state.toggleRight();
+    await settle(tester);
     await close(tester, state);
   });
 

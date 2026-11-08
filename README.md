@@ -206,10 +206,12 @@ Every merge to `main` is built, tested and published under [Releases](https://gi
 
   ```sh
   chmod +x GenerativeView-x86_64.AppImage
-  ./GenerativeView-x86_64.AppImage            # or: ./GenerativeView-x86_64.AppImage /path/to/folder
+  ./GenerativeView-x86_64.AppImage            # or: ./GenerativeView-x86_64.AppImage /path/to/folder-or-picture
   ```
 
   `generativeview-linux-x64.tar.gz` is the same app as a plain folder; run `bundle/install.sh` to install it under `~/.local` with a menu entry.
+
+  **Opening pictures from the file manager**: the first time the AppImage runs, it adds itself to the desktop's programs (a menu entry in `~/.local/share/applications`, pointing at wherever the AppImage is), so PNG, JPEG, WebP, GIF, BMP and JXL files offer it under **Open With**; `install.sh` does the same for the folder install. **Settings › General › Open pictures with GenerativeView › Make default** makes it what a double-click opens. A picture opened that way opens its folder, with that picture in the focus view and its generation data beside it: swipe or use the arrow keys to step through the rest of the folder, or go back to see the whole folder in the grid. Opening a picture this way doesn't change the folder the app reopens next time. Each double-click starts its own window. If AppImageLauncher or Gear Lever already manages the AppImage, the app leaves the menu entry to them. Move the AppImage and run it once from the new place to update the entry.
 
 - **Android**: `GenerativeView-arm64-v8a.apk` for tablets and phones. Sideload it.
 
