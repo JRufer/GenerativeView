@@ -24,6 +24,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- "Set as wallpaper" in the image menu. Granted at install, no prompt. -->
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- Updating to a newer build from GitHub: the downloaded APK is handed
+         to the system installer, which still asks before it installs. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:label="GenerativeView"
         android:name="${applicationName}"
@@ -72,6 +75,13 @@
         <provider
             android:name=".CopiedFileProvider"
             android:authorities="${applicationId}.copied"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <!-- Hands a downloaded update to the system installer. Not exported:
+             the installer is granted the one APK it is given. -->
+        <provider
+            android:name=".UpdateFileProvider"
+            android:authorities="${applicationId}.updates"
             android:exported="false"
             android:grantUriPermissions="true" />
         <!-- Don't delete the meta-data below.

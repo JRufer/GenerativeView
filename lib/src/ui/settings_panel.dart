@@ -12,6 +12,8 @@ import '../platform.dart' show trashAsksFirst;
 import 'presets_ui.dart';
 import 'remix_dialog.dart' show BackendSettings;
 import 'sheet.dart';
+import '../updates.dart';
+import 'update_ui.dart';
 
 /// Below this width the sections are a list that opens one at a time;
 /// above it they sit beside the one that is open.
@@ -192,6 +194,19 @@ class _General extends StatelessWidget {
         onChanged: (_) => state.toggleFollowNew(),
       ),
       const _DefaultViewer(),
+      if (appUpdater?.canCheck ?? false) ...[
+        _Pref(
+          state,
+          updateCheckPref,
+          'Check for updates',
+          true,
+          detail: 'Look on GitHub for a newer build a little after the app starts, and every few hours while it is open. Nothing installs until you say so.',
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 8),
+          child: UpdateCard(updater: appUpdater),
+        ),
+      ],
     ],
   );
 }

@@ -7,6 +7,8 @@ import '../theme.dart';
 import 'meta_panel.dart' show copyText;
 import 'toast.dart';
 import 'sheet.dart';
+import '../updates.dart';
+import 'update_ui.dart';
 
 const String appName = 'GenerativeView';
 const String _tagline = 'A fast browser for folders of AI-generated images, with searchable generation metadata.';
@@ -223,6 +225,10 @@ class _AboutContentState extends State<AboutContent> {
             ),
           ),
         ),
+        if (appUpdater?.canCheck ?? false) ...[
+          const SizedBox(height: 14),
+          UpdateCard(updater: appUpdater),
+        ],
         const SizedBox(height: 10),
         const Text(
           _tagline,
