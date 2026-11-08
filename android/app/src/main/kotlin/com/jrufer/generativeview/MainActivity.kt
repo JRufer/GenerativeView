@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.view.Surface
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -127,6 +128,8 @@ class MainActivity : FlutterActivity() {
                     "takeShared" -> result.success(takeShared())
                     "readCopiedFile" -> readCopiedFile(result)
                     "openUrl" -> result.success(openUrl(call.argument<String>("url")))
+                    "supportedAbis" -> result.success(Build.SUPPORTED_ABIS.toList())
+                    "installApk" -> installApk(call.argument<String>("path"), call.argument<String>("sha256") ?: "", result)
                     "trashFile" -> trashFile(call.argument<String>("path"), result)
                     "pasteSource" -> pasteSource(result)
                     "wallpaperScreens" -> result.success(wallpaperScreens())
@@ -292,6 +295,51 @@ class MainActivity : FlutterActivity() {
     // CopiedFileProvider), not a re-encoded picture, so whatever it is pasted
     // into receives the original bytes, generation data included.
     /** Open a web page in the user's browser. */
+    // --- Updates -------------------------------------------------------------
+
+    /**
+     * Hand a downloaded update to the system installer, which asks before it
+     * updates. Answers "started", "permission" (the user must first let the
+     * app install apps; their settings page is opened), "mismatch" (the file
+     * is not the one GitHub lists) or "failed".
+     */
+    private fun installApk(path: String?, sha256: String, result: MethodChannel.Result) {
+        val file = path?.let { UpdateFileProvider.fileFor(this, it) }
+        if (file == null) {
+            result.success("failed")
+            return
+        }
+        workers.execute {
+            val matches = sha256.isEmpty() || UpdateFileProvider.sha256(file) == sha256.lowercase()
+            runOnUiThread {
+                if (!matches) {
+                    result.success("mismatch")
+                    return@runOnUiThread
+                }
+                if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+                    try {
+                        startActivity(
+                            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    } catch (e: Exception) {
+                    }
+                    result.success("permission")
+                    return@runOnUiThread
+                }
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(UpdateFileProvider.uriFor(this, file), UpdateFileProvider.APK_TYPE)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    result.success("started")
+                } catch (e: Exception) {
+                    result.success("failed")
+                }
+            }
+        }
+    }
+
     private fun openUrl(url: String?): Boolean {
         if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) return false
         return try {

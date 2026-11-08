@@ -12,8 +12,10 @@ import 'src/licenses.dart';
 import 'src/platform.dart';
 import 'src/remix_alerts.dart';
 import 'src/theme.dart';
-import 'src/ui/about_panel.dart' show buildCommit;
+import 'src/ui/about_panel.dart' show buildCommit, releaseName;
 import 'src/ui/home_page.dart';
+import 'src/ui/update_ui.dart';
+import 'src/updates.dart';
 import 'src/ui/shortcut_layer.dart';
 
 Future<void> main(List<String> args) async {
@@ -56,6 +58,15 @@ Future<void> main(List<String> args) async {
     await state.restore(initialFolder: launch.folder, initialFile: launch.file);
     unawaited(registerWithDesktop());
     unawaited(state.checkCoreBuild(buildCommit, NativeCore.loadedFrom));
+    // A newer build on GitHub: looked for well after the first frame, never
+    // on the way to it.
+    final made = state;
+    final updater = Updater(currentRelease: releaseName, enabled: () => made.prefFlag(updateCheckPref, true));
+    if (updater.canCheck) {
+      appUpdater = updater..start();
+    } else {
+      updater.dispose();
+    }
   } catch (e) {
     failure = e;
   }
@@ -76,6 +87,7 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
   final RouteCounter _routes = RouteCounter();
   MouseNavigation? _mouse;
   RemixAlerts? _remixAlerts;
+  UpdateAnnouncer? _updates;
 
   @override
   void initState() {
@@ -87,12 +99,15 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
       _mouse = MouseNavigation(state: state, routes: _routes)..attach();
       _remixAlerts = RemixAlerts(state)..attach();
     }
+    final updater = appUpdater;
+    if (updater != null) _updates = UpdateAnnouncer(updater, appNavigator)..attach();
   }
 
   @override
   void dispose() {
     _mouse?.detach();
     _remixAlerts?.detach();
+    _updates?.detach();
     super.dispose();
   }
 
