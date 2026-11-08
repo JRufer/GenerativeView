@@ -225,6 +225,16 @@ On Ubuntu / Debian: `sudo apt install ffmpeg` (and `mpv` for the `.tar.gz`).
 
 **Android**: on first launch tap **Allow access** and turn on "All files access" for GenerativeView; it needs real folder paths to scan and watch, which Android only gives through that permission. (That permission is also why this is a sideload app rather than a Play Store one.)
 
+### Updates
+
+A build installed from Releases looks for a newer `build-<n>` a little after it starts, and every six hours while it stays open, and says so at the foot of the window when there is one. Nothing installs until you tap **Install** (in that message, **Settings › General**, or **⋮ › About**). Turn it off with **Settings › General › Check for updates**.
+
+- **Android**: the APK for the device is downloaded, checked against the SHA-256 GitHub lists for it, and handed to Android's installer, which asks before it updates. The first time, Android asks you to allow GenerativeView to install apps.
+- **Linux, AppImage**: the new AppImage is downloaded beside the running one, checked, and moved over it. **Restart** starts it; otherwise it runs next time. The folder the AppImage is in has to be writable. The `.tar.gz` install opens the release page instead.
+- **Windows, macOS**: the release page opens.
+
+Tagged releases (`v0.1.0`) and builds made from source don't look.
+
 ### Signing key
 
 Android only installs an update over an existing app if both are signed with the same key and the new one has a higher version code. Every build's version code is its CI run number, so it always goes up; the key is what has to stay the same. Until the repository has a key of its own, each CI run signs with a throwaway one (the run says so in a notice), and Android refuses the update with "App not installed" until the old one is uninstalled. To fix that once and for all:
