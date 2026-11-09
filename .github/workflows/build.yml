@@ -245,6 +245,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Cache the libmpv binaries media_kit downloads
+        uses: actions/cache@v4
+        with:
+          # media_kit pulls these from a GitHub release while Gradle
+          # configures, so a 504 there takes the whole build down. Cached,
+          # CI only goes out for them when the pinned version changes.
+          path: build/media_kit_libs_android_video/v*
+          key: media-kit-android-${{ hashFiles('pubspec.lock') }}
       - name: Install Rust Android targets and cargo-ndk
         run: |
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
@@ -323,6 +331,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Cache the libmpv binaries media_kit downloads
+        uses: actions/cache@v4
+        with:
+          # media_kit pulls these from a GitHub release while Gradle
+          # configures, so a 504 there takes the whole build down. Cached,
+          # CI only goes out for them when the pinned version changes.
+          path: build/media_kit_libs_android_video/v*
+          key: media-kit-android-${{ hashFiles('pubspec.lock') }}
       - name: Install the NDK Flutter builds with
         run: |
           # Gradle would fetch it on its own, but a broken download there
@@ -405,6 +421,13 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Cache the libmpv and ANGLE archives media_kit downloads
+        uses: actions/cache@v4
+        with:
+          # As on Android, but worse: a truncated download here is caught
+          # only by CMake's checksum, as "Integrity check failed".
+          path: build/windows/x64/*.7z
+          key: media-kit-windows-${{ hashFiles('pubspec.lock') }}
       - name: Build Rust core for Windows
         working-directory: core
         run: cargo build --release --lib
