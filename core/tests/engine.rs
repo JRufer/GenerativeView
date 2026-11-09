@@ -211,6 +211,39 @@ fn polling_catches_changes_without_notifications() {
 }
 
 #[test]
+fn ratings_written_by_another_machine_arrive_while_the_folder_is_open() {
+    // The folder lives on a shared drive and is open here while another
+    // machine rates a picture in it. Both edits are the same length as what
+    // they replace, so a stat alone would not separate them; the index has to
+    // come round to reading the file.
+    let h = Harness::new();
+    let lib = tempfile::tempdir().unwrap();
+    let root = lib.path().canonicalize().unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    write_png(&root.join("a.png"), 1, &[("parameters", A1111_TEXT)]);
+    write_png(&root.join("b.png"), 2, &[("parameters", A1111_TEXT)]);
+    std::fs::write(root.join(".generativeview.json"), r#"{"generativeview":1,"images":{"a.png":{"rating":1}}}"#).unwrap();
+    h.call("set_folder", json!({ "dir": dir, "recursive": false, "poll_ms": 50 }));
+    h.wait_scan_done();
+    h.expect_names(&root, false, "rating:1", &["a.png"]);
+
+    // The other machine raises it.
+    std::fs::write(root.join(".generativeview.json"), r#"{"generativeview":1,"images":{"a.png":{"rating":5}}}"#).unwrap();
+    h.expect_names(&root, false, "rating:5", &["a.png"]);
+    h.expect_names(&root, false, "rating:1", &[]);
+
+    // ...and rates the other picture instead.
+    std::fs::write(root.join(".generativeview.json"), r#"{"generativeview":1,"images":{"b.png":{"rating":5}}}"#).unwrap();
+    h.expect_names(&root, false, "rating:5", &["b.png"]);
+
+    // A rating made here still writes through to the shared file.
+    h.call("notes_set", json!({ "paths": [root.join("a.png").to_str().unwrap()], "rating": 4 }));
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".generativeview.json")).unwrap()).unwrap();
+    assert_eq!(file["images"]["a.png"]["rating"], 4);
+    assert_eq!(file["images"]["b.png"]["rating"], 5, "the other machine's rating is kept");
+}
+
+#[test]
 fn unreadable_root_keeps_index() {
     let h = Harness::new();
     let lib = tempfile::tempdir().unwrap();

@@ -6,6 +6,14 @@
 //! notifications, with a cheap directory-mtime poll as a safety net for
 //! filesystems that do not deliver them (Android shared storage, network
 //! mounts).
+//!
+//! The notes file ([`notes::FILE_NAME`]) gets a check of its own, on a
+//! shorter interval than the directory poll. A folder on a shared drive is
+//! rated from more than one machine, and the ratings should appear on the
+//! others within a few seconds; waiting for the directory poll would mean
+//! waiting for a full walk of the folder, which is far too much work to do
+//! every few seconds and, on a share whose directory timestamps are cached,
+//! may never be triggered at all.
 
 use crate::db::{Db, FileRecord};
 use crate::meta;
@@ -27,6 +35,10 @@ const DEBOUNCE: Duration = Duration::from_millis(250);
 /// ...but never hold changes back longer than this during a steady stream.
 const DEBOUNCE_MAX: Duration = Duration::from_millis(1500);
 const CHUNK: usize = 256;
+/// How often the notes file is checked, at most. Reading one small JSON file
+/// is cheap enough to do this often even over a network mount; walking the
+/// folder is not, which is why this is separate from the directory poll.
+const NOTES_POLL: Duration = Duration::from_millis(3000);
 
 enum Cmd {
     SetFolder { root: String, recursive: bool, poll_ms: u64, generation: u64 },
@@ -176,6 +188,10 @@ struct Session {
     generation: u64,
     poll: Option<Duration>,
     next_poll: Instant,
+    notes_poll: Option<Duration>,
+    next_notes_poll: Instant,
+    /// Where the rotating deep check has got to among the folders with notes.
+    notes_cursor: usize,
     dir_mtimes: HashMap<String, i64>,
     pending: HashSet<PathBuf>,
     pending_rescan: bool,
@@ -208,6 +224,9 @@ impl Worker {
                     if s.poll.is_some() {
                         deadline = deadline.min(s.next_poll);
                     }
+                    if s.notes_poll.is_some() {
+                        deadline = deadline.min(s.next_notes_poll);
+                    }
                     deadline.saturating_duration_since(now)
                 }
                 None => Duration::from_secs(3600),
@@ -226,6 +245,12 @@ impl Worker {
                         generation,
                         poll: (poll_ms > 0).then(|| Duration::from_millis(poll_ms)),
                         next_poll: Instant::now() + Duration::from_millis(poll_ms.max(1)),
+                        // Never slower than the directory poll, and never
+                        // slower than NOTES_POLL, so ratings made elsewhere
+                        // land within a few seconds on every platform.
+                        notes_poll: (poll_ms > 0).then(|| NOTES_POLL.min(Duration::from_millis(poll_ms))),
+                        next_notes_poll: Instant::now() + NOTES_POLL,
+                        notes_cursor: 0,
                         dir_mtimes: HashMap::new(),
                         pending: HashSet::new(),
                         pending_rescan: false,
@@ -257,11 +282,24 @@ impl Worker {
                     if s.flush_at.map_or(false, |f| f <= now) {
                         self.apply_pending(s);
                     }
+                    let mut scanned = false;
                     if let Some(every) = s.poll {
                         if s.next_poll <= now {
                             s.next_poll = now + every;
                             if self.dirs_changed(s) {
                                 self.full_scan(s);
+                                scanned = true;
+                            }
+                        }
+                    }
+                    // A full scan has just read every notes file itself.
+                    if let Some(every) = s.notes_poll {
+                        if scanned {
+                            s.next_notes_poll = now + every;
+                        } else if s.next_notes_poll <= now {
+                            s.next_notes_poll = now + every;
+                            if self.poll_notes(s) {
+                                self.changed(s);
                             }
                         }
                     }
@@ -306,6 +344,36 @@ impl Worker {
             }
         }
         Some(watcher)
+    }
+
+    /// Re-read the notes files that may have changed underneath us, and say
+    /// whether anything the index holds is now different.
+    ///
+    /// The open folder's file is read and compared in full every time. It is
+    /// one small file, and a stat is not trustworthy here: a shared drive may
+    /// serve a cached directory entry, a rating edit often leaves the file
+    /// exactly the same length, and exFAT and SMB keep timestamps too coarse
+    /// to separate two edits a second apart. The other folders go through the
+    /// cheap stat gate inside `load_dir`, with one of them read in full each
+    /// time, taken in turn, so a share whose timestamps never move still
+    /// comes round to every folder.
+    ///
+    /// No scan happens here: notes are read straight into the index, so a
+    /// rating made on another machine costs one file read, not a walk.
+    fn poll_notes(&self, s: &mut Session) -> bool {
+        let mut changed = self.notes.load_dir(&self.db, &s.root, true);
+        let mut others = self.db.note_dirs(&s.root, s.recursive).unwrap_or_default();
+        others.retain(|dir| dir != &s.root);
+        if others.is_empty() {
+            return changed;
+        }
+        others.sort();
+        let deep = s.notes_cursor % others.len();
+        s.notes_cursor = s.notes_cursor.wrapping_add(1);
+        for (i, dir) in others.iter().enumerate() {
+            changed |= self.notes.load_dir(&self.db, dir, i == deep);
+        }
+        changed
     }
 
     fn dirs_changed(&self, s: &Session) -> bool {

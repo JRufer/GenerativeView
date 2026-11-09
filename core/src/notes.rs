@@ -539,6 +539,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_full_read_catches_an_edit_the_stat_gate_cannot_see() {
+        // Another machine rates the same folder on a shared drive. The edit
+        // leaves the file exactly as long as it was, and the share serves a
+        // cached timestamp, so mtime and size both look unchanged. The poll's
+        // rotating full read is what has to notice.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_string_lossy().into_owned();
+        let db = Db::open(&tmp.path().join("data")).unwrap();
+        let notes = Notes::new();
+        let path = Path::new(&dir).join(FILE_NAME);
+
+        std::fs::write(&path, r#"{"generativeview":1,"images":{"a.png":{"rating":3}}}"#).unwrap();
+        assert!(notes.load_dir(&db, &dir, false));
+        assert_eq!(db.note(&dir, "a.png").rating, 3);
+
+        // The edit from the other machine, same length to the byte.
+        std::fs::write(&path, r#"{"generativeview":1,"images":{"a.png":{"rating":5}}}"#).unwrap();
+        // ...and a stat that reports nothing new.
+        db.set_notes_stamp(&dir, stamp(&path)).unwrap();
+
+        assert!(!notes.load_dir(&db, &dir, false), "the stat gate cannot see this one");
+        assert_eq!(db.note(&dir, "a.png").rating, 3);
+
+        assert!(notes.load_dir(&db, &dir, true), "a full read must notice");
+        assert_eq!(db.note(&dir, "a.png").rating, 5);
+
+        // And a full read of a file that really is unchanged says so, so the
+        // poll does not tell the app to reload every few seconds for nothing.
+        assert!(!notes.load_dir(&db, &dir, true));
+    }
+
+    #[test]
     fn a_file_that_cannot_be_read_is_retried_and_never_overwritten() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_string_lossy().into_owned();
