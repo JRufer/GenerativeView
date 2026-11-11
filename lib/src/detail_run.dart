@@ -135,6 +135,8 @@ Future<RemixImage> _fix(
                 width: crops[i]['sent_w'] as int,
                 height: crops[i]['sent_h'] as int,
                 init: ImageInput(image: bytes, strength: pass.strength),
+                // The words added for a face or hand are a help, not a must.
+                negativeOptional: true,
               ),
             )),
     ]);

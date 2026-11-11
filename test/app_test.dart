@@ -820,6 +820,23 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('on a narrow screen New picture has a button of its own, on the second row', (
+    tester,
+  ) async {
+    final state = await launch(tester, size: const Size(600, 900));
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    final button = find.byKey(const ValueKey<String>('new-picture'));
+    expect(button, findsOneWidget);
+    final tools = tester.getRect(find.byKey(const ValueKey<String>('bar-tools')));
+    final search = tester.getRect(find.byKey(const ValueKey<String>('bar-search')));
+    final rect = tester.getRect(button);
+    expect(rect.top, greaterThanOrEqualTo(tools.bottom), reason: 'under the top row');
+    expect(rect.left, greaterThan(search.right), reason: 'after the search box and slider');
+    expect(rect.right, lessThanOrEqualTo(600));
+
+    await close(tester, state);
+  });
+
   testWidgets('on a narrow screen the panels slide over the grid', (
     tester,
   ) async {
@@ -2194,7 +2211,8 @@ void main() {
 
     // ---- short of room, the bar is two rows -----------------------------------
     // On top the folder button, the folder's name and count, and the tools;
-    // under them the search box, wide, and the tile size slider.
+    // under them the search box, wide, the tile size slider, and the New
+    // picture button.
     Rect box() => tester.getRect(search);
     final bar = tester.getRect(find.byKey(const ValueKey<String>('top-bar')));
     expect(bar.height, 48 + 44);
@@ -2206,9 +2224,11 @@ void main() {
     expect(box().top, greaterThanOrEqualTo(48));
     expect(box().left, closeTo(6 + 4, 0.01));
     final slider = tester.getRect(find.byKey(const ValueKey<String>('tile-size-slider')));
-    expect(slider.right, closeTo(700 - 6, 0.01));
+    final newPicture = tester.getRect(find.byKey(const ValueKey<String>('new-picture')));
+    expect(newPicture.right, closeTo(700 - 6, 0.01));
+    expect(slider.right, closeTo(newPicture.left, 0.01));
     expect(slider.center.dy, closeTo(box().center.dy, 4));
-    expect(box().width, greaterThan(700 - 12 - 4 - slider.width - 30));
+    expect(box().width, greaterThan(700 - 12 - 4 - slider.width - newPicture.width - 30));
     await screenshot(tester, boundary, '52-two-row-bar');
     // The slider works there.
     final before = state.tileSize;

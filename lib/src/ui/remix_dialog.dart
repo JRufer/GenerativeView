@@ -889,6 +889,16 @@ Widget build(BuildContext context) {
         maxLines: 5,
         onAddWord: widget.state.addUserWord,
       ),
+      // With CFG off the sampler never asks for it, on any server.
+      if ((_sampling.cfg ?? 2) <= 1)
+        const Padding(
+          key: ValueKey<String>('remix-negative-unused'),
+          padding: EdgeInsets.only(top: 4),
+          child: Text(
+            'Not used at CFG 1 or below. Raise CFG under Steps & CFG to use one.',
+            style: TextStyle(fontSize: 11.5, color: Palette.faint),
+          ),
+        ),
       WildcardBar(
         state: widget.state,
         prompt: _prompt,
@@ -983,7 +993,12 @@ Widget build(BuildContext context) {
           padding: EdgeInsets.only(top: 6),
           child: Text('Each further picture uses the next seed.', style: TextStyle(fontSize: 11.5, color: Palette.faint)),
         ),
-      SamplingSection(key: ValueKey<String>('remix-sampling-$_presetTick'), choice: _sampling),
+      SamplingSection(
+        key: ValueKey<String>('remix-sampling-$_presetTick'),
+        choice: _sampling,
+        // The note under the negative prompt follows the CFG.
+        onChanged: () => setState(() {}),
+      ),
       _modelRow(),
       if (_loras.isNotEmpty || _serverMains != null)
         LoraSection(
@@ -1783,8 +1798,11 @@ String cfgText(double v) {
 /// each a slider and a box to type a number into, starting where the
 /// picture had it, with a way back to that.
 class SamplingSection extends StatefulWidget {
-  const SamplingSection({super.key, required this.choice});
+  const SamplingSection({super.key, required this.choice, this.onChanged});
   final SamplingChoice choice;
+
+  /// Called when the steps or CFG are set, for what else depends on them.
+  final VoidCallback? onChanged;
 
   @override
   State<SamplingSection> createState() => _SamplingSectionState();
@@ -1806,11 +1824,13 @@ class _SamplingSectionState extends State<SamplingSection> {
   void _setSteps(int? v, {bool box = true}) {
     setState(() => c.steps = v?.clamp(SamplingChoice.minSteps, 1000).toInt());
     if (box) _steps.text = c.steps?.toString() ?? '';
+    widget.onChanged?.call();
   }
 
   void _setCfg(double? v, {bool box = true}) {
     setState(() => c.cfg = v?.clamp(SamplingChoice.minCfg, 100).toDouble());
     if (box) _cfg.text = c.cfg == null ? '' : cfgText(c.cfg!);
+    widget.onChanged?.call();
   }
 
   @override
