@@ -429,6 +429,11 @@ class AppState extends ChangeNotifier {
 
   double prefNumber(String key, double fallback) => double.tryParse(_prefs[key] ?? '') ?? fallback;
 
+  String prefText(String key, String fallback) {
+    final v = _prefs[key];
+    return v == null || v.isEmpty ? fallback : v;
+  }
+
   void setPref(String key, Object value) {
     _prefs[key] = '$value';
     _save(key, '$value');
@@ -676,6 +681,7 @@ class AppState extends ChangeNotifier {
       for (final w in _savedList(saved['user_words']))
         if (w is String && w.isNotEmpty) w,
     ];
+    modelTypes = _savedTypes(saved['model_types']);
 
     await loadPlaces();
     final start = initialFolder ?? (prefFlag('pref_reopen', true) ? saved['folder'] as String? : null);
@@ -2354,6 +2360,41 @@ class AppState extends ChangeNotifier {
     _save('user_words', jsonEncode(userWords));
   }
 
+  // ============================================================ model types
+
+  /// The kind of model (family, as in `familyNames`) the user has said a
+  /// model or LoRA on a server is, by its name without folder or extension
+  /// (`modelKey`): for files that do not say themselves.
+  Map<String, String> modelTypes = const {};
+
+  static Map<String, String> _savedTypes(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return {
+        for (final e in decoded.entries)
+          if (e.value is String && (e.value as String).isNotEmpty) '${e.key}': e.value as String,
+      };
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  /// Say the model called [key] is of [family]; null takes that back.
+  void setModelType(String key, String? family) {
+    if (key.isEmpty) return;
+    final next = {...modelTypes};
+    if (family == null || family.isEmpty) {
+      next.remove(key);
+    } else {
+      next[key] = family;
+    }
+    modelTypes = next;
+    _save('model_types', jsonEncode(next));
+    notifyListeners();
+  }
+
   // ================================================================ backends
 
   static const List<String> backendKinds = ['comfyui', 'invokeai', 'forge'];
@@ -2374,6 +2415,13 @@ class AppState extends ChangeNotifier {
   /// The collection every upscale made here is put in instead: upscales on
   /// the device and hires fixes alike.
   static const String upscaleCollection = 'Upscales';
+
+  /// The collection every picture made from nothing (New picture) is put in.
+  static const String newCollection = 'New';
+
+  /// The collection a picture saved under [label] is put in.
+  static String collectionFor(String label) =>
+      _isUpscale(label) ? upscaleCollection : (label == 'new' ? newCollection : remixCollection);
 
   /// Remixes sent: those still waiting on the server, and those back whose
   /// pictures have not been gone to yet.
@@ -2418,6 +2466,33 @@ class AppState extends ChangeNotifier {
   /// [batch], from [openRemixBatch], ties it to the others sent together.
   void collectRemix(MediaItem original, RemixTicket ticket, {String label = 'remix', String? batch}) =>
       _collectRemix(original.path, original.name, ticket, label: label, batch: batch);
+
+  /// Save each picture [ticket] brings back in [dir], as
+  /// `<words of the prompt>_new1.png` and so on: pictures made from nothing
+  /// but a prompt and settings, which have no original to sit beside.
+  /// They go in the [newCollection] rather than with the remixes.
+  /// Otherwise as [collectRemix].
+  void collectNew(String dir, String prompt, RemixTicket ticket, {String? batch}) {
+    final sep = dir.contains(r'\') && !dir.contains('/') ? r'\' : '/';
+    final base = dir.endsWith('/') || dir.endsWith(r'\') ? dir : '$dir$sep';
+    final stem = newPictureStem(prompt);
+    _collectRemix('$base$stem.png', stem, ticket, label: 'new', batch: batch);
+  }
+
+  /// A file name for a picture made from [prompt]: its first few words,
+  /// in lower case with dashes, or `picture` when it has none to give.
+  static String newPictureStem(String prompt) {
+    final words = prompt
+        .toLowerCase()
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll(RegExp(r':[0-9.]+\)'), ' ')
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((w) => w.isNotEmpty)
+        .take(5)
+        .join('-');
+    final cut = words.length > 40 ? words.substring(0, 40).replaceFirst(RegExp(r'-+$'), '') : words;
+    return cut.isEmpty ? 'picture' : cut;
+  }
 
   /// Batches still being sent, so more may join them.
   final Set<String> _openRemixBatches = {};
@@ -2475,7 +2550,12 @@ class AppState extends ChangeNotifier {
     final id = ++_remixIds;
     final saved = <String>[];
     // How it is spoken of when something goes wrong.
-    final what = label == 'hires' ? 'Hires fix' : (label == 'detail' ? 'Detail pass' : 'Remix');
+    final what = switch (label) {
+      'hires' => 'Hires fix',
+      'detail' => 'Detail pass',
+      'new' => 'New picture',
+      _ => 'Remix',
+    };
     final server = switch (ticket.kind) {
       'comfyui' => 'ComfyUI ',
       'invokeai' => 'InvokeAI ',
@@ -2675,7 +2755,7 @@ class AppState extends ChangeNotifier {
       return null;
     }
     if (_disposed) return path;
-    final collection = _isUpscale(label) ? upscaleCollection : remixCollection;
+    final collection = collectionFor(label);
     try {
       await core.call('notes_set', {
         'paths': [path],
@@ -2700,10 +2780,14 @@ class AppState extends ChangeNotifier {
   /// when the new remixes are elsewhere the folder they all share is opened
   /// (and sub-folders included) so they can be seen.
   Future<void> showRemixes() async {
-    final done = [for (final j in remixes.value) if (!j.running) j];
-    remixes.value = [for (final j in remixes.value) if (j.running) j];
+    // New pictures are in a collection of their own, so remixes go first
+    // and new pictures wait for the next tap when both are done.
+    final finished = [for (final j in remixes.value) if (!j.running) j];
+    final fresh = finished.every((j) => j.label == 'new');
+    final done = [for (final j in finished) if (fresh || j.label != 'new') j];
+    remixes.value = [for (final j in remixes.value) if (!done.contains(j)) j];
     final paths = [for (final j in done) ...j.saved];
-    await _showNew(paths, exactTerm('collection', remixCollection));
+    await _showNew(paths, exactTerm('collection', fresh ? newCollection : remixCollection));
   }
 
   /// Show the [upscaleCollection], with the upscales saved since they were
