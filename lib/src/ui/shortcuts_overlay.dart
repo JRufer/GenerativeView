@@ -16,6 +16,7 @@ const List<(String, List<(String, String)>)> keyboardShortcuts = [
       ('I  or  ]', 'Show or hide the generation data'),
       ('[', 'Show or hide the folders'),
       ('F5', 'Rescan the folder'),
+      ('Ctrl N', 'New picture: a prompt, a model and settings, sent to a server'),
       ('N', 'Follow new pictures as they arrive'),
       ('Ctrl V', 'Paste a copied picture into this folder, or move the cut ones here'),
     ],

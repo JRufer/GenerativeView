@@ -1,0 +1,52 @@
+# TEMPORARY (removed before merge): runs the analyzer and the tests of the
+# model picker and New picture, and pushes their output and screenshots to
+# the new-picture-shots branch, where they can be read without the Actions
+# artifact store.
+name: new-picture-shots
+on:
+  push:
+    branches: [feature/new-picture]
+permissions:
+  contents: write
+env:
+  FLUTTER_VERSION: 3.47.7
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv ffmpeg
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core -> target
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build core
+        working-directory: core
+        run: cargo build --release --lib
+      - name: Sample images
+        run: git clone --depth 1 https://github.com/comfyanonymous/ComfyUI_examples.git "$RUNNER_TEMP/samples"
+      - name: Analyze and test
+        env:
+          GV_SCREENSHOT_DIR: ${{ github.workspace }}/out/screens
+          GV_SAMPLE_DIR: ${{ runner.temp }}/samples
+        run: |
+          mkdir -p out/screens
+          flutter pub get > out/pub.txt 2>&1 || true
+          flutter analyze > out/analyze.txt 2>&1 || true
+          timeout 30m flutter test --reporter expanded test/model_picker_test.dart test/new_picture_test.dart test/lora_picker_test.dart test/server_loras_test.dart > out/test.txt 2>&1 || true
+          echo "${{ github.sha }}" > out/RUN.txt
+          tail -5 out/test.txt
+      - name: Publish the report
+        if: always()
+        run: |
+          cd out
+          git init -q -b new-picture-shots
+          git -c user.name=ci -c user.email=ci@localhost add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -qm "report ${{ github.sha }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" new-picture-shots

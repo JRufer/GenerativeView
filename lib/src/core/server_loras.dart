@@ -27,6 +27,9 @@ class ServerModel {
   /// The file's [name] as matched everywhere: no folder, extension or case.
   String get key => modelKey(name);
 
+  /// The same model, said to be of [family].
+  ServerModel withFamily(String? family) => ServerModel(name, family);
+
   @override
   String toString() => 'ServerModel($name, $family)';
 }
@@ -45,7 +48,24 @@ const Map<String, String> familyNames = {
   'qwen-image': 'Qwen Image',
   'z-image': 'Z-Image',
   'cogview4': 'CogView 4',
+  'hunyuan': 'Hunyuan',
+  'pixart': 'PixArt',
+  'auraflow': 'AuraFlow',
+  'kolors': 'Kolors',
+  'lumina': 'Lumina',
+  'hidream': 'HiDream',
 };
+
+/// The families a model can be said to be of by hand, in the order they are
+/// offered.
+List<String> get knownFamilies => familyNames.keys.toList();
+
+/// A family as a server names it, or null when the server only says it does
+/// not know (`any`, `unknown`, nothing).
+String? cleanFamily(String? base) {
+  final b = (base ?? '').trim();
+  return b.isEmpty || b == 'any' || b == 'unknown' ? null : b;
+}
 
 /// [family] as people call it.
 String familyLabel(String family) => familyNames[family] ?? family;
@@ -68,6 +88,12 @@ String? familyFromArchitecture(String text) {
   if (RegExp(r'qwen[\s._-]?image').hasMatch(s)) return 'qwen-image';
   if (RegExp(r'z[\s._-]?image').hasMatch(s)) return 'z-image';
   if (s.contains('cogview')) return 'cogview4';
+  if (s.contains('hunyuan')) return 'hunyuan';
+  if (s.contains('pixart')) return 'pixart';
+  if (s.contains('auraflow')) return 'auraflow';
+  if (s.contains('kolors')) return 'kolors';
+  if (s.contains('lumina')) return 'lumina';
+  if (s.contains('hidream')) return 'hidream';
   if (s.contains('stable-diffusion-v2') || RegExp(r'^sd[_-]?v?2').hasMatch(s)) return 'sd-2';
   if (s.contains('stable-diffusion-v1') || RegExp(r'^sd[_-]?v?1').hasMatch(s)) return 'sd-1';
   return null;
@@ -110,6 +136,13 @@ String? familyFromName(String name) {
   if (s.contains('chroma')) return 'chroma';
   if (RegExp(r'qwen[\s_.-]?image').hasMatch(s)) return 'qwen-image';
   if (RegExp(r'z[\s_.-]image').hasMatch(s)) return 'z-image';
+  if (s.contains('hunyuan')) return 'hunyuan';
+  if (s.contains('pixart')) return 'pixart';
+  if (s.contains('auraflow')) return 'auraflow';
+  if (s.contains('kolors')) return 'kolors';
+  if (s.contains('lumina')) return 'lumina';
+  if (s.contains('hidream')) return 'hidream';
+  if (s.contains('cogview')) return 'cogview4';
   if (s.contains('refiner')) return 'sdxl-refiner';
   if (s.contains('sdxl') ||
       s.contains('sd_xl') ||
@@ -224,7 +257,7 @@ Future<List<ServerModel>> serverLoras(String kind, String base) async {
             if (m is Map<String, dynamic>)
               () {
                 final model = InvokeModel.fromJson(m);
-                return ServerModel(model.name, model.base.isEmpty || model.base == 'any' ? null : model.base);
+                return ServerModel(model.name, cleanFamily(model.base));
               }(),
         ];
       case 'comfyui':
@@ -251,24 +284,78 @@ Future<List<ServerModel>> serverLoras(String kind, String base) async {
   }
 }
 
-/// The main models the server [kind] at [base] has, with their families
-/// where the listing says (InvokeAI); [modelFamily] finds the rest.
+/// The main models the server [kind] at [base] has, each with its family
+/// when it can be told: as InvokeAI says, else (ComfyUI) from the file's own
+/// metadata, else from its file or folder name.
 Future<List<ServerModel>> serverMainModels(String kind, String base) async {
-  if (kind != 'invokeai') return [for (final n in await serverModels(kind, base)) ServerModel(n)];
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
   try {
-    final reply = await _getJson(client, '$base/api/v2/models/?model_type=main');
-    return [
-      for (final m in ((reply is Map ? reply['models'] : null) as List? ?? const []))
-        if (m is Map<String, dynamic>)
-          () {
-            final model = InvokeModel.fromJson(m);
-            return ServerModel(model.name, model.base.isEmpty || model.base == 'any' ? null : model.base);
-          }(),
-    ];
+    switch (kind) {
+      case 'invokeai':
+        final reply = await _getJson(client, '$base/api/v2/models/?model_type=main');
+        return [
+          for (final m in ((reply is Map ? reply['models'] : null) as List? ?? const []))
+            if (m is Map<String, dynamic>)
+              () {
+                final model = InvokeModel.fromJson(m);
+                return ServerModel(model.name, cleanFamily(model.base));
+              }(),
+        ];
+      case 'comfyui':
+        final names = await serverModels(kind, base);
+        final families = await _eachLimited(names, 6, (f) async {
+          for (final folder in const ['checkpoints', 'diffusion_models']) {
+            final found = await _comfyFamily(client, base, folder, f);
+            if (found != null) return found;
+          }
+          return familyFromName(f);
+        });
+        return [for (var i = 0; i < names.length; i++) ServerModel(names[i], families[i])];
+      default:
+        final reply = await _getJson(client, '$base/sdapi/v1/sd-models');
+        return [
+          for (final m in (reply is List ? reply : const []))
+            if (m is Map<String, dynamic>)
+              () {
+                final name = (m['title'] ?? m['model_name'] ?? '').toString();
+                return ServerModel(name, familyFromName('${m['filename'] ?? ''} $name'));
+              }(),
+        ];
+    }
   } finally {
     client.close(force: true);
   }
+}
+
+/// [models] with the families the user has set by hand ([types], by
+/// [ServerModel.key]) in place of what was worked out.
+List<ServerModel> withModelTypes(List<ServerModel> models, Map<String, String> types) => types.isEmpty
+    ? models
+    : [for (final m in models) types[m.key] == null ? m : m.withFamily(types[m.key])];
+
+/// [models] in groups of one family each, for listing under headings: the
+/// families in the order of [familyNames], then any others by name, then
+/// (family null) those whose family cannot be told. Each group by name.
+List<({String? family, List<ServerModel> models})> groupByFamily(List<ServerModel> models) {
+  final groups = <String?, List<ServerModel>>{};
+  for (final m in models) {
+    groups.putIfAbsent(m.family, () => []).add(m);
+  }
+  final order = knownFamilies;
+  int rank(String? f) {
+    if (f == null) return 1 << 20;
+    final at = order.indexOf(f);
+    return at < 0 ? order.length : at;
+  }
+
+  final families = groups.keys.toList()
+    ..sort((a, b) {
+      final byRank = rank(a).compareTo(rank(b));
+      return byRank != 0 ? byRank : (a ?? '').compareTo(b ?? '');
+    });
+  return [
+    for (final f in families) (family: f, models: groups[f]!..sort((a, b) => a.key.compareTo(b.key))),
+  ];
 }
 
 /// The family of [model] on the server [kind] at [base]: as the listing

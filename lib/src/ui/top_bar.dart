@@ -7,6 +7,7 @@ import '../theme.dart';
 import 'about_panel.dart';
 import 'context_menu.dart';
 import 'filter_sheet.dart';
+import 'remix_dialog.dart' show openNewPicture;
 import 'remix_status.dart';
 import 'settings_panel.dart';
 import 'shortcuts_overlay.dart';
@@ -209,6 +210,15 @@ class TopBar extends StatelessWidget {
                         tools: [
                           ...buttons,
                           if (wide) slider(_sliderWidth),
+                          if (wide && state.folder != null)
+                            ExcludeFocus(
+                              child: _BarButton(
+                                key: const ValueKey<String>('new-picture'),
+                                icon: Icons.add_photo_alternate_outlined,
+                                tooltip: 'New picture (Ctrl N)',
+                                onTap: () => openNewPicture(context, state),
+                              ),
+                            ),
                           if (wide && state.folder != null)
                             _BarButton(
                               icon: Icons.bar_chart,
@@ -1129,6 +1139,8 @@ class _MoreMenu extends StatelessWidget {
       position: PopupMenuPosition.under,
       onSelected: (value) {
         switch (value) {
+          case 'new':
+            openNewPicture(context, state);
           case 'follow':
             state.toggleFollowNew();
           case 'settings':
@@ -1140,6 +1152,7 @@ class _MoreMenu extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
+        if (state.folder != null) item('new', Icons.add_photo_alternate_outlined, 'New picture… (Ctrl N)'),
         item('follow', Icons.fiber_new, 'Follow new pictures (N)', checked: state.followNew),
         const PopupMenuDivider(height: 8),
         item('settings', Icons.settings_outlined, 'Settings… (Ctrl ,)'),

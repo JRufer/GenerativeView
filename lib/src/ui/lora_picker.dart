@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/recipe_graphs.dart' show modelKey;
 import '../core/server_loras.dart';
 import '../theme.dart';
+import 'model_picker.dart' show SetTypeButton;
 import 'sheet.dart';
 
 /// Pick a LoRA on the server to add to a remix, from those made for the
@@ -18,17 +19,27 @@ Future<ServerModel?> pickLora(
   required String? family,
   required String model,
   required Set<String> have,
+  Map<String, String> types = const {},
+  void Function(String key, String? family)? onSetType,
 }) =>
     showPanel<ServerModel>(
       context,
       title: 'Add a LoRA',
       icon: Icons.add_circle_outline,
       width: 520,
-      builder: (context) => LoraPicker(loras: loras, family: family, model: model, have: have),
+      builder: (context) => LoraPicker(loras: loras, family: family, model: model, have: have, types: types, onSetType: onSetType),
     );
 
 class LoraPicker extends StatefulWidget {
-  const LoraPicker({super.key, required this.loras, required this.family, required this.model, this.have = const {}});
+  const LoraPicker({
+    super.key,
+    required this.loras,
+    required this.family,
+    required this.model,
+    this.have = const {},
+    this.types = const {},
+    this.onSetType,
+  });
 
   /// The server's LoRAs, still being asked for perhaps.
   final Future<List<ServerModel>> loras;
@@ -40,6 +51,11 @@ class LoraPicker extends StatefulWidget {
   /// Keys ([modelKey]) of the LoRAs the remix already has.
   final Set<String> have;
 
+  /// The kinds of model the user has said LoRAs are for, by key, for files
+  /// that do not say; [onSetType] saves one (null takes it back).
+  final Map<String, String> types;
+  final void Function(String key, String? family)? onSetType;
+
   @override
   State<LoraPicker> createState() => _LoraPickerState();
 }
@@ -47,6 +63,20 @@ class LoraPicker extends StatefulWidget {
 class _LoraPickerState extends State<LoraPicker> {
   final TextEditingController _search = TextEditingController();
   bool _showUnknown = false;
+
+  /// The kinds set by hand, as they stand while the picker is open.
+  late final Map<String, String> _types = {...widget.types};
+
+  void _setType(ServerModel m, String? family) {
+    setState(() {
+      if (family == null) {
+        _types.remove(m.key);
+      } else {
+        _types[m.key] = family;
+      }
+    });
+    widget.onSetType?.call(m.key, family);
+  }
 
   @override
   void dispose() {
@@ -106,7 +136,8 @@ class _LoraPickerState extends State<LoraPicker> {
     );
   }
 
-  Widget _list(List<ServerModel> all) {
+  Widget _list(List<ServerModel> listed) {
+    final all = withModelTypes(listed, _types);
     final family = widget.family;
     final sorted = sortLoras(all, family);
     final fitting = sorted.fitting.where(_matches).toList();
@@ -183,23 +214,28 @@ class _LoraPickerState extends State<LoraPicker> {
   Widget _row(ServerModel m, {bool unchecked = false}) {
     final have = widget.have.contains(m.key);
     final folder = _folder(m.name);
+    final byHand = _types[m.key];
     final sub = [
       if (folder.isNotEmpty) folder,
       if (unchecked) 'not checked',
+      if (byHand != null) 'type set by you',
       if (have) 'already added',
     ].join(' · ');
+    final canSet = widget.onSetType != null && (m.family == null || byHand != null);
     return ListTile(
       key: ValueKey<String>('lora-picker-${m.key}'),
       dense: true,
       enabled: !have,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+      contentPadding: EdgeInsets.only(left: 10, right: canSet ? 2 : 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       leading: Icon(have ? Icons.check : Icons.add, size: 18, color: have ? Palette.accent : Palette.muted),
       title: Text(_stem(m.name), overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
       subtitle: sub.isEmpty ? null : Text(sub, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
-      trailing: m.family == null || widget.family == m.family
-          ? null
-          : Text(familyLabel(m.family!), style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+      trailing: canSet
+          ? SetTypeButton(key: ValueKey<String>('lora-type-${m.key}'), set: byHand, onSet: (f) => _setType(m, f))
+          : (m.family == null || widget.family == m.family
+              ? null
+              : Text(familyLabel(m.family!), style: const TextStyle(fontSize: 11.5, color: Palette.faint))),
       onTap: have ? null : () => Navigator.of(context).pop(m),
     );
   }

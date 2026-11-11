@@ -105,6 +105,7 @@ class _Run {
     final what = switch (job.label) {
       'hires' => 'Hires fix of ${job.name}',
       'bred' => 'Breed from ${job.name}',
+      'new' => 'New picture: ${job.name}',
       _ => 'Remix of ${job.name}',
     };
     return left > 1 ? '$what, $left left' : what;

@@ -200,6 +200,11 @@ class ShortcutLayer extends StatelessWidget {
       if (panel != null) showShortcuts(panel);
       return KeyEventResult.handled;
     }
+    if (ctrl && key == LogicalKeyboardKey.keyN) {
+      final panel = _panelContext;
+      if (panel != null) openNewPicture(panel, state);
+      return KeyEventResult.handled;
+    }
     if (ctrl && key == LogicalKeyboardKey.comma) {
       final panel = _panelContext;
       if (panel != null) openSettings(panel, state);

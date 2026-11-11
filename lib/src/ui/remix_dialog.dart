@@ -26,6 +26,7 @@ import 'presets_ui.dart';
 import 'prompt_editor.dart';
 import 'kit.dart';
 import 'lora_picker.dart';
+import 'model_picker.dart';
 import 'sheet.dart';
 import 'wildcards_ui.dart';
 
@@ -88,6 +89,42 @@ Future<void> openRemix(
   );
 }
 
+/// The recipe a new picture starts from: nothing but a size. The model is
+/// chosen in the panel, and the server's own steps and CFG are used unless
+/// set there.
+GenInfo blankRecipe() => GenInfo(
+  source: 'new',
+  prompt: '',
+  negative: '',
+  seed: '',
+  model: '',
+  models: const [],
+  loras: const [],
+  params: const [],
+  nodes: const [],
+  raw: const [],
+  width: 1024,
+  height: 1024,
+  durationMs: 0,
+);
+
+/// Open the remix panel with no picture behind it, to make a new one from
+/// a prompt, a model and settings alone. What comes back is saved in the
+/// open folder.
+Future<void> openNewPicture(BuildContext context, AppState state) async {
+  if (state.folder == null) {
+    toast(context, 'Open a folder first: new pictures are saved in the open folder');
+    return;
+  }
+  await showPanel<void>(
+    context,
+    title: 'New picture',
+    icon: Icons.add_photo_alternate_outlined,
+    width: MediaQuery.sizeOf(context).width >= 900 ? 1080 : 760,
+    builder: (context) => RemixPanel(state: state, item: null, info: blankRecipe()),
+  );
+}
+
 class RemixPanel extends StatefulWidget {
   const RemixPanel({
     super.key,
@@ -100,8 +137,10 @@ class RemixPanel extends StatefulWidget {
   });
   final AppState state;
 
-  /// The picture being remixed: the new ones are saved beside it.
-  final MediaItem item;
+  /// The picture being remixed: the new ones are saved beside it. Null for
+  /// a new picture made from nothing ([openNewPicture]), saved in the open
+  /// folder.
+  final MediaItem? item;
   final GenInfo info;
 
   /// A phrase to weight up as it opens.
@@ -119,6 +158,9 @@ class RemixPanel extends StatefulWidget {
 }
 
 class _RemixPanelState extends State<RemixPanel> {
+  /// A new picture, with none behind it to take a model or settings from.
+  bool get _fresh => widget.item == null;
+
   late final PromptController _prompt = PromptController(text: widget.info.prompt);
   late final PromptController _negative = PromptController(text: widget.info.negative);
 
@@ -167,6 +209,10 @@ class _RemixPanelState extends State<RemixPanel> {
   List<String>? _serverModels;
   List<ServerModel>? _serverMains;
 
+  /// The same as the server and the files told of them, before the kinds
+  /// the user has set by hand.
+  List<ServerModel>? _listedMains;
+
   /// The chosen server's LoRAs, asked for the first time they are wanted.
   Future<List<ServerModel>>? _serverLoraList;
 
@@ -188,7 +234,7 @@ class _RemixPanelState extends State<RemixPanel> {
     final kind = _backend;
     final base = kind == null ? '' : (widget.state.backendUrls[kind] ?? '');
     if (kind == null || base.isEmpty) return Future.value(const []);
-    final asked = _serverLoraList ??= serverLoras(kind, base);
+    final asked = _serverLoraList ??= serverLoras(kind, base).then((list) => withModelTypes(list, widget.state.modelTypes));
     asked.then((list) {
       if (mounted && identical(asked, _serverLoraList)) setState(() => _serverLorasKnown = list);
     }, onError: (_) {
@@ -216,6 +262,60 @@ class _RemixPanelState extends State<RemixPanel> {
     }
     if (!mounted || tick != _familyTick) return;
     setState(() => _family = family);
+    if (_fresh && _model != null) _autoSize(family);
+  }
+
+  /// The size a new picture was last given for its kind of model.
+  int _autoSide = 1024;
+
+  /// A new picture's size follows the kind of model chosen (SD 1.x is made
+  /// for 512, the rest for 1024) until the user sets one of their own.
+  void _autoSize(String? family) {
+    final side = switch (family) {
+      'sd-1' => 512,
+      'sd-2' => 768,
+      _ => 1024,
+    };
+    if (side == _autoSide || _width.text != '$_autoSide' || _height.text != '$_autoSide') return;
+    setState(() {
+      _autoSide = side;
+      _width.text = '$side';
+      _height.text = '$side';
+      _aspect = 1;
+    });
+  }
+
+  /// Say which kind of model the file called [key] is (null takes it back):
+  /// kept for next time, and the lists here follow.
+  void _setModelType(String key, String? family) {
+    widget.state.setModelType(key, family);
+    final listed = _listedMains;
+    setState(() {
+      if (listed != null) _serverMains = withModelTypes(listed, widget.state.modelTypes);
+      _serverLoraList = null;
+      _serverLorasKnown = null;
+    });
+    _resolveFamily();
+  }
+
+  /// Choose the model from the server's, grouped by kind.
+  Future<void> _pickModel() async {
+    final mains = _serverMains;
+    if (mains == null) return;
+    final own = _fresh ? null : matchServerModel(info.model, [for (final m in mains) m.name]);
+    final picked = await pickModel(
+      context,
+      models: [for (final m in mains) if (m.name != own) m],
+      current: _model,
+      own: _fresh ? null : (info.model.isEmpty ? 'not recorded' : modelKey(info.model)),
+      types: widget.state.modelTypes,
+      onSetType: _setModelType,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _model = picked.model?.name);
+    final kind = _backend;
+    if (_fresh && kind != null && _model != null) widget.state.setPref('pref_new_model_$kind', _model!);
+    _resolveFamily();
   }
 
   Future<void> _addLora() async {
@@ -225,6 +325,8 @@ class _RemixPanelState extends State<RemixPanel> {
       family: _family,
       model: _model ?? info.model,
       have: {for (final l in _loras) l.key},
+      types: widget.state.modelTypes,
+      onSetType: _setModelType,
     );
     if (picked == null || !mounted) return;
     setState(() => _loras.add(LoraChoice(LoraRef(picked.name, 1.0, null, ''))));
@@ -257,6 +359,7 @@ class _RemixPanelState extends State<RemixPanel> {
     setState(() {
       _serverModels = null;
       _serverMains = null;
+      _listedMains = null;
       _serverLoraList = null;
       _serverLorasKnown = null;
       _family = null;
@@ -264,11 +367,15 @@ class _RemixPanelState extends State<RemixPanel> {
     });
     if (kind == null || base.isEmpty) return;
     try {
-      final mains = await serverMainModels(kind, base);
+      final listed = await serverMainModels(kind, base);
       if (!mounted || kind != _backend) return;
+      final mains = withModelTypes(listed, widget.state.modelTypes);
       setState(() {
+        _listedMains = listed;
         _serverMains = mains;
         _serverModels = [for (final m in mains) m.name];
+        // A new picture starts on the model the last one was made with.
+        if (_fresh) _model = matchServerModel(widget.state.prefText('pref_new_model_$kind', ''), _serverModels!);
         _takePresetModel();
       });
       unawaited(_resolveFamily());
@@ -386,41 +493,97 @@ class _RemixPanelState extends State<RemixPanel> {
   Widget _modelRow() {
     final names = _serverModels;
     if (names == null) return const SizedBox.shrink();
-    final own = matchServerModel(info.model, names);
-    final missing = own == null && _model == null;
+    final own = _fresh ? null : matchServerModel(info.model, names);
+    final missing = !_fresh && own == null && _model == null;
+    final chosen = _model;
+    final String label;
+    if (chosen != null) {
+      label = modelStem(chosen);
+    } else if (_fresh) {
+      label = names.isEmpty ? 'The server has no models' : 'Choose a model';
+    } else {
+      label = 'The picture\'s: ${info.model.isEmpty ? 'not recorded' : modelKey(info.model)}';
+    }
+    final folder = chosen == null ? '' : modelFolder(chosen);
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text('Model', style: TextStyle(fontSize: 12, color: Palette.muted)),
-          DropdownButton<String?>(
-            key: const ValueKey<String>('remix-model'),
-            isExpanded: true,
-            value: names.contains(_model) ? _model : null,
-            items: [
-              DropdownMenuItem<String?>(
-                value: null,
-                child: Text('The picture\'s: ${info.model.isEmpty ? 'not recorded' : modelKey(info.model)}', overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 4),
+          Material(
+            color: Palette.raised,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(_tileRadius),
+              side: BorderSide(color: _fresh && chosen == null ? Palette.accent : Colors.transparent),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: const ValueKey<String>('remix-model'),
+              onTap: _pickModel,
+              hoverColor: Palette.hover,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              label,
+                              key: const ValueKey<String>('remix-model-name'),
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 13.5, color: _fresh && chosen == null ? Palette.accent : Palette.text),
+                            ),
+                            if (folder.isNotEmpty)
+                              Text(folder, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
+                          ],
+                        ),
+                      ),
+                      if (chosen != null || (!_fresh && _family != null)) ...[
+                        const SizedBox(width: 8),
+                        FamilyTag(_family, key: const ValueKey<String>('remix-model-kind')),
+                      ],
+                      const SizedBox(width: 4),
+                      const Icon(Icons.unfold_more, size: 18, color: Palette.muted),
+                    ],
+                  ),
+                ),
               ),
-              for (final name in names)
-                if (name != own) DropdownMenuItem<String?>(value: name, child: Text(modelKey(name), overflow: TextOverflow.ellipsis)),
-            ],
-            onChanged: (value) {
-              setState(() => _model = value);
-              _resolveFamily();
-            },
+            ),
           ),
           if (missing)
-            Text(
-              '${backendNames[_backend] ?? 'The server'} does not have this picture\'s model. Pick another to send it.',
-              key: const ValueKey<String>('remix-model-missing'),
-              style: const TextStyle(fontSize: 12, color: Palette.danger, height: 1.35),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${backendNames[_backend] ?? 'The server'} does not have this picture\'s model. Pick another to send it.',
+                key: const ValueKey<String>('remix-model-missing'),
+                style: const TextStyle(fontSize: 12, color: Palette.danger, height: 1.35),
+              ),
             ),
-          if (_model != null)
-            const Text(
-              'A graph is built from the picture\'s settings. Its own workflow is left out, and LoRAs made for another kind of model are skipped.',
-              style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+          if (_fresh && chosen != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _family == null
+                    ? 'The kind of this model is not known, so LoRAs of every kind are offered. Set its type in the list to see only those that fit.'
+                    : 'Only LoRAs made for ${familyLabel(_family!)} are offered.',
+                key: const ValueKey<String>('remix-model-loras-note'),
+                style: const TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+              ),
+            ),
+          if (!_fresh && _model != null)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                'A graph is built from the picture\'s settings. Its own workflow is left out, and LoRAs made for another kind of model are skipped.',
+                style: TextStyle(fontSize: 11.5, color: Palette.faint, height: 1.35),
+              ),
             ),
           if (_presetModelMissing != null)
             Text(
@@ -434,7 +597,7 @@ class _RemixPanelState extends State<RemixPanel> {
 
   /// Start from the picture itself (image to image) rather than from noise.
   /// Only when the user picks it.
-  late bool _imageToImage = widget.imageToImage && !widget.item.isVideo;
+  late bool _imageToImage = widget.imageToImage && !(widget.item?.isVideo ?? true);
 
   /// How much of the picture image to image redraws, 0 to 1.
   late double _strength = widget.state.prefNumber('pref_strength', 0.6);
@@ -485,16 +648,18 @@ class _RemixPanelState extends State<RemixPanel> {
         if ((urls[k] ?? '').isNotEmpty) k,
     ];
     final pool = ready.isNotEmpty ? ready : usable;
-    _backend = pool.contains(made) ? made : (pool.isEmpty ? null : pool.first);
+    // A new picture goes to the server the last one went to.
+    final last = _fresh ? widget.state.prefText('pref_new_server', '') : '';
+    _backend = pool.contains(last) ? last : (pool.contains(made) ? made : (pool.isEmpty ? null : pool.first));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _listModels();
     });
     _loadSpelling();
-    _loadAdvice();
+    if (!_fresh) _loadAdvice();
     final up = widget.weightUp;
     if (up != null) _prompt.value = weightPhrase(_prompt.value, up, 1.3);
     final fix = widget.fixPhrase;
-    if (fix != null && !widget.item.isVideo) {
+    if (fix != null && !(widget.item?.isVideo ?? true)) {
       _imageToImage = true;
       _prompt.value = weightPhrase(_prompt.value, fix, 1.2);
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -532,6 +697,28 @@ class _RemixPanelState extends State<RemixPanel> {
       await openBackendSettings(context, widget.state, focus: kind);
       if (!mounted || (widget.state.backendUrls[kind] ?? '').isEmpty) return;
     }
+    final item = widget.item;
+    final folder = widget.state.folder;
+    if (item == null && _model == null) {
+      setState(() => _error = 'Choose a model to make the picture with.');
+      return;
+    }
+    if (item == null && _prompt.text.trim().isEmpty) {
+      setState(() => _error = 'Write a prompt to make the picture from.');
+      return;
+    }
+    if (item == null && folder == null) {
+      setState(() => _error = 'Open a folder first: new pictures are saved in the open folder.');
+      return;
+    }
+    // Where what comes back is kept: beside the picture remixed, or for a
+    // new picture in the open folder, named for its prompt.
+    void collect(RemixTicket ticket, String prompt, {String? batch}) => item != null
+        ? widget.state.collectRemix(item, ticket, batch: batch)
+        : widget.state.collectNew(folder!, prompt, ticket, batch: batch);
+    final folderName = (folder ?? '').split(RegExp(r'[/\\]')).where((p) => p.isNotEmpty).lastOrNull ?? 'the open folder';
+    final where = item != null ? 'saved beside the original' : 'saved in $folderName';
+    if (item == null) widget.state.setPref('pref_new_server', kind);
     setState(() {
       _sending = true;
       _error = null;
@@ -547,7 +734,7 @@ class _RemixPanelState extends State<RemixPanel> {
       if (_imageToImage) {
         try {
           init = await prepareImageInput(
-            path: widget.item.path,
+            path: item!.path,
             width: width,
             height: height,
             strength: _strength,
@@ -592,12 +779,12 @@ class _RemixPanelState extends State<RemixPanel> {
       if (picks == null) {
         final ticket = await sendRemix(kind, base, remix(prompt: _prompt.text, negative: _negative.text, seed: seed, count: _count));
         // Waited for in the background, panel or no panel.
-        widget.state.collectRemix(widget.item, fixed(ticket, _prompt.text, _negative.text));
+        collect(fixed(ticket, _prompt.text, _negative.text), _prompt.text);
         if (!mounted) return;
         toast(
           context,
           '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
-          'saved beside the original and added to ${AppState.remixCollection}.',
+          '$where and added to ${AppState.remixCollection}.',
         );
       } else {
         // A prompt of its own for each picture: one remix each, sent at once
@@ -609,7 +796,7 @@ class _RemixPanelState extends State<RemixPanel> {
           await Future.wait([
             for (var i = 0; i < picks.length; i++)
               sendRemix(kind, base, remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1)).then((ticket) {
-                widget.state.collectRemix(widget.item, fixed(ticket, picks[i].$1, picks[i].$2), batch: batch);
+                collect(fixed(ticket, picks[i].$1, picks[i].$2), picks[i].$1, batch: batch);
                 sent++;
               }, onError: (Object e) {
                 failure ??= e;
@@ -623,7 +810,7 @@ class _RemixPanelState extends State<RemixPanel> {
         toast(
           context,
           'Sent ${picks.length} pictures to ${backendNames[kind]}, each with its own prompt. They will be '
-          'saved beside the original and added to ${AppState.remixCollection}.',
+          '$where and added to ${AppState.remixCollection}.',
         );
       }
       if (!mounted) return;
@@ -639,11 +826,12 @@ class _RemixPanelState extends State<RemixPanel> {
 Widget build(BuildContext context) {
     final support = backendSupport(info);
     final urls = widget.state.backendUrls;
-    final video = widget.item.isVideo;
+    final video = widget.item?.isVideo ?? false;
     // What to make, on the left of a wide panel or first on a narrow one.
     final what = <Widget>[
-      // Text to image unless the user picks otherwise.
-      Align(
+      // Text to image unless the user picks otherwise. A new picture has
+      // nothing to start from, so there is nothing to pick.
+      if (!_fresh) Align(
         alignment: Alignment.centerLeft,
         child: SegmentedButton<bool>(
           key: const ValueKey<String>('remix-mode'),
@@ -668,7 +856,7 @@ Widget build(BuildContext context) {
         ),
       ),
       if (_imageToImage) _imageSection(),
-      const SizedBox(height: 12),
+      if (!_fresh) const SizedBox(height: 12),
       PresetStrip(
         state: widget.state,
         active: _preset,
@@ -831,7 +1019,9 @@ Widget build(BuildContext context) {
           ),
         ),
       // Said in the panel, not only in a tooltip, so it reads on a tablet.
-      if (_imageToImage && _backend == 'invokeai' && !carriesGraph('invokeai', info))
+      if (_fresh)
+        const SizedBox.shrink()
+      else if (_imageToImage && _backend == 'invokeai' && !carriesGraph('invokeai', info))
         const Padding(
           key: ValueKey<String>('remix-built-graph'),
           padding: EdgeInsets.only(top: 6),
@@ -1015,7 +1205,7 @@ Widget build(BuildContext context) {
 
   Future<void> _loadAdvice() async {
     try {
-      final advice = await widget.state.advise(widget.item, info.prompt, info.model);
+      final advice = await widget.state.advise(widget.item!, info.prompt, info.model);
       if (mounted) setState(() => _advice = advice);
     } catch (_) {
       // No suggestions is no loss: the panel works without them.
@@ -1059,7 +1249,7 @@ Widget build(BuildContext context) {
   /// Open the mask editor on the picture; with [find], on its Find tool
   /// looking for that phrase.
   Future<void> _editMask({String? find}) async {
-    final item = widget.item;
+    final item = widget.item!;
     final aspect = item.width > 0 && item.height > 0
         ? item.width / item.height
         : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
@@ -1093,7 +1283,7 @@ Widget build(BuildContext context) {
     final was = _extend;
     _extend = e;
     if (identical(was, e)) return;
-    final item = widget.item;
+    final item = widget.item!;
     final (w, h) = recipeSize(info);
     final bw = item.width > 0 ? item.width : w, bh = item.height > 0 ? item.height : h;
     if (bw <= 0 || bh <= 0) return;
@@ -1105,7 +1295,7 @@ Widget build(BuildContext context) {
 
   /// The picture to start from, how much of it to redraw, and where.
   Widget _imageSection() {
-    final item = widget.item;
+    final item = widget.item!;
     final aspect = item.width > 0 && item.height > 0
         ? item.width / item.height
         : (info.width > 0 && info.height > 0 ? info.width / info.height : 1.0);
