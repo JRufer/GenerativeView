@@ -25,6 +25,7 @@ import 'dart:typed_data';
 
 import 'lora_edits.dart';
 import 'models.dart';
+import 'negative_edits.dart';
 import 'recipe_graphs.dart';
 
 /// What to make: the picture's recipe with the user's changes.
@@ -42,11 +43,17 @@ class Remix {
     this.cfg,
     this.loras,
     this.init,
+    this.negativeOptional = false,
   });
 
   final GenInfo info;
   final String prompt;
   final String negative;
+
+  /// Whether the remix may go ahead when a changed [negative] has no place
+  /// in the picture's own workflow: for words the app adds by itself (a
+  /// face or hand pass), not ones the user typed.
+  final bool negativeOptional;
 
   /// The seed for the first run, when not random; each further run adds one.
   final int seed;
@@ -549,8 +556,8 @@ Future<Map<String, dynamic>> _answer(String url, HttpClientResponse response) as
 /// the new ones; seeds, sizes, steps and CFG get the new values. Works on
 /// ComfyUI's `{id: {class_type, inputs}}` and InvokeAI's `{nodes: {id:
 /// {...fields}}}` alike, since both keep these as plain fields of a node.
-/// Returns how many prompt fields were found.
-int _patchGraph(
+/// Returns how many prompt fields were found, and how many negative ones.
+(int, int) _patchGraph(
   Map<String, dynamic> nodes,
   Remix remix,
   int seed, {
@@ -563,6 +570,7 @@ int _patchGraph(
   final oldSteps = recipeSteps(remix.info);
   final oldCfg = recipeCfg(remix.info);
   var found = 0;
+  var negatives = 0;
   for (final node in nodes.values) {
     if (node is! Map<String, dynamic>) continue;
     final f = fields(node);
@@ -575,6 +583,7 @@ int _patchGraph(
           found++;
         } else if (oldNegative.isNotEmpty && n == oldNegative) {
           f[key] = remix.sentNegative;
+          negatives++;
         }
       } else if (v is num) {
         switch (key) {
@@ -594,8 +603,43 @@ int _patchGraph(
       }
     }
   }
-  return found;
+  return (found, negatives);
 }
+
+/// Whether a negative prompt counts for [remix]: it does nothing with CFG
+/// at 1 or below, where the sampler never asks for it. Not knowing the CFG
+/// counts as on.
+bool _guided(Remix remix) {
+  final cfg = remix.cfg ?? recipeCfg(remix.info);
+  return cfg == null || cfg > 1;
+}
+
+/// Put [remix]'s negative prompt, where it was changed, into the picture's
+/// own graph: [matched] says how many fields already took it by saying what
+/// the old one said; otherwise [place] follows the wiring to where it goes,
+/// adding a place for it only with CFG on. Returns whether a negative
+/// prompt was left out because the workflow runs with CFG off; throws when
+/// it counts and there is nowhere to put it.
+bool _placeNegative(
+  Remix remix,
+  int matched,
+  bool Function(String text, {required String old, bool add}) place,
+) {
+  if (remix.negative.trim() == remix.info.negative.trim()) return false;
+  final guided = _guided(remix);
+  final placed = place(remix.sentNegative, old: remix.info.negative, add: guided && matched == 0) || matched > 0;
+  if (placed) return false;
+  if (!guided) return remix.negative.trim().isNotEmpty;
+  if (remix.negativeOptional) return false;
+  throw BackendException(
+    'The edited negative prompt could not be put into this workflow: it has '
+    'no negative prompt of its own, or builds it from several pieces. Send '
+    'it unchanged, or edit it in the app that made it.',
+  );
+}
+
+/// What to add to the "queued" line when the negative prompt was left out.
+String _unused(bool unused) => unused ? '; the negative prompt is not used at CFG 1 or below' : '';
 
 void _requirePrompt(int found, Remix remix) {
   final changed = remix.prompt.trim() != remix.info.prompt.trim();
@@ -613,6 +657,7 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
   final random = math.Random();
   final ids = <String>[];
   final skipped = <String>[];
+  var unused = false;
   // For image to image, the picture (and mask) go up first, under names
   // of their own so two remixes at once do not take each other's.
   final init = remix.init;
@@ -676,13 +721,14 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
     late final Map<String, dynamic> graph;
     if (raw != null) {
       graph = jsonDecode(raw) as Map<String, dynamic>;
-      final found = _patchGraph(
+      final (found, negatives) = _patchGraph(
         graph,
         remix,
         seed,
         fields: (node) => (node['inputs'] as Map<String, dynamic>?) ?? {},
       );
       if (run == 0) _requirePrompt(found, remix);
+      unused = _placeNegative(remix, negatives, (text, {required old, add = true}) => placeComfyNegative(graph, text, old: old, add: add));
       if (remix.loras != null) editComfyLoras(graph, remix.loras!);
     } else {
       try {
@@ -696,6 +742,8 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
       } on StateError catch (e) {
         throw BackendException(e.message);
       }
+      // Krea 2 with CFG off runs on the positive zeroed out.
+      unused = recipe.negative.trim().isNotEmpty && graph.values.any((n) => n is Map && n['class_type'] == 'ConditioningZeroOut');
     }
     if (init != null) comfyImageToImage(graph, image: image!, mask: mask, strength: init.strength);
     final reply = await _post(client, '$base/prompt', {
@@ -707,7 +755,7 @@ Future<RemixTicket> _comfy(HttpClient client, String base, Remix remix) async {
   final done = StreamController<String>();
   final stop = _Stop();
   return RemixTicket(
-    'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}',
+    'Queued ${_count(remix.count)} in ComfyUI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}${_unused(unused)}',
     remix.count,
     _comfyResults(base, ids, done, stop),
     kind: 'comfyui',
@@ -964,6 +1012,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   final ids = <int>[];
   final skipped = <String>[];
   final standIn = <String>[];
+  var unused = false;
   var fetchable = true;
   var mains = const <InvokeModel>[];
   var loras = const <InvokeModel>[];
@@ -1018,7 +1067,8 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
     if (raw != null) {
       graph = jsonDecode(raw) as Map<String, dynamic>;
       final nodes = (graph['nodes'] as Map<String, dynamic>?) ?? {};
-      final found = _patchGraph(nodes, remix, seed, fields: (node) => node);
+      final (found, negatives) = _patchGraph(nodes, remix, seed, fields: (node) => node);
+      unused = _placeNegative(remix, negatives, (text, {required old, add = true}) => placeInvokeNegative(graph, text, old: old, add: add));
       invokeSeed(graph, seed);
       if (remix.steps case final steps?) invokeSetting(graph, _stepFields, steps, old: recipeSteps(remix.info));
       if (remix.cfg case final cfg?) invokeSetting(graph, _cfgFields, cfg, old: recipeCfg(remix.info));
@@ -1041,6 +1091,8 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
       } on StateError catch (e) {
         throw BackendException(e.message);
       }
+      // Krea 2 with CFG off is built without a negative prompt.
+      unused = recipe.negative.trim().isNotEmpty && !_invokeHasNegative(graph);
     }
     final reply = await _post(client, '$base/api/v1/queue/default/enqueue_batch', {
       'batch': {'graph': graph, 'runs': 1},
@@ -1056,7 +1108,7 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
   final done = StreamController<String>();
   final stop = _Stop();
   return RemixTicket(
-    'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}',
+    'Queued ${_count(remix.count)} in InvokeAI${_mode(remix)}${_built(raw == null, skipped, instead: standIn.firstOrNull, of: remix.info.model)}${_unused(unused)}',
     remix.count,
     kind: 'invokeai',
     base: base,
@@ -1071,6 +1123,12 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
           )),
   );
 }
+
+/// Whether anything is wired to a denoise step's negative conditioning.
+bool _invokeHasNegative(Map<String, dynamic> graph) => (graph['edges'] as List? ?? const []).any((e) {
+      final field = e is Map ? (e['destination'] as Map?)?['field'] : null;
+      return field == 'negative_conditioning' || field == 'negative_text_conditioning';
+    });
 
 /// The seed inputs of InvokeAI nodes.
 const Set<String> _seedFields = {'seed', 'noise_seed', 'variance_seed'};
