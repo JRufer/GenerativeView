@@ -498,7 +498,7 @@ class _RemixPanelState extends State<RemixPanel> {
     final chosen = _model;
     final String label;
     if (chosen != null) {
-      label = modelStem(chosen);
+      label = modelLabel(chosen);
     } else if (_fresh) {
       label = names.isEmpty ? 'The server has no models' : 'Choose a model';
     } else {

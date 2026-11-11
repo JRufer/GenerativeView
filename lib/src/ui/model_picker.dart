@@ -37,7 +37,7 @@ Future<ModelPick?> pickModel(
     );
 
 /// The name of a model's file alone: no folder, hash or extension.
-String modelStem(String name) => name
+String modelLabel(String name) => name
     .replaceFirst(RegExp(r'\s*\[[0-9a-fA-F]+\]$'), '')
     .split(RegExp(r'[/\\]'))
     .last
@@ -143,7 +143,7 @@ class _ModelPickerState extends State<ModelPicker> {
   final TextEditingController _search = TextEditingController();
 
   /// The kinds set by hand, as they stand while the picker is open.
-  late Map<String, String> _types = {...widget.types};
+  late final Map<String, String> _types = {...widget.types};
 
   /// The one kind shown: a family, [_unknown], or null for all of them.
   String? _only;
@@ -215,12 +215,11 @@ class _ModelPickerState extends State<ModelPicker> {
             ),
           ),
         if (groups.length > 1)
-          SizedBox(
-            height: 40,
-            child: ListView(
-              key: const ValueKey<String>('model-picker-kinds'),
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          SingleChildScrollView(
+            key: const ValueKey<String>('model-picker-kinds'),
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: Row(
               children: [
                 ChoiceChipButton(
                   key: const ValueKey<String>('model-kind-all'),
@@ -314,7 +313,7 @@ class _ModelPickerState extends State<ModelPicker> {
         size: 18,
         color: chosen ? Palette.accent : Palette.muted,
       ),
-      title: Text(modelStem(m.name), overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
+      title: Text(modelLabel(m.name), overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
       subtitle: sub.isEmpty ? null : Text(sub, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: Palette.faint)),
       trailing: canSet
           ? SetTypeButton(key: ValueKey<String>('model-type-${m.key}'), set: byHand, onSet: (f) => _setType(m, f))
