@@ -378,6 +378,7 @@ class TilesSection extends StatelessWidget {
     this.path,
     this.aspect = 1,
     this.enabled = true,
+    this.wholeAllowed = true,
   });
   final TileMode mode;
   final int tile;
@@ -391,13 +392,20 @@ class TilesSection extends StatelessWidget {
   final double aspect;
   final bool enabled;
 
+  /// False when the size is past what a server draws whole: Whole is then
+  /// not on offer, and a choice of it shows (and is sent) as Tiles.
+  final bool wholeAllowed;
+
   @override
   Widget build(BuildContext context) {
     final tiled = usesTiles(mode, width, height);
+    final shown = !wholeAllowed && mode == TileMode.whole ? TileMode.tiles : mode;
     final tiles = tiled ? planTiles(width, height, tile: tile, overlap: overlap) : const <Rect>[];
     final caption = tiled
         ? '${tiles.length} tiles of ${tiles.first.width.round()} × ${tiles.first.height.round()}, sharing $overlap px. '
-              'The server only ever draws one tile at a time, so any size fits. Keep the app open until they are all back.'
+              'The server only ever draws one tile at a time, so any size fits. '
+              '${wholeAllowed ? '' : 'Past $hiresMaxSide px on a side a picture only goes in tiles. '}'
+              'Keep the app open until they are all back.'
         : mode == TileMode.auto
         ? 'Sent whole at $width × $height. Pictures over $autoTileAbove px on a side go in tiles.'
         : 'Sent whole at $width × $height.';
@@ -410,12 +418,18 @@ class TilesSection extends StatelessWidget {
           child: SegmentedButton<TileMode>(
             key: const ValueKey<String>('tiles-mode'),
             showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: TileMode.auto, label: Text('Auto'), tooltip: 'Tiles only when the picture is large'),
-              ButtonSegment(value: TileMode.tiles, icon: Icon(Icons.grid_on, size: 16), label: Text('Tiles')),
-              ButtonSegment(value: TileMode.whole, icon: Icon(Icons.crop_square, size: 16), label: Text('Whole')),
+            segments: [
+              const ButtonSegment(value: TileMode.auto, label: Text('Auto'), tooltip: 'Tiles only when the picture is large'),
+              const ButtonSegment(value: TileMode.tiles, icon: Icon(Icons.grid_on, size: 16), label: Text('Tiles')),
+              ButtonSegment(
+                value: TileMode.whole,
+                icon: const Icon(Icons.crop_square, size: 16),
+                label: const Text('Whole'),
+                enabled: wholeAllowed,
+                tooltip: wholeAllowed ? null : 'Too large for a server to draw whole',
+              ),
             ],
-            selected: {mode},
+            selected: {shown},
             onSelectionChanged: enabled ? (s) => onChanged(s.first, tile, overlap) : null,
           ),
         ),

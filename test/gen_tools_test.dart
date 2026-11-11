@@ -172,6 +172,9 @@ void main() {
       expect(usesTiles(TileMode.auto, 3072, 3072), isTrue);
       expect(usesTiles(TileMode.tiles, 1024, 1024), isTrue);
       expect(usesTiles(TileMode.whole, 4096, 4096), isFalse);
+      // Past what a server draws whole, tiles whatever was chosen.
+      expect(usesTiles(TileMode.whole, 5120, 5120), isTrue);
+      expect(usesTiles(TileMode.whole, 4160, 6080), isTrue);
     });
   });
 
