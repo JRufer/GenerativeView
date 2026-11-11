@@ -2416,6 +2416,13 @@ class AppState extends ChangeNotifier {
   /// the device and hires fixes alike.
   static const String upscaleCollection = 'Upscales';
 
+  /// The collection every picture made from nothing (New picture) is put in.
+  static const String newCollection = 'New';
+
+  /// The collection a picture saved under [label] is put in.
+  static String collectionFor(String label) =>
+      _isUpscale(label) ? upscaleCollection : (label == 'new' ? newCollection : remixCollection);
+
   /// Remixes sent: those still waiting on the server, and those back whose
   /// pictures have not been gone to yet.
   final ValueNotifier<List<RemixJob>> remixes = ValueNotifier(const []);
@@ -2463,6 +2470,7 @@ class AppState extends ChangeNotifier {
   /// Save each picture [ticket] brings back in [dir], as
   /// `<words of the prompt>_new1.png` and so on: pictures made from nothing
   /// but a prompt and settings, which have no original to sit beside.
+  /// They go in the [newCollection] rather than with the remixes.
   /// Otherwise as [collectRemix].
   void collectNew(String dir, String prompt, RemixTicket ticket, {String? batch}) {
     final sep = dir.contains(r'\') && !dir.contains('/') ? r'\' : '/';
@@ -2747,7 +2755,7 @@ class AppState extends ChangeNotifier {
       return null;
     }
     if (_disposed) return path;
-    final collection = _isUpscale(label) ? upscaleCollection : remixCollection;
+    final collection = collectionFor(label);
     try {
       await core.call('notes_set', {
         'paths': [path],
@@ -2772,10 +2780,14 @@ class AppState extends ChangeNotifier {
   /// when the new remixes are elsewhere the folder they all share is opened
   /// (and sub-folders included) so they can be seen.
   Future<void> showRemixes() async {
-    final done = [for (final j in remixes.value) if (!j.running) j];
-    remixes.value = [for (final j in remixes.value) if (j.running) j];
+    // New pictures are in a collection of their own, so remixes go first
+    // and new pictures wait for the next tap when both are done.
+    final finished = [for (final j in remixes.value) if (!j.running) j];
+    final fresh = finished.every((j) => j.label == 'new');
+    final done = [for (final j in finished) if (fresh || j.label != 'new') j];
+    remixes.value = [for (final j in remixes.value) if (!done.contains(j)) j];
     final paths = [for (final j in done) ...j.saved];
-    await _showNew(paths, exactTerm('collection', remixCollection));
+    await _showNew(paths, exactTerm('collection', fresh ? newCollection : remixCollection));
   }
 
   /// Show the [upscaleCollection], with the upscales saved since they were

@@ -784,7 +784,7 @@ class _RemixPanelState extends State<RemixPanel> {
         toast(
           context,
           '${ticket.message}. ${ticket.count == 1 ? 'It' : 'They'} will be '
-          '$where and added to ${AppState.remixCollection}.',
+          '$where and added to ${item != null ? AppState.remixCollection : AppState.newCollection}.',
         );
       } else {
         // A prompt of its own for each picture: one remix each, sent at once
@@ -810,7 +810,7 @@ class _RemixPanelState extends State<RemixPanel> {
         toast(
           context,
           'Sent ${picks.length} pictures to ${backendNames[kind]}, each with its own prompt. They will be '
-          '$where and added to ${AppState.remixCollection}.',
+          '$where and added to ${item != null ? AppState.remixCollection : AppState.newCollection}.',
         );
       }
       if (!mounted) return;

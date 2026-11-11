@@ -209,10 +209,20 @@ void main() {
       expect((asked.single['override_settings'] as Map)['sd_model_checkpoint'], startsWith('juggernautXL_v9'));
       expect((asked.single['width'], asked.single['height']), (1024, 1024));
       expect(asked.single.containsKey('init_images'), isFalse);
-      final saved = state.remixes.value.expand((j) => j.saved).single.replaceAll(r'\', '/');
+      final job = state.remixes.value.single;
+      final saved = job.saved.single.replaceAll(r'\', '/');
       expect(saved, startsWith(library.path.replaceAll(r'\', '/')));
       expect(saved, endsWith('/a-red-fox-in-the_new1.png'));
       expect(File(saved).existsSync(), isTrue);
+      // In a collection of its own, which the done button goes to.
+      final notes = jsonDecode(File('${library.path}/.generativeview.json').readAsStringSync()) as Map<String, dynamic>;
+      expect(((notes['images'] as Map)['a-red-fox-in-the_new1.png'] as Map)['collections'], [AppState.newCollection]);
+      var shown = false;
+      state.showRemixes().whenComplete(() => shown = true);
+      await pumpUntil(tester, () => shown && state.query.contains(AppState.newCollection), what: 'the New collection');
+      expect(state.query, isNot(contains(AppState.remixCollection)));
+      expect(state.remixes.value, isEmpty);
+      await shot(tester, 'new-6-collection-$name');
       // The next one starts on the same model.
       expect(state.prefText('pref_new_model_forge', ''), startsWith('juggernautXL_v9'));
       File(saved).deleteSync();

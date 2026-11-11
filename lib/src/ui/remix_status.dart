@@ -66,6 +66,10 @@ class _Activity {
   final List<String> problems;
 
   bool get busy => remixesRunning.isNotEmpty || upscales.isNotEmpty || waiting > 0 || sending.isNotEmpty;
+  /// Every run that is done made new pictures, not remixes: they are shown
+  /// in their own collection.
+  bool get onlyNewDone => remixesDone.isNotEmpty && remixesDone.every((j) => j.label == 'new');
+
   bool get anyDone => remixesDone.isNotEmpty || upscaled.isNotEmpty;
   bool get none => !busy && !anyDone && problems.isEmpty;
 
@@ -202,7 +206,9 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
     if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what, press and hold to dismiss';
     if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
     final what = now.remixesDone.isNotEmpty
-        ? (now.remixesDone.length == 1 ? 'Remix done' : '${now.remixesDone.length} remixes done')
+        ? (now.onlyNewDone
+            ? (now.remixesDone.length == 1 ? 'New picture done' : '${now.remixesDone.length} new pictures done')
+            : (now.remixesDone.length == 1 ? 'Remix done' : '${now.remixesDone.length} remixes done'))
         : (now.upscaled.length == 1 ? 'Upscale done' : '${now.upscaled.length} upscales done');
     return '$what: tap to see, press and hold to dismiss';
   }
@@ -446,8 +452,10 @@ class _ActivityCard extends StatelessWidget {
         _Pill(
           key: const ValueKey<String>('activity-remix-done'),
           icon: const Icon(Icons.check_circle, size: 18, color: Colors.white),
-          label: a.remixesDone.length == 1 ? 'Remix Done' : '${a.remixesDone.length} Remixes Done',
-          tooltip: 'Show them in ${AppState.remixCollection}',
+          label: a.onlyNewDone
+              ? (a.remixesDone.length == 1 ? 'New Picture Done' : '${a.remixesDone.length} New Pictures Done')
+              : (a.remixesDone.length == 1 ? 'Remix Done' : '${a.remixesDone.length} Remixes Done'),
+          tooltip: 'Show them in ${a.onlyNewDone ? AppState.newCollection : AppState.remixCollection}',
           go: true,
           onTap: () {
             onGo();
