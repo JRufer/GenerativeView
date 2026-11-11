@@ -1,0 +1,582 @@
+Resolving dependencies...
+Downloading packages...
+  archive 4.5.2 (4.6.0 available)
+  code_assets 1.2.1 (2.2.0 available)
+  crypto 3.0.7 (3.0.8 available)
+  hooks 2.0.2 (2.2.0 available)
+  jni 1.1.0 (1.1.2 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  objective_c 9.5.0 (9.6.4 available)
+  permission_handler_android 14.1.0 (14.1.1 available)
+  permission_handler_apple 9.6.2 (9.6.5 available)
+  permission_handler_windows 0.2.2 (0.2.4 available)
+  petitparser 7.0.2 (7.1.0 available)
+  posix 6.5.2 (6.5.4 available)
+  record_use 0.6.0 (1.1.1 available)
+  safe_local_storage 2.0.6 (2.0.7 available)
+  synchronized 3.5.0 (3.6.1+1 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_math 2.4.0 (2.4.4 available)
+  vm_service 15.3.0 (15.4.0 available)
+  wakelock_plus 1.8.1 (1.8.2 available)
+  web 1.1.1 (1.1.2 available)
+  xml 7.0.1 (7.1.0 available)
+Got dependencies!
+22 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart
+00:00 +0: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker lists only those made for the model's kind
+00:00 +1: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker lists only those made for the model's kind
+00:00 +2: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker lists only those made for the model's kind
+00:00 +3: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker lists only those made for the model's kind
+00:00 +4: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker lists only those made for the model's kind
+00:00 +5: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker lists only those made for the model's kind
+00:00 +6: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker picking one closes the picker with it
+00:00 +7: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: picker a model of unknown kind lists every LoRA, and says so
+00:00 +8: /home/runner/work/GenerativeView/GenerativeView/test/lora_picker_test.dart: an added LoRA is marked, can be taken out, and the section offers Add
+00:01 +9: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a mask paints when something is left painted
+00:01 +10: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a new shape takes the middle of the picture
+00:01 +11: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the mask is drawn as the picture is: white where it is redrawn
+00:01 +12: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: pen pressure runs from 1 up to the radius chosen
+00:01 +13: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: hex colors are read and written
+00:01 +14: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a spot on a picture reads its pixel, the nearest one if outside
+00:01 +15: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a pressure stroke tapers, with no holes where its parts overlap
+00:01 +16: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: color goes into the picture sent, cropped as it is, and not into the mask
+00:01 +17: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: a smear patch lands where it should, its soft edge keeping its color
+00:01 +18: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:01 +19: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:01 +20: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:01 +21: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:02 +22: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:02 +23: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:02 +24: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:02 +25: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a pen paints color from 1 up to the brush, and fingers then leave no mark
+00:02 +26: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a stopped wait stops asking the server
+00:02 +27: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a mask painted on its layer stays out of the color, and the eyedropper picks
+00:02 +28: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a mask painted on its layer stays out of the color, and the eyedropper picks
+00:02 +29: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a mask painted on its layer stays out of the color, and the eyedropper picks
+00:02 +30: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a mask painted on its layer stays out of the color, and the eyedropper picks
+00:02 +31: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a mask painted on its layer stays out of the color, and the eyedropper picks
+00:03 +32: /home/runner/work/GenerativeView/GenerativeView/test/mask_test.dart: the editor a mask painted on its layer stays out of the color, and the eyedropper picks
+00:04 +33: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +34: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +35: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +36: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +37: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +38: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +39: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +40: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:05 +41: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +42: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +43: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +44: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) answers
+  Skip: GV_LIVE_COMFYUI not set
+00:06 +45 ~1: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~1: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) SDXL text to image, two pictures
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~2: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~2: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) SDXL image to image from that picture
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~3: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~3: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) SDXL only the painted half redrawn
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~4: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~4: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) SDXL picked up again after the app was closed
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~5: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~5: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) Krea 2 text to image, two pictures
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~6: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~6: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) Krea 2 image to image from that picture
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~7: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~7: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) Krea 2 only the painted half redrawn
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~8: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~8: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: ComfyUI (live) Krea 2 picked up again after the app was closed
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~9: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~9: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) answers
+  Skip: GV_LIVE_INVOKEAI not set
+00:06 +45 ~10: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~10: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) SDXL text to image, two pictures
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~11: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~11: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) SDXL image to image from that picture
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~12: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~12: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) SDXL only the painted half redrawn
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~13: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~13: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) SDXL picked up again after the app was closed
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~14: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~14: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) Krea 2 text to image, two pictures
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~15: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~15: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) Krea 2 image to image from that picture
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~16: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~16: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) Krea 2 only the painted half redrawn
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~17: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~17: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: InvokeAI (live) Krea 2 picked up again after the app was closed
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~18: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~18: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) answers
+  Skip: GV_LIVE_FORGE not set
+00:06 +45 ~19: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~19: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) SDXL text to image, two pictures
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~20: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~20: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) SDXL image to image from that picture
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~21: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~21: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) SDXL only the painted half redrawn
+  Skip: GV_LIVE_SDXL_MODEL not set
+00:06 +45 ~22: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~22: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) SDXL picked up again after the app was closed
+  Skip: Forge keeps no jobs to ask about later
+00:06 +45 ~23: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~23: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) Krea 2 text to image, two pictures
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~24: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~24: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) Krea 2 image to image from that picture
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~25: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~25: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) Krea 2 only the painted half redrawn
+  Skip: GV_LIVE_KREA2_MODEL not set
+00:06 +45 ~26: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:06 +45 ~26: /home/runner/work/GenerativeView/GenerativeView/test/live_remix_test.dart: Forge / A1111 (live) Krea 2 picked up again after the app was closed
+  Skip: Forge keeps no jobs to ask about later
+00:06 +45 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:07 +46 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:07 +47 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:07 +48 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:07 +49 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:07 +50 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the pictures in its answer, with their settings
+00:08 +51 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: any picture with settings can go to every server
+00:08 +52 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: samplers are understood in each program's words
+00:08 +53 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a picture from elsewhere gets a workflow built from its settings
+00:08 +54 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a model it does not have is said plainly
+00:08 +55 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a picture from elsewhere gets an SDXL graph built from its settings
+00:08 +56 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a kind of model it cannot build for is said plainly
+00:08 +57 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 picture from elsewhere gets a Krea 2 graph, as InvokeAI builds one
+00:08 +58 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 hires fix starts from the picture, encoded with the same VAE
+00:08 +59 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 model installed as Diffusers needs nothing more; one file without a VAE says so
+00:08 +60 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 remix asks the server for its VAEs and encoders, and sends the Krea 2 graph
+00:08 +61 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 picture whose file the server lacks gets its closest Krea 2 model instead
+00:08 +62 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 remix with a stand-in model says which it used
+00:08 +63 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: LoRA tags in a prompt follow the switches and sliders
+00:08 +64 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: trigger words are found in a prompt and put at its start
+00:08 +65 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a LoRA choice knows how far it has moved, CLIP weight and all
+00:08 +66 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a LoRA turned off leaves the workflow, one moved is reweighted
+00:08 +67 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a LoRA turned off leaves the graph and its metadata
+00:08 +68 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: the LoRAs as set go in the prompt it is sent
+00:08 +69 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a graph built from settings leaves out a LoRA turned off
+00:08 +70 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a workflow starts from the picture instead of an empty latent
+00:08 +71 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: an advanced sampler starts part way through its steps
+00:08 +72 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a workflow with no empty latent is said plainly
+00:08 +73 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: image to image uploads the picture and mask, then queues
+00:08 +74 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a picture from elsewhere gets a built graph that starts from it
+00:08 +75 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a Krea 2 graph starts from the picture, encoded by its own VAE
+00:08 +76 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: other families get their matching encoder
+00:08 +77 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: image to image of an InvokeAI picture uses its own graph
+00:08 +78 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: each run gets its own seed, though the graph keeps it in a node
+00:08 +79 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: steps and CFG set in the sampler, a second pass left alone
+00:08 +80 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: steps and CFG set, wired in from a node or not, metadata too
+00:08 +81 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: steps and CFG as set, else as the picture had them
+00:08 +82 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a built graph takes the steps and CFG as set
+00:08 +83 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a remix sent earlier is picked up again by its job
+00:08 +84 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a sent remix it no longer has is given up on, not waited for
+00:08 +85 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: InvokeAI: a queue item it no longer has is given up on
+00:08 +86 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: a ticket says which jobs to pick up again; Forge has none to give
+00:08 +87 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: Forge: image to image goes to img2img with the picture and mask
+00:08 +88 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 picture from elsewhere is loaded the way ComfyUI's own Krea 2 template loads it
+00:08 +89 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 Raw picture gets the Raw file, and its negative prompt with CFG on
+00:08 +90 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 GGUF file is loaded with the GGUF loader
+00:08 +91 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: what a Krea 2 picture is missing is said plainly
+00:08 +92 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: a Krea 2 remix asks for the loaders' files and says which model stood in
+00:08 +93 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: ComfyUI: an SDXL picture whose checkpoint is there asks for nothing more
+00:08 +94 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backends_test.dart: an InvokeAI run gives back only the pictures it made, not the ones it was given
+00:12 +95 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: (setUpAll)
+00:12 +95 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:13 +96 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:13 +97 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:13 +98 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: browse, search, inspect, copy, and step through a folder
+00:16 +98 ~27: /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+GALLERY: 127 items, 30 thumbnails on screen after 66 ms
+GALLERY: "fennec model:flux" -> 8 items
+00:21 +99 ~27: /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+00:22 +100 ~27: /home/runner/work/GenerativeView/GenerativeView/test/gallery_test.dart: real images: grid, search, metadata, focus
+00:23 +101 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: a tap on the top bar scrolls the grid back to the top
+00:23 +102 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +103 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +104 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +105 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +106 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +107 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +108 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +109 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +110 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +111 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: on a narrow screen the panels slide over the grid
+00:24 +112 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a narrow landscape window the metadata panel stays beside the grid
+00:24 +113 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:24 +114 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:24 +115 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:24 +116 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:24 +117 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:24 +118 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:24 +119 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:25 +120 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:25 +121 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: in a portrait window the metadata panel is a footer
+00:25 +122 ~27: /home/runner/work/GenerativeView/GenerativeView/test/model_picker_test.dart: picker searching narrows every group
+00:26 +123 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:26 +124 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:26 +125 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:26 +126 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:26 +127 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: searches can be pinned and picked from under the search box
+00:27 +128 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +129 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +130 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +131 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +132 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +133 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +134 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +135 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +136 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +137 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +138 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +139 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +140 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +141 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +142 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +143 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +144 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +145 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +146 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +147 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +148 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +149 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +150 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +151 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +152 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +153 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +154 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +155 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +156 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +157 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +158 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +159 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +160 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +161 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +162 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +163 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +164 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +165 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +166 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +167 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +168 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +169 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +170 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +171 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +172 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +173 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:27 +174 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +175 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +176 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +177 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +178 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +179 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +180 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +181 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +182 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +183 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +184 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +185 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +186 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +187 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +188 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +189 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +190 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +191 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +192 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +193 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +194 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +195 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +196 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +197 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +198 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +199 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: folders can be pinned to the top of the folder panel
+00:28 +200 ~27: /home/runner/work/GenerativeView/GenerativeView/test/backend_parity_test.dart: InvokeAI its own Krea 2 picture LoRA: one the picture was not made with, added by a preset
+00:28 +201 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +202 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +203 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +204 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +205 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +206 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +207 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +208 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +209 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +210 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +211 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +212 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +213 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +214 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +215 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +216 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +217 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +218 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +219 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +220 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +221 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +222 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +223 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +224 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +225 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +226 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +227 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +228 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +229 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +230 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +231 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +232 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +233 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +234 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +235 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +236 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +237 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +238 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +239 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +240 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +241 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +242 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +243 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +244 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +245 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +246 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +247 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +248 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +249 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +250 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +251 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +252 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +253 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +254 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +255 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +256 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +257 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +258 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +259 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +260 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +261 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +262 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +263 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +264 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +265 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +266 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +267 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +268 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +269 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +270 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +271 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +272 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +273 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +274 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +275 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +276 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +277 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +278 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +279 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +280 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +281 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +282 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +283 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +284 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +285 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +286 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +287 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +288 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +289 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +290 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +291 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +292 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:28 +293 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:29 +294 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:29 +295 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:29 +296 ~27: /home/runner/work/GenerativeView/GenerativeView/test/app_test.dart: the metadata panel filters the grid by what an image used
+00:31 +297 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:33 +298 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:34 +299 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:36 +300 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:40 +301 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +302 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +303 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +304 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +305 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +306 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +307 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +308 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +309 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:41 +310 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:42 +311 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:42 +312 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:42 +313 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:42 +314 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:44 +315 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-closed
+00:45 +316 ~27: /home/runner/work/GenerativeView/GenerativeView/test/artist_tools_test.dart: prompt doctor in remix, on the fold-closed
+00:46 +317 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:47 +318 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:48 +319 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:50 +320 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:51 +321 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:52 +322 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:53 +323 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:54 +324 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:56 +325 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:56 +326 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:58 +327 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+00:58 +328 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the fold-open
+01:00 +329 ~27: /home/runner/work/GenerativeView/GenerativeView/test/artist_tools_test.dart: fix this spot opens Find in the mask editor, on the fold-open
+01:00 +330 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:01 +331 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:02 +332 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:03 +333 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:04 +334 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:06 +335 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:06 +336 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:08 +337 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:09 +338 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:09 +339 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:11 +340 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:13 +341 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:14 +342 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture, on the tab
+01:15 +343 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: aim a remix higher, on the fold-closed
+01:15 +344 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture needs a model and a prompt, and SD 1.x starts at 512
+01:16 +345 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture needs a model and a prompt, and SD 1.x starts at 512
+01:18 +346 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture needs a model and a prompt, and SD 1.x starts at 512
+01:20 +347 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture needs a model and a prompt, and SD 1.x starts at 512
+01:20 +348 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture needs a model and a prompt, and SD 1.x starts at 512
+01:22 +349 ~27: /home/runner/work/GenerativeView/GenerativeView/test/new_picture_test.dart: a new picture needs a model and a prompt, and SD 1.x starts at 512
+01:22 +350 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: aim bred candidates at an audience level, on the fold-open
+01:22 +351 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +352 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +353 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +354 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +355 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +356 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +357 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +358 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +359 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +360 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +361 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +362 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +363 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:23 +364 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience filter and badges, on the tab
+01:24 +365 ~27: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: a hires fix in tiles: each tile redrawn, put back whole, with the original's metadata
+01:25 +366 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience row in the info panel, on the tab
+01:25 +367 ~27: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience row in the info panel, on the tab
+01:25 +367 ~28: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience row in the info panel, on the tab
+01:25 +367 ~29: /home/runner/work/GenerativeView/GenerativeView/test/audience_test.dart: audience row in the info panel, on the tab
+01:26 +368 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:27 +369 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:28 +370 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:29 +371 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:33 +372 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:35 +373 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:36 +374 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:36 +375 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-closed
+01:37 +376 ~29: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: new pictures are marked, and followed when asked
+01:38 +377 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:39 +378 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:40 +379 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:40 +380 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:44 +381 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:45 +382 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:45 +383 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:47 +384 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: extend and select in the mask editor, on the fold-closed
+01:48 +385 ~29: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: remixes show while they run, open the Remixes collection when done, and are picked out
+01:51 +386 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:51 +387 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:54 +388 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:55 +389 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:55 +390 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:55 +391 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:56 +392 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:56 +393 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:56 +394 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:56 +395 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-closed
+01:57 +396 ~29: /home/runner/work/GenerativeView/GenerativeView/test/features_test.dart: pictures are ticked by their corner box and acted on together
+01:58 +397 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+01:59 +398 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:00 +399 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:01 +400 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:01 +401 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:01 +402 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:02 +403 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:03 +404 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:03 +405 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:04 +406 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +407 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +408 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +409 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +410 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +411 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +412 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:06 +413 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:08 +414 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the fold-closed
+02:08 +415 ~29: /home/runner/work/GenerativeView/GenerativeView/test/wallpaper_test.dart: both screens get a crop each
+02:08 +416 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:09 +417 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:10 +418 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:10 +419 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:11 +420 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:11 +421 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:11 +422 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:11 +423 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +424 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +425 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +426 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +427 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +428 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +429 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:12 +430 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +431 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +432 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +433 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +434 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +435 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +436 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +437 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +438 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:13 +439 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:16 +440 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:16 +441 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:16 +442 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:16 +443 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the fold-open
+02:19 +444 ~29: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+02:30 +445 ~29: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-closed
+02:39 +446 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the fold-open
+02:39 +447 ~29: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-open
+02:50 +448 ~29: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the fold-open
+02:59 +449 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: wildcards in remix, on the tab
+03:01 +450 ~29: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the tab
+03:12 +451 ~29: /home/runner/work/GenerativeView/GenerativeView/test/ui_audit_test.dart: the common screens, on the tab
+03:19 +452 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +453 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +454 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +455 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +456 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +457 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +458 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +459 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +460 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +461 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +462 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:20 +463 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: the detail pass and tiles in upscale, on the tab
+03:21 +464 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: faces and hands in remix, and models to download, on the tab
+03:32 +465 ~29: /home/runner/work/GenerativeView/GenerativeView/test/gen_tools_test.dart: (tearDownAll)
+03:32 +465 ~29: All tests passed!
