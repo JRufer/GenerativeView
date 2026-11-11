@@ -75,7 +75,8 @@ class _UpscalePanelState extends State<UpscalePanel> {
   /// largest of them decides, so every one of them fits.
   late final double _maxFactor = maxUpscaleFactor(widget.items, widget.models);
   late final List<double> _factors = upscaleFactors(_maxFactor);
-  late final double _maxHires = maxHiresScale(widget.items);
+  late final double _maxHires =
+      maxHiresScale(widget.items, maxSide: widget.models.maxSide, maxPixels: widget.models.maxPixels);
   late final List<double> _hiresScales = hiresScalesFor(_maxHires);
 
   /// How much bigger the upscale here is; null when the pictures are
@@ -649,6 +650,7 @@ class _UpscalePanelState extends State<UpscalePanel> {
                   overlap: _overlap,
                   width: w,
                   height: h,
+                  wholeAllowed: !tooLargeWhole(w, h),
                   path: widget.items.length == 1 ? item.path : null,
                   aspect: item.width > 0 && item.height > 0 ? item.width / item.height : 1,
                   enabled: !_busy,
@@ -673,13 +675,16 @@ const List<double> upscaleSteps = [1.5, 2, 3, 4, 6, 8, 12, 16];
 
 /// The same for a hires fix. 1 is the picture at its own size: redrawn by
 /// the server with nothing upscaled here first.
-const List<double> hiresSteps = [1, 1.25, 1.5, 2, 3, 4];
+const List<double> hiresSteps = [1, 1.25, 1.5, 2, 3, 4, 5];
 
-/// The largest a server is asked to redraw at, on a side and in all. A
-/// picture larger still is only ever sent at its own size, which the server
-/// that made it can draw.
-const int hiresMaxSide = 4096;
-const int hiresMaxPixels = 4096 * 4096;
+/// The most a hires fix makes a picture larger.
+const double hiresMaxScale = 5;
+
+/// The largest a hires fix is made at, on a side and in all, where the core
+/// does not say: the largest upscale made here. Past [hiresMaxSide] it goes
+/// to the server in tiles (see [usesTiles]).
+const int hiresTiledMaxSide = 8192;
+const int hiresTiledMaxPixels = 40000000;
 
 /// The sizes of [items] that are known, as (width, height).
 Iterable<(int, int)> _sizes(List<MediaItem> items) => [
@@ -722,21 +727,26 @@ List<double> upscaleFactors(double max) {
 }
 
 /// How many times larger a hires fix of [items] may be: as far as the
-/// server's limits allow for the largest, to a twentieth, rounded down,
-/// never past 4 and never below 1 (the picture at its own size). Pictures
-/// of unknown size leave it at 2.
-double maxHiresScale(List<MediaItem> items) {
+/// largest upscale made here ([maxSide] on a side, [maxPixels] in all)
+/// allows for the largest of them, to a twentieth, rounded down, never past
+/// [hiresMaxScale] and never below 1 (the picture at its own size). A size
+/// past what a server draws whole is sent in tiles. Pictures of unknown
+/// size leave it at 2.
+double maxHiresScale(List<MediaItem> items, {int maxSide = hiresTiledMaxSide, int maxPixels = hiresTiledMaxPixels}) {
   final sizes = _sizes(items).toList();
   if (sizes.isEmpty) return 2;
-  var twentieths = 80;
+  var twentieths = (hiresMaxScale * 20).round();
   for (final (w, h) in sizes) {
-    final bySide = hiresMaxSide / math.max(w, h);
-    final byPixels = math.sqrt(hiresMaxPixels / (w * h));
+    final bySide = maxSide / math.max(w, h);
+    final byPixels = math.sqrt(maxPixels / (w * h));
     twentieths = math.min(twentieths, (math.min(bySide, byPixels) * 20).floor());
   }
+  bool within(int w, int h) => math.max(w, h) <= maxSide && w * h <= maxPixels;
+  // Both the size the server redraws at and the upscale made here for it,
+  // which the core checks before it is rounded to a size servers take.
   bool fits(double f) => sizes.every((s) {
     final (w, h) = hiresSize(s.$1, s.$2, f);
-    return math.max(w, h) <= hiresMaxSide && w * h <= hiresMaxPixels;
+    return within(w, h) && within((s.$1 * f).round(), (s.$2 * f).round());
   });
   while (twentieths > 20 && !fits(twentieths / 20)) {
     twentieths--;

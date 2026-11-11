@@ -741,6 +741,7 @@ void main() {
     expect(find.byKey(const ValueKey('hires-scale-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('hires-scale-1.5')), findsOneWidget);
     expect(find.byKey(const ValueKey('hires-scale-4')), findsOneWidget);
+    expect(find.byKey(const ValueKey('hires-scale-5')), findsOneWidget);
     expect(tester.widget<Text>(find.byKey(const ValueKey('upscale-size'))).data, '320 × 320 to 640 × 640');
     await tester.tap(find.byKey(const ValueKey('hires-scale-1.5')));
     await settle(tester);
@@ -2230,21 +2231,29 @@ void main() {
     // The limits come from the core.
     expect(maxUpscaleFactor([pic(1000, 1000)], const UpscaleModels('', '', [], maxSide: 2000, maxPixels: 4000000)), 2);
 
-    // A hires fix: the picture's own size always, larger as the server's
-    // 4096 allows, never past 4×.
-    expect(maxHiresScale([pic(512, 512)]), 4);
-    expect(hiresScalesFor(4), [1, 1.25, 1.5, 2, 3, 4]);
-    expect(maxHiresScale([pic(1536, 1536)]), 2.65);
+    // A hires fix: the picture's own size always, larger as far as the
+    // upscale made here goes (in tiles past 4096), never past 5×.
+    expect(maxHiresScale([pic(512, 512)]), 5);
+    expect(hiresScalesFor(5), [1, 1.25, 1.5, 2, 3, 4, 5]);
+    expect(maxHiresScale([pic(1024, 1024)]), 5);
+    expect(maxHiresScale([pic(832, 1216)]), 5);
+    expect(maxHiresScale([pic(1536, 1536)]), 4.1);
+    expect(hiresScalesFor(4.1), [1, 1.25, 1.5, 2, 3, 4, 4.1]);
     expect(hiresScalesFor(2.65), [1, 1.25, 1.5, 2, 2.65]);
-    expect(maxHiresScale([pic(3000, 2000)]), 1.35);
+    expect(maxHiresScale([pic(3000, 2000)]), 2.55);
     expect(hiresScalesFor(1.35), [1, 1.25, 1.35]);
-    // Already past what a server is asked to go to: only its own size.
-    expect(maxHiresScale([pic(5000, 3000)]), 1);
+    // Several: the largest decides.
+    expect(maxHiresScale([pic(512, 512), pic(3000, 2000)]), 2.55);
+    // Already as large as an upscale here can be: only its own size.
+    expect(maxHiresScale([pic(8000, 5000)]), 1);
     expect(hiresScalesFor(1), [1]);
+    // The limits come from the core.
+    expect(maxHiresScale([pic(1000, 1000)], maxSide: 2000, maxPixels: 4000000), 2);
     // Where it starts: 2× unless that is heavy, then smaller, then 1.
     expect(defaultHiresScale([pic(832, 1216)], hiresScalesFor(maxHiresScale([pic(832, 1216)]))), 2);
     expect(defaultHiresScale([pic(1536, 1536)], hiresScalesFor(2.65)), 1.5);
     expect(defaultHiresScale([pic(2048, 2048)], hiresScalesFor(maxHiresScale([pic(2048, 2048)]))), 1.25);
     expect(defaultHiresScale([pic(3000, 2000)], hiresScalesFor(1.35)), 1);
+    expect(defaultHiresScale([pic(1024, 1024)], hiresScalesFor(5)), 2);
   });
 }

@@ -26,10 +26,21 @@ const int defaultTileOverlap = 128;
 /// In [TileMode.auto], a hires fix whose long side is past this is tiled.
 const int autoTileAbove = 2560;
 
-/// Whether a hires fix to [width] × [height] goes in tiles under [mode].
+/// The largest a server is asked to redraw whole, on a side and in all.
+/// Past it a hires fix only goes in tiles, which the server draws one at a
+/// time, so it is as large as the upscale made here can be.
+const int hiresMaxSide = 4096;
+const int hiresMaxPixels = 4096 * 4096;
+
+/// Whether [width] × [height] is more than a server is asked to redraw
+/// whole.
+bool tooLargeWhole(int width, int height) => math.max(width, height) > hiresMaxSide || width * height > hiresMaxPixels;
+
+/// Whether a hires fix to [width] × [height] goes in tiles under [mode]:
+/// always when it is [tooLargeWhole], whatever was chosen.
 bool usesTiles(TileMode mode, int width, int height) => switch (mode) {
   TileMode.tiles => true,
-  TileMode.whole => false,
+  TileMode.whole => tooLargeWhole(width, height),
   TileMode.auto => math.max(width, height) > autoTileAbove,
 };
 
