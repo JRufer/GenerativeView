@@ -1126,7 +1126,8 @@ Future<RemixTicket> _invoke(HttpClient client, String base, Remix remix) async {
 
 /// Whether anything is wired to a denoise step's negative conditioning.
 bool _invokeHasNegative(Map<String, dynamic> graph) => ((graph['edges'] as List?) ?? const []).any((e) {
-      final field = e is Map ? (e['destination'] as Map?)?['field'] : null;
+      final to = e is Map ? e['destination'] : null;
+      final field = to is Map ? to['field'] : null;
       return field == 'negative_conditioning' || field == 'negative_text_conditioning';
     });
 
