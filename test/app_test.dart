@@ -820,6 +820,23 @@ void main() {
     await close(tester, state);
   });
 
+  testWidgets('on a narrow screen New picture has a button of its own, on the second row', (
+    tester,
+  ) async {
+    final state = await launch(tester, size: const Size(600, 900));
+    await pumpUntil(tester, () => state.items.length == 9, what: 'the listing');
+    final button = find.byKey(const ValueKey<String>('new-picture'));
+    expect(button, findsOneWidget);
+    final tools = tester.getRect(find.byKey(const ValueKey<String>('bar-tools')));
+    final search = tester.getRect(find.byKey(const ValueKey<String>('bar-search')));
+    final rect = tester.getRect(button);
+    expect(rect.top, greaterThanOrEqualTo(tools.bottom), reason: 'under the top row');
+    expect(rect.left, greaterThan(search.right), reason: 'after the search box and slider');
+    expect(rect.right, lessThanOrEqualTo(600));
+
+    await close(tester, state);
+  });
+
   testWidgets('on a narrow screen the panels slide over the grid', (
     tester,
   ) async {

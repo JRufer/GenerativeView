@@ -38,7 +38,8 @@ String _groupThousands(int n) {
 /// Where it is too narrow for everything on one line (a phone, a narrow
 /// window), it is two rows in the grid: the folder button, the folder's name
 /// and the tools on top, and the search box and the tile size slider under
-/// them, each with room to be used.
+/// them, each with room to be used, with the New picture button at the
+/// end of that row.
 class TopBar extends StatelessWidget {
   const TopBar({super.key, required this.state});
 
@@ -192,6 +193,17 @@ class TopBar extends StatelessWidget {
                                 ),
                               ),
                               slider(math.min(_sliderWidth * 1.4, math.max(96.0, width * 0.3))),
+                              // The top row is full on a phone; here it has
+                              // room, and is in reach without the ⋮ menu.
+                              if (state.folder != null)
+                                ExcludeFocus(
+                                  child: _BarButton(
+                                    key: const ValueKey<String>('new-picture'),
+                                    icon: Icons.add_photo_alternate_outlined,
+                                    tooltip: 'New picture (Ctrl N)',
+                                    onTap: () => openNewPicture(context, state),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
