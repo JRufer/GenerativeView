@@ -1049,12 +1049,18 @@ impl Engine {
                 #[derive(serde::Deserialize)]
                 struct Placed {
                     path: String,
+                    /// The tile as it was cut, which the redraw is held to.
+                    #[serde(default)]
+                    before: Option<String>,
                     #[serde(flatten)]
                     tile: crate::tiles::Tile,
                 }
                 let placed: Vec<Placed> = serde_json::from_value(args.get("tiles").cloned().unwrap_or_default()).map_err(|e| format!("tiles: {e}"))?;
-                let tiles: Vec<_> = placed.into_iter().map(|p| (std::path::PathBuf::from(p.path), p.tile)).collect();
-                let merged = crate::tiles::merge(&tiles, u32_arg(args, "width")?, u32_arg(args, "height")?, u32_arg(args, "overlap").unwrap_or(128))?;
+                let tiles: Vec<_> = placed
+                    .into_iter()
+                    .map(|p| crate::tiles::Redrawn { after: p.path.into(), before: p.before.map(Into::into), tile: p.tile })
+                    .collect();
+                let merged = crate::tiles::merge(&tiles, u32_arg(args, "width")?, u32_arg(args, "height")?)?;
                 // With the original's metadata, as an upscale keeps it.
                 let png = crate::upscale::png_with_metadata_of(Path::new(str_arg(args, "source")?), &image::DynamicImage::ImageRgb8(merged))?;
                 let dest = str_arg(args, "dest")?;

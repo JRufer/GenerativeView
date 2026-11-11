@@ -77,6 +77,34 @@ void main() {
     expect(failed, ['a detailed hand, natural fingers, correct anatomy']);
   });
 
+  test('tiles are never asked for a subject, even one the model sees', () async {
+    Object? asked;
+    final prompts = await piecePrompts(
+      (method, args) async {
+        asked = args['boxes'];
+        return {
+          'phrases': [
+            {'text': '1girl', 'quality': false, 'look': false},
+            {'text': 'oil painting', 'quality': false, 'look': true},
+          ],
+          'parts': [
+            [0],
+            [0],
+          ],
+        };
+      },
+      path: 'x.png',
+      prompt: '1girl, oil painting <lora:a:1>',
+      boxes: const [
+        [0, 0, 10, 10],
+        [10, 0, 20, 10],
+      ],
+      subjects: false,
+    );
+    expect(prompts, ['oil painting, <lora:a:1>', 'oil painting, <lora:a:1>']);
+    expect(asked, isEmpty);
+  });
+
   test('without the content model only the marks are gone by', () async {
     final prompts = await piecePrompts(
       (method, args) async => {

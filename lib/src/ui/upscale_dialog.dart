@@ -883,9 +883,10 @@ Future<String?> refineUpscale(
 
 /// A hires fix sent in tiles: [upscaled] cut into overlapping tiles of
 /// [tile] pixels, each redrawn on the server as an ordinary image to image
-/// job with the picture's own seed and the part of its prompt that is in
-/// that tile (see [piecePrompts]), and put back together here
-/// with each fading into its neighbours, carrying the original's metadata.
+/// job with a seed of its own and only the part of the prompt about the
+/// look of the whole picture, never its subjects (see [piecePrompts]), and
+/// put back together here, each held to the tile it was cut as, carrying
+/// the original's metadata.
 ///
 /// One ticket for all of it, bringing back the one picture, and saying how
 /// many tiles are still out as they land. It cannot be picked up again
@@ -924,8 +925,8 @@ Future<RemixTicket> _refineInTiles(
     throw HiresNotSent('not refined: could not cut the upscale into tiles ($e)');
   }
   final seed = int.tryParse(info.seed.trim());
-  // Each tile is asked for only what is in it, or every tile grows the
-  // prompt's whole subject again.
+  // No tile is asked for the prompt's subjects, or it grows a whole one of
+  // its own: a face in the sky.
   final prompts = await piecePrompts(
     state.core.call,
     path: upscaled,
@@ -933,6 +934,7 @@ Future<RemixTicket> _refineInTiles(
     boxes: [
       for (final t in plan) [t['x']!, t['y']!, t['x']! + t['w']!, t['y']! + t['h']!],
     ],
+    subjects: false,
   );
   final tickets = <RemixTicket>[];
   try {
@@ -945,7 +947,9 @@ Future<RemixTicket> _refineInTiles(
                 info: info,
                 prompt: prompts[i],
                 negative: info.negative,
-                seed: seed ?? 0,
+                // A seed to each tile: the same noise in every one draws
+                // the same shapes in every one.
+                seed: (seed ?? 0) + i,
                 randomSeed: seed == null,
                 count: 1,
                 width: plan[i]['w']!,
@@ -982,10 +986,12 @@ Future<RemixTicket> _refineInTiles(
         'source': original.path,
         'width': width,
         'height': height,
-        'overlap': overlap,
         'dest': merged,
         'tiles': [
-          for (var i = 0; i < plan.length; i++) {'path': back[i], ...plan[i]},
+          // Each with the tile as it was cut, which the core holds the
+          // redraw to: its detail is taken, a change of colour or a new
+          // thing drawn into it is not.
+          for (var i = 0; i < plan.length; i++) {'path': back[i], 'before': pieces[i], ...plan[i]},
         ],
       });
       yield RemixImage(await File(merged).readAsBytes());

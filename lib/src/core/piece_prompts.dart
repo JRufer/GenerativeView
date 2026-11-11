@@ -7,7 +7,12 @@
 /// only ask for quality, those about the look of the whole picture (its
 /// medium, style and light), the LoRA tags, and the phrases the content
 /// model sees in that part. Without the content model, the subjects are
-/// left out altogether, which is what tiled upscalers do anyway.
+/// left out altogether.
+///
+/// A tile of a hires fix never gets a subject at all. The content model
+/// sees "a girl" in a tile of her shoulder or her dress, and a server asked
+/// for a girl in a tile that size draws all of one, face included. A tile
+/// is redrawn lightly enough that the picture itself says what is in it.
 library;
 
 import 'detail_pass.dart' show DetailKind;
@@ -96,7 +101,8 @@ String pieceNegative(String negative, {DetailKind? kind}) {
 /// right, bottom in the pixels of the picture at [path]) shows, and makes
 /// a prompt for each. [kinds], when given, is each box's face or hand.
 /// Anything going wrong in the core leaves the subjects out, never the
-/// whole prompt in.
+/// whole prompt in. With [subjects] off they are left out of every part
+/// without asking (tiles of a hires fix).
 Future<List<String>> piecePrompts(
   Future<dynamic> Function(String method, Map<String, Object?> args) call, {
   required String path,
@@ -104,15 +110,17 @@ Future<List<String>> piecePrompts(
   required List<List<num>> boxes,
   List<DetailKind>? kinds,
   String extra = '',
+  bool subjects = true,
 }) async {
   Object? reply;
   try {
-    reply = await call('phrases_in_parts', {'path': path, 'prompt': prompt, 'boxes': boxes});
+    // With no boxes the core only marks the phrases, and looks at nothing.
+    reply = await call('phrases_in_parts', {'path': path, 'prompt': prompt, 'boxes': subjects ? boxes : const <List<num>>[]});
   } catch (_) {
     reply = null;
   }
   final phrases = piecePhrasesFrom(reply);
-  final seen = pieceSeenFrom(reply);
+  final seen = subjects ? pieceSeenFrom(reply) : null;
   final loras = loraTags(prompt);
   return [
     for (var i = 0; i < boxes.length; i++)
