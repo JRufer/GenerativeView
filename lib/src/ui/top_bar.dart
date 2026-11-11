@@ -336,7 +336,8 @@ class _TitleSearchAndTools extends StatelessWidget {
   double get _toolsWidth =>
       _barButton * 6 +
       (wide ? _sliderGap + _sliderIcon + _sliderWidth : 0) +
-      (wide && state.folder != null ? _barButton : 0);
+      // Usage stats and New picture.
+      (wide && state.folder != null ? _barButton * 2 : 0);
 
   @override
   Widget build(BuildContext context) {
