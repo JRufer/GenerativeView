@@ -503,7 +503,17 @@ Future<Map<String, dynamic>> _post(
   Object body, {
   Duration timeout = const Duration(seconds: 30),
 }) async {
-  final request = await client.postUrl(Uri.parse(url));
+  return _finishPost(await client.postUrl(Uri.parse(url)), url, body, timeout: timeout);
+}
+
+/// The rest of [_post], once the server has been reached: [body] sent on
+/// [request], and the answer.
+Future<Map<String, dynamic>> _finishPost(
+  HttpClientRequest request,
+  String url,
+  Object body, {
+  Duration timeout = const Duration(seconds: 30),
+}) async {
   request.headers.contentType = ContentType.json;
   request.add(utf8.encode(jsonEncode(body)));
   final response = await request.close().timeout(timeout);
@@ -1450,8 +1460,17 @@ Future<RemixTicket> _forge(HttpClient client, String base, Remix remix) async {
   // rest is waited for in the background. Its own client, since the one
   // passed in is closed as soon as this returns.
   final own = HttpClient()..connectionTimeout = const Duration(seconds: 8);
-  final pending = _post(own, '$base/sdapi/v1/$endpoint', payload, timeout: remixPatience)
-      .whenComplete(() => own.close(force: true));
+  final url = '$base/sdapi/v1/$endpoint';
+  // Reached first, however long that takes to fail: a server that is off
+  // is said to be off here, not found out about in the background.
+  final HttpClientRequest request;
+  try {
+    request = await own.postUrl(Uri.parse(url));
+  } catch (_) {
+    own.close(force: true);
+    rethrow;
+  }
+  final pending = _finishPost(request, url, payload, timeout: remixPatience).whenComplete(() => own.close(force: true));
   // Read by the stream below, or (if this throws first) not at all.
   pending.ignore();
   try {

@@ -32,7 +32,7 @@ Future<bool> offerToQueue(BuildContext context, AppState state, String kind, {in
         constraints: const BoxConstraints(maxWidth: 420),
         child: Text(
           'Add $what to the queue? ${renders == 1 ? 'It starts' : 'They start'} as soon as $name is back. '
-          '${_checksText(state, name)}; the round button at the bottom right checks now, or cancels.',
+          '${_checksText(state, name)}. The round button at the bottom right shows what is queued.',
           style: const TextStyle(fontSize: 13.5, height: 1.4, color: Palette.muted),
         ),
       ),

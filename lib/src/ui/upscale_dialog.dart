@@ -17,7 +17,7 @@ import 'sheet.dart';
 import '../core/detail_pass.dart';
 import 'detail_ui.dart';
 import '../detail_run.dart';
-import '../render_queue.dart' show detailPassFromJson, detailPassJson;
+import '../render_queue.dart' show detailPassFromJson, detailPassJson, mediaItemFromJson, mediaItemJson;
 import 'queue_offer.dart';
 
 /// Open the upscale panel for [item]: which model, how much bigger, and
@@ -870,21 +870,7 @@ class ServerUpscalePlan {
   final List<DetailRegion> skip;
 
   Map<String, Object?> toJson() => {
-    'items': [
-      for (final i in items)
-        {
-          'id': i.id,
-          'dir': i.dir,
-          'name': i.name,
-          'video': i.isVideo,
-          'width': i.width,
-          'height': i.height,
-          'mtime': i.mtime,
-          'size': i.size,
-          'duration_ms': i.durationMs,
-          'generated': i.generated,
-        },
-    ],
+    'items': [for (final i in items) mediaItemJson(i)],
     'server': server,
     'refine': refine,
     'model': model,
@@ -909,19 +895,7 @@ class ServerUpscalePlan {
     return ServerUpscalePlan(
       items: [
         for (final i in (j['items'] as List? ?? const []))
-          if (i is Map<String, dynamic>)
-            MediaItem(
-              id: whole(i['id']),
-              dir: i['dir'] as String? ?? '',
-              name: i['name'] as String? ?? '',
-              isVideo: i['video'] == true,
-              width: whole(i['width']),
-              height: whole(i['height']),
-              mtime: whole(i['mtime']),
-              size: whole(i['size']),
-              durationMs: whole(i['duration_ms']),
-              generated: i['generated'] != false,
-            ),
+          if (i is Map<String, dynamic>) mediaItemFromJson(i),
       ],
       server: j['server'] as String? ?? '',
       refine: j['refine'] == true,

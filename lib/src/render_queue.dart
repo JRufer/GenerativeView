@@ -81,6 +81,17 @@ class QueuedRender {
   /// The pictures kept beside it (to start from, and masks), by file name.
   final List<String> files;
 
+  /// The pictures it is made from, to show as thumbnails: the one remixed,
+  /// a Breed's parents, those a hires fix is of. None for a new picture.
+  List<MediaItem> get pictures => [
+    for (final i in (body['sources'] ?? body['items']) as List? ?? const [])
+      if (i is Map<String, dynamic>) mediaItemFromJson(i),
+  ];
+
+  /// What it sends, for a remix: the prompt, and the rest as kept.
+  Map<String, dynamic> get remix => body['remix'] is Map<String, dynamic> ? body['remix'] as Map<String, dynamic> : const {};
+  String get prompt => remix['prompt'] as String? ?? '';
+
   /// "Remix of fox.png": what is waiting, as the round button's card says it.
   String get title => switch (label) {
     'hires' => 'Hires fix of $name',
@@ -181,7 +192,8 @@ class RenderQueue {
   /// Queue [remix] for the server [kind]. What comes back is saved beside
   /// the picture at [path] (called [name]) or, for a new picture, in [dir];
   /// with [detail], faces and hands are redrawn on it first. [label] as
-  /// for [AppState.collectRemix]; [group] from [newGroup].
+  /// for [AppState.collectRemix]; [group] from [newGroup]. [sources] are
+  /// the pictures it is made from, to show in the queue.
   void addRemix(
     String kind,
     Remix remix, {
@@ -191,6 +203,7 @@ class RenderQueue {
     String label = 'remix',
     String? group,
     DetailPass? detail,
+    List<MediaItem> sources = const [],
   }) {
     final at = _newId();
     final files = <String>[];
@@ -217,6 +230,7 @@ class RenderQueue {
           'path': path,
           'name': name,
           'dir': dir,
+          'sources': [for (final i in sources) mediaItemJson(i)],
           if (detail != null && detail.on) 'detail': detailPassJson(detail),
         },
       ));
@@ -529,6 +543,37 @@ class RenderQueue {
             ),
     );
   }
+}
+
+/// A picture, as it is kept in the queue: enough to show its thumbnail
+/// and to hand it on to an upscale.
+Map<String, Object?> mediaItemJson(MediaItem i) => {
+  'id': i.id,
+  'dir': i.dir,
+  'name': i.name,
+  'video': i.isVideo,
+  'width': i.width,
+  'height': i.height,
+  'mtime': i.mtime,
+  'size': i.size,
+  'duration_ms': i.durationMs,
+  'generated': i.generated,
+};
+
+MediaItem mediaItemFromJson(Map<String, dynamic> i) {
+  int whole(Object? v) => v is num ? v.toInt() : 0;
+  return MediaItem(
+    id: whole(i['id']),
+    dir: i['dir'] as String? ?? '',
+    name: i['name'] as String? ?? '',
+    isVideo: i['video'] == true,
+    width: whole(i['width']),
+    height: whole(i['height']),
+    mtime: whole(i['mtime']),
+    size: whole(i['size']),
+    durationMs: whole(i['duration_ms']),
+    generated: i['generated'] != false,
+  );
 }
 
 /// A detail pass, as it is kept in the queue.

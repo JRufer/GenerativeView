@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../core/backends.dart' show backendNames;
 import '../render_queue.dart';
 import '../theme.dart';
+import 'queue_panel.dart';
 import 'upscale_dialog.dart' show scaleText;
 
 /// The blue of the activity button: a step brighter than the accent, so it
@@ -74,15 +75,8 @@ class _Activity {
   final List<QueuedRender> queued;
   final bool checking;
 
-  /// What is queued, one entry to cancel for each run: those queued
-  /// together (a Breed's pictures) are one.
-  List<List<QueuedRender>> get queuedRuns {
-    final byRun = <String, List<QueuedRender>>{};
-    for (final entry in queued) {
-      byRun.putIfAbsent(entry.group ?? entry.id, () => []).add(entry);
-    }
-    return byRun.values.toList();
-  }
+  /// Only renders waiting in the queue: nothing running, wrong or done.
+  bool get onlyQueued => queued.isNotEmpty && !busy && !anyDone && problems.isEmpty;
 
   /// How many renders the queue holds.
   int get queuedCount => queued.fold<int>(0, (n, e) => n + e.renders);
@@ -207,7 +201,11 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
   }
 
   void _tap(_Activity now) {
-    if (now.busy || now.doneBothKinds || now.problems.isNotEmpty || now.queued.isNotEmpty) {
+    if (now.onlyQueued) {
+      // Nothing else to choose between: straight to the queue.
+      if (_card.isShowing) setState(_card.hide);
+      openRenderQueue(context, state);
+    } else if (now.busy || now.doneBothKinds || now.problems.isNotEmpty || now.queued.isNotEmpty) {
       setState(_toggle);
     } else if (now.remixesDone.isNotEmpty) {
       state.showRemixes();
@@ -244,7 +242,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
     if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what, press and hold to dismiss';
     if (now.queued.isNotEmpty) {
       final n = now.queuedCount;
-      return '${n == 1 ? '1 render' : '$n renders'} queued until ${now.queuedFor} is online: tap to check now, or to cancel';
+      return '${n == 1 ? '1 render' : '$n renders'} queued until ${now.queuedFor} is online: tap to see the queue';
     }
     if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
     final what = now.remixesDone.isNotEmpty
@@ -341,7 +339,7 @@ class _RoundButton extends StatelessWidget {
     final ring = size - (compact ? 8 : 12);
     final failed = !busy && activity.problems.isNotEmpty;
     // Nothing running, wrong or done: only renders waiting for a server.
-    final waiting = !busy && !failed && !activity.anyDone && activity.queued.isNotEmpty;
+    final waiting = activity.onlyQueued;
     final icon = busy
         ? (activity.remixesRunning.isEmpty && activity.sending.isEmpty ? Icons.photo_size_select_large : Icons.auto_fix_high)
         : failed
@@ -524,25 +522,16 @@ class _ActivityCard extends StatelessWidget {
           },
           onDismiss: state.dismissDoneUpscales,
         ),
-      // Waiting for a server that was offline: checked for now, or dropped.
-      if (a.queued.isNotEmpty) _QueuedHeader(state: state, activity: a),
-      for (final run in a.queuedRuns)
-        _RunRow(
-          key: ValueKey<String>('activity-queued-${run.first.id}'),
-          label: () {
-            final n = run.fold<int>(0, (sum, e) => sum + e.renders);
-            return n > 1 ? '${run.first.title}, $n queued' : run.first.title;
-          }(),
-          onCancel: () => state.renderQueue.cancel(run.map((e) => e.id)),
-        ),
-      if (a.queuedRuns.length > 1)
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            key: const ValueKey<String>('activity-queued-cancel-all'),
-            onPressed: state.renderQueue.cancelAll,
-            child: const Text('Cancel all queued'),
-          ),
+      // Waiting for a server that was offline: looked at, and cancelled,
+      // in the queue's own panel.
+      if (a.queued.isNotEmpty)
+        _QueuedHeader(
+          state: state,
+          activity: a,
+          onView: () {
+            onGo();
+            openRenderQueue(context, state);
+          },
         ),
     ];
     if (a.problems.isNotEmpty) {
@@ -708,9 +697,12 @@ class _Pill extends StatelessWidget {
 /// Above the renders waiting in the queue: which server they wait for, how
 /// it is looked for, and a way to look now.
 class _QueuedHeader extends StatelessWidget {
-  const _QueuedHeader({required this.state, required this.activity});
+  const _QueuedHeader({required this.state, required this.activity, required this.onView});
   final AppState state;
   final _Activity activity;
+
+  /// Open the queue, to see what is in it and cancel from it.
+  final VoidCallback onView;
 
   @override
   Widget build(BuildContext context) {
@@ -719,37 +711,56 @@ class _QueuedHeader extends StatelessWidget {
     final how = queue.automatic ? 'Checked every ${everyText(queue.every.inSeconds)}.' : 'Not checked automatically.';
     return Container(
       key: const ValueKey<String>('activity-queued'),
-      padding: const EdgeInsets.only(left: 10, top: 6, bottom: 6, right: 4),
+      padding: const EdgeInsets.only(left: 10, top: 8, bottom: 2, right: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Palette.line),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.schedule, size: 16, color: Palette.muted),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${n == 1 ? '1 render' : '$n renders'} queued',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: Icon(Icons.schedule, size: 16, color: Palette.muted),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${n == 1 ? '1 render' : '$n renders'} queued',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Waiting for ${activity.queuedFor} to come online. $how',
+                      style: const TextStyle(fontSize: 12, color: Palette.muted, height: 1.3),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  'Waiting for ${activity.queuedFor} to come online. $how',
-                  style: const TextStyle(fontSize: 12, color: Palette.muted, height: 1.3),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const SizedBox(width: 4),
-          TextButton(
-            key: const ValueKey<String>('activity-queued-check'),
-            onPressed: activity.checking ? null : () => queue.check(asked: true),
-            child: Text(activity.checking ? 'Checking…' : 'Check now'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                key: const ValueKey<String>('activity-queued-check'),
+                onPressed: activity.checking ? null : () => queue.check(asked: true),
+                child: Text(activity.checking ? 'Checking…' : 'Check now'),
+              ),
+              TextButton(
+                key: const ValueKey<String>('activity-queued-view'),
+                onPressed: onView,
+                child: const Text('View queue'),
+              ),
+            ],
           ),
         ],
       ),

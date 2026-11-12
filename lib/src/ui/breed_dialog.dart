@@ -395,7 +395,7 @@ class _BreedPanelState extends State<BreedPanel> {
         if (!await offerToQueue(context, widget.state, kind, renders: unsent.length)) throw down;
         final group = unsent.length > 1 ? widget.state.renderQueue.newGroup() : null;
         for (final (parent, remix) in unsent) {
-          widget.state.renderQueue.addRemix(kind, remix, path: parent.path, name: parent.name, label: 'bred', group: group);
+          widget.state.renderQueue.addRemix(kind, remix, path: parent.path, name: parent.name, label: 'bred', group: group, sources: _parents);
         }
         if (!mounted) return;
         toast(context, queuedText(kind, unsent.length));

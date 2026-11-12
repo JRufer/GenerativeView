@@ -247,20 +247,25 @@ void main() {
       expect(entry.title, 'Remix of heron.png');
       expect(state.remixes.value, isEmpty);
 
-      // ---- on the round button: waiting, counted, with a way to check -----
+      // ---- on the round button: waiting, and counted ----------------------
       await pastToast(tester);
       expect(there('activity-button'), isTrue);
       expect(there('activity-queued-icon'), isTrue);
       expect(find.descendant(of: find.byKey(const ValueKey('activity-count')), matching: find.text('1')), findsOneWidget);
+
+      // ---- the queue itself: the picture, what it makes, and where --------
       await tester.tap(find.byKey(const ValueKey('activity-button')));
       await settle(tester);
-      expect(there('activity-queued'), isTrue);
-      expect(find.text('1 render queued'), findsOneWidget);
-      expect(find.textContaining('Not checked automatically'), findsOneWidget);
-      expect(there('activity-queued-${entry.id}'), isTrue);
+      expect(there('queue-status'), isTrue);
+      expect(find.textContaining('1 render waiting for Forge / A1111 to come online. Not checked automatically.'), findsOneWidget);
+      expect(there('queue-run-${entry.id}'), isTrue);
+      expect(find.byKey(ValueKey('queue-thumb-${heron.path}')), findsOneWidget);
+      expect(find.text('Remix of heron.png'), findsOneWidget);
+      expect(find.textContaining('a brass heron, studio light'), findsWidgets);
+      expect(find.textContaining(RegExp(r'^1 render · .* · Forge / A1111$')), findsOneWidget);
 
       // ---- checked while still off: it stays -----------------------------
-      await tester.tap(find.byKey(const ValueKey('activity-queued-check')));
+      await tester.tap(find.byKey(const ValueKey('queue-check')));
       await pumpUntil(tester, () => !state.renderQueue.checking.value, what: 'the check to finish');
       expect(state.renderQueue.queued.value, hasLength(1));
       expect(state.remixes.value, isEmpty);
@@ -268,13 +273,13 @@ void main() {
       // ---- the server comes up: the next check sends it -------------------
       final (base, paths, bodies) = await forge(tester);
       state.setBackendUrl('forge', base);
-      await pastToast(tester);
-      if (!there('activity-queued-check')) {
-        await tester.tap(find.byKey(const ValueKey('activity-button')));
-        await settle(tester);
-      }
-      await tester.tap(find.byKey(const ValueKey('activity-queued-check')));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('queue-check')));
       await pumpUntil(tester, () => state.remixes.value.any((j) => !j.running && j.saved.isNotEmpty), what: 'the queued remix to come back', timeout: const Duration(seconds: 60));
+      expect(find.textContaining('Nothing is queued'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close (Esc)'));
+      await settle(tester);
+      expect(there('queue-status'), isFalse);
       expect(state.renderQueue.queued.value, isEmpty);
       expect(paths, contains('/sdapi/v1/txt2img'));
       expect(bodies.where((b) => b.containsKey('prompt')).single['prompt'], contains('a brass heron, studio light'));
@@ -316,17 +321,30 @@ void main() {
         ),
         path: fox.path,
         name: fox.name,
-        group: group,
         detail: const DetailPass(faces: true),
+        sources: [fox],
       );
       state.renderQueue.addUpscale(ServerUpscalePlan(items: [fox], server: 'forge', refine: true, scale: 1));
-      expect(state.renderQueue.queued.value, hasLength(2));
-      expect(state.renderQueue.renders, 3);
+      // A Breed: two pictures from two parents, queued as one run.
+      final heron = named(state, 'heron.png');
+      for (final seed in [1, 2]) {
+        state.renderQueue.addRemix(
+          'forge',
+          Remix(info: info, prompt: 'a red fox, brass feathers', negative: '', seed: seed, randomSeed: false, count: 1, width: 512, height: 512),
+          path: fox.path,
+          name: fox.name,
+          label: 'bred',
+          group: group,
+          sources: [fox, heron],
+        );
+      }
+      expect(state.renderQueue.queued.value, hasLength(4));
+      expect(state.renderQueue.renders, 5);
       // On disk: each render, and the first one's picture and mask.
       List<String> kept() => [for (final f in dir.listSync()) f.uri.pathSegments.last]..sort();
       final first = state.renderQueue.queued.value.first;
       expect(kept(), containsAll(['${first.id}.json', '${first.id}-init.png', '${first.id}-mask.png']));
-      expect(kept(), hasLength(4));
+      expect(kept(), hasLength(6));
       await close(tester, state);
 
       // ---- the next run: back as they were --------------------------------
@@ -335,34 +353,59 @@ void main() {
       expect([for (final e in back) (e.kind, e.type, e.label, e.name, e.renders)], [
         ('forge', 'remix', 'remix', 'fox.png', 2),
         ('forge', 'upscale', 'hires', 'fox.png', 1),
+        ('forge', 'remix', 'bred', 'fox.png', 1),
+        ('forge', 'remix', 'bred', 'fox.png', 1),
       ]);
-      expect(back.first.group, group);
+      expect([for (final e in back) e.group], [null, null, group, group]);
       expect(back.first.id, first.id);
-      final remix = back.first.body['remix'] as Map<String, dynamic>;
+      final remix = back.first.remix;
       expect((remix['prompt'], remix['seed'], remix['count'], remix['width'], remix['height'], remix['steps'], remix['cfg']), ('a red fox at dusk', 11, 2, 512, 768, 20, 5.5));
       expect(((remix['loras'] as List).single as Map)['on'], isFalse);
       expect((remix['init'] as Map)['strength'], 0.45);
       expect(((remix['info'] as Map)['prompt'] as String), contains('a red fox in the snow'));
       expect((back.first.body['detail'] as Map)['faces'], isTrue);
       expect(back.first.body['path'], fox.path);
-      // Shown on the round button, the pair as two runs.
+      expect([for (final p in back.first.pictures) p.path], [fox.path]);
+      expect([for (final p in back.last.pictures) p.name], ['fox.png', 'heron.png']);
+
+      // ---- the queue: each run with its pictures and what it makes --------
       await pastToast(tester);
       expect(there('activity-queued-icon'), isTrue);
       await tester.tap(find.byKey(const ValueKey('activity-button')));
       await settle(tester);
-      expect(find.text('3 renders queued'), findsOneWidget);
-      expect(find.text('Remix of fox.png, 2 queued'), findsOneWidget);
+      expect(find.textContaining('5 renders waiting for Forge / A1111'), findsOneWidget);
+      // A remix: its picture, its prompt, and how it is made.
+      expect(find.text('Remix of fox.png'), findsOneWidget);
+      expect(find.text('a red fox at dusk'), findsOneWidget);
+      expect(find.text('2 renders · 512 × 768 · image to image · faces and hands · Forge / A1111'), findsOneWidget);
+      // A hires fix: its picture, and the steps.
       expect(find.text('Hires fix of fox.png'), findsOneWidget);
+      expect(find.text('Refined on the server at its own size'), findsOneWidget);
+      expect(find.text('1 render · Forge / A1111'), findsOneWidget);
+      // A Breed: one run, with every parent.
+      expect(find.text('Breed of 2 pictures'), findsOneWidget);
+      expect(find.text('2 renders · 512 × 512 · Forge / A1111'), findsOneWidget);
+      expect(find.byKey(ValueKey('queue-thumb-${fox.path}')), findsNWidgets(3));
+      expect(find.byKey(ValueKey('queue-thumb-${heron.path}')), findsOneWidget);
 
       // ---- one cancelled, then the rest: nothing left, on disk either -----
-      await tester.tap(find.descendant(of: find.byKey(ValueKey('activity-queued-${back.last.id}')), matching: find.byType(IconButton)));
+      await tester.tap(find.byKey(ValueKey('queue-cancel-${back[1].id}')));
+      await settle(tester);
+      expect([for (final e in state.renderQueue.queued.value) e.label], ['remix', 'bred', 'bred']);
+      expect(find.text('Hires fix of fox.png'), findsNothing);
+      expect(kept(), hasLength(5));
+      // The Breed goes as one.
+      await tester.tap(find.byKey(ValueKey('queue-cancel-${back[2].id}')));
       await settle(tester);
       expect(state.renderQueue.queued.value.single.id, first.id);
       expect(kept(), hasLength(3));
-      state.renderQueue.cancelAll();
+      await tester.tap(find.byKey(ValueKey('queue-cancel-${first.id}')));
       await settle(tester);
       expect(state.renderQueue.queued.value, isEmpty);
       expect(kept(), isEmpty);
+      expect(find.textContaining('Nothing is queued'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close (Esc)'));
+      await settle(tester);
       expect(there('activity-button'), isFalse);
 
       state.setBackendUrl('forge', '');

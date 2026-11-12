@@ -794,6 +794,7 @@ class _RemixPanelState extends State<RemixPanel> {
             label: item != null ? 'remix' : 'new',
             group: group,
             detail: _detail.on ? _detail : null,
+            sources: [?item],
           );
         }
         if (!mounted) return true;
