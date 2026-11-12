@@ -17,6 +17,8 @@ import 'sheet.dart';
 import '../core/detail_pass.dart';
 import 'detail_ui.dart';
 import '../detail_run.dart';
+import '../render_queue.dart' show detailPassFromJson, detailPassJson;
+import 'queue_offer.dart';
 
 /// Open the upscale panel for [item]: which model, how much bigger, and
 /// what to do with the metadata. The upscale itself runs on this device in
@@ -184,63 +186,83 @@ class _UpscalePanelState extends State<UpscalePanel> {
     final detail = _detailOn && _server != null ? _detail : null;
     final skip = [for (final i in _detail.skipped) if (i < _found.length) _found[i]];
     final fixOn = _server;
+    // What a server has a part in, if anything does: a hires fix, or faces
+    // and hands redrawn, on the pictures as they are or on an upscale made
+    // here first.
+    ServerUpscalePlan? plan;
     if (_detailOnly && fixOn != null) {
       // Only the detail pass: the picture itself goes, nothing upscaled.
-      unawaited(state.startWithoutUpscale(
-        widget.items,
-        (original, path) => runDetailOn(state, original, path, kind: fixOn, pass: _detail, skip: widget.items.length == 1 ? skip : const []),
-        label: 'faces and hands on ${backendNames[fixOn]}',
-      ));
-      if (mounted) Navigator.of(context).maybePop();
-      return;
-    }
-    if (server == null && detail != null && fixOn != null) {
+      plan = ServerUpscalePlan(items: widget.items, server: fixOn, refine: false, detail: _detail, skip: skip);
+    } else if (server == null && detail != null && fixOn != null) {
       // Upscaled here, then faces and hands redrawn on the upscale, which
       // is not kept without them.
       if (factor == null) {
         setState(() => _busy = false);
         return;
       }
-      await state.startUpscales(
-        widget.items,
+      plan = ServerUpscalePlan(
+        items: widget.items,
+        server: fixOn,
+        refine: false,
         model: model!.id,
         factor: factor,
         keepMetadata: _keepMetadata,
-        then: (original, upscaled) => runDetailOn(state, original, upscaled, kind: fixOn, pass: detail, skip: widget.items.length == 1 ? skip : const []),
-        thenLabel: 'then faces and hands on ${backendNames[fixOn]}',
+        detail: detail,
+        skip: skip,
       );
-      if (mounted) Navigator.of(context).maybePop();
-      return;
+    } else if (server != null) {
+      plan = ServerUpscalePlan(
+        items: widget.items,
+        server: server,
+        refine: true,
+        // At its own size the picture itself goes, and nothing is made
+        // here. Otherwise the upscale here is made at the size the server
+        // redraws at, so what is sent is the model's detail, not a
+        // stretched picture.
+        model: _hiresScale <= 1 ? null : model!.id,
+        factor: _hiresScale,
+        keepMetadata: _keepMetadata,
+        strength: _hiresStrength,
+        scale: _hiresScale,
+        tiles: _tileMode,
+        tile: _tile,
+        overlap: _overlap,
+        detail: detail,
+        skip: skip,
+      );
     }
-    if (server == null) {
+    if (plan == null) {
       if (factor == null) {
         setState(() => _busy = false);
         return;
       }
       await widget.state.startUpscales(widget.items, model: model!.id, factor: factor, keepMetadata: _keepMetadata);
     } else {
-      final strength = _hiresStrength;
-      final scale = _hiresScale;
-      final (tileMode, tile, overlap) = (_tileMode, _tile, _overlap);
-      Future<String?> refine(MediaItem original, String upscaled) =>
-          refineUpscale(state, original, upscaled,
-              kind: server, strength: strength, scale: scale, tiles: tileMode, tile: tile, overlap: overlap,
-              detail: detail, skip: widget.items.length == 1 ? skip : const []);
-      if (scale <= 1) {
-        // At its own size: the picture itself goes, nothing is made here.
-        unawaited(state.startWithoutUpscale(widget.items, refine, label: 'refining on ${backendNames[server]}'));
-      } else {
-        await state.startUpscales(
-          widget.items,
-          model: model!.id,
-          // The upscale here is made at the size the server redraws at, so
-          // what is sent is the model's detail, not a stretched picture.
-          factor: scale,
-          keepMetadata: _keepMetadata,
-          then: refine,
-          thenLabel: 'then refined on ${backendNames[server]}',
-        );
+      // Asked first whether it is there: an upscale made here for a server
+      // that is off would only be thrown away.
+      BackendOffline? down;
+      try {
+        await probeBackend(plan.server, state.backendUrls[plan.server] ?? '');
+      } on BackendOffline catch (e) {
+        down = e;
+      } catch (_) {
+        // There, if not well: sending says what is wrong.
       }
+      if (!mounted) return;
+      if (down != null) {
+        final queue = await offerToQueue(context, state, plan.server, renders: widget.items.length);
+        if (!mounted) return;
+        if (!queue) {
+          setState(() => _busy = false);
+          toast(context, '$down');
+          return;
+        }
+        state.renderQueue.addUpscale(plan);
+        toast(context, queuedText(plan.server, widget.items.length));
+        Navigator.of(context).maybePop();
+        return;
+      }
+      await startServerUpscale(state, plan);
     }
     if (mounted) Navigator.of(context).maybePop();
   }
@@ -798,6 +820,163 @@ String? madeOn(String source) => switch (source) {
   'a1111' || 'forge' => 'forge',
   _ => null,
 };
+
+/// What an upscale does with a server: a hires fix, or faces and hands
+/// redrawn, on [items] as they are or on an upscale of each made here
+/// first. All of it in one piece, so it can be started now or kept in the
+/// render queue until the server is online.
+class ServerUpscalePlan {
+  const ServerUpscalePlan({
+    required this.items,
+    required this.server,
+    required this.refine,
+    this.model,
+    this.factor = 1,
+    this.keepMetadata = true,
+    this.strength = hiresDefaultStrength,
+    this.scale = 1,
+    this.tiles = TileMode.auto,
+    this.tile = defaultTileSize,
+    this.overlap = defaultTileOverlap,
+    this.detail,
+    this.skip = const [],
+  });
+
+  final List<MediaItem> items;
+
+  /// The server's kind: `comfyui`, `invokeai` or `forge`.
+  final String server;
+
+  /// A hires fix; otherwise only the [detail] pass.
+  final bool refine;
+
+  /// The model each picture is upscaled with here first, [factor] times;
+  /// null to send the pictures as they are.
+  final String? model;
+  final double factor;
+  final bool keepMetadata;
+
+  /// The hires fix: how much is redrawn, how much bigger than the
+  /// original, and how it is cut into tiles.
+  final double strength;
+  final double scale;
+  final TileMode tiles;
+  final int tile;
+  final int overlap;
+
+  /// Faces and hands redrawn too; the regions in [skip] left alone (only
+  /// for a single picture: they are places in that picture).
+  final DetailPass? detail;
+  final List<DetailRegion> skip;
+
+  Map<String, Object?> toJson() => {
+    'items': [
+      for (final i in items)
+        {
+          'id': i.id,
+          'dir': i.dir,
+          'name': i.name,
+          'video': i.isVideo,
+          'width': i.width,
+          'height': i.height,
+          'mtime': i.mtime,
+          'size': i.size,
+          'duration_ms': i.durationMs,
+          'generated': i.generated,
+        },
+    ],
+    'server': server,
+    'refine': refine,
+    'model': model,
+    'factor': factor,
+    'keep_metadata': keepMetadata,
+    'strength': strength,
+    'scale': scale,
+    'tiles': tiles.name,
+    'tile': tile,
+    'overlap': overlap,
+    'detail': detail == null ? null : detailPassJson(detail!),
+    'skip': [
+      for (final r in skip)
+        {'kind': r.kind.name, 'box': [r.box.left, r.box.top, r.box.right, r.box.bottom], 'score': r.score},
+    ],
+  };
+
+  factory ServerUpscalePlan.fromJson(Map<String, dynamic> j) {
+    int whole(Object? v) => v is num ? v.toInt() : 0;
+    double number(Object? v, double fallback) => v is num ? v.toDouble() : fallback;
+    final detail = j['detail'];
+    return ServerUpscalePlan(
+      items: [
+        for (final i in (j['items'] as List? ?? const []))
+          if (i is Map<String, dynamic>)
+            MediaItem(
+              id: whole(i['id']),
+              dir: i['dir'] as String? ?? '',
+              name: i['name'] as String? ?? '',
+              isVideo: i['video'] == true,
+              width: whole(i['width']),
+              height: whole(i['height']),
+              mtime: whole(i['mtime']),
+              size: whole(i['size']),
+              durationMs: whole(i['duration_ms']),
+              generated: i['generated'] != false,
+            ),
+      ],
+      server: j['server'] as String? ?? '',
+      refine: j['refine'] == true,
+      model: j['model'] as String?,
+      factor: number(j['factor'], 1),
+      keepMetadata: j['keep_metadata'] != false,
+      strength: number(j['strength'], hiresDefaultStrength),
+      scale: number(j['scale'], 1),
+      tiles: TileMode.values.asNameMap()[j['tiles']] ?? TileMode.auto,
+      tile: j['tile'] is num ? whole(j['tile']) : defaultTileSize,
+      overlap: j['overlap'] is num ? whole(j['overlap']) : defaultTileOverlap,
+      detail: detail is Map<String, dynamic> ? detailPassFromJson(detail) : null,
+      skip: [
+        for (final r in (j['skip'] as List? ?? const []))
+          if (r is Map<String, dynamic> && r['box'] is List && (r['box'] as List).length == 4)
+            DetailRegion(
+              DetailKind.values.asNameMap()[r['kind']] ?? DetailKind.face,
+              Rect.fromLTRB(
+                number((r['box'] as List)[0], 0),
+                number((r['box'] as List)[1], 0),
+                number((r['box'] as List)[2], 0),
+                number((r['box'] as List)[3], 0),
+              ),
+              number(r['score'], 0),
+            ),
+      ],
+    );
+  }
+}
+
+/// Carry out [plan]: each picture upscaled here first when the plan has a
+/// model, then sent to the server. How it goes shows on the round button.
+Future<void> startServerUpscale(AppState state, ServerUpscalePlan plan) async {
+  final server = plan.server;
+  final name = backendNames[server] ?? server;
+  final skip = plan.items.length == 1 ? plan.skip : const <DetailRegion>[];
+  final model = plan.model;
+  final UpscaleThen then;
+  final String label;
+  if (plan.refine) {
+    then = (original, upscaled) => refineUpscale(state, original, upscaled,
+        kind: server, strength: plan.strength, scale: plan.scale, tiles: plan.tiles, tile: plan.tile, overlap: plan.overlap,
+        detail: plan.detail, skip: skip);
+    label = model == null ? 'refining on $name' : 'then refined on $name';
+  } else {
+    final pass = plan.detail ?? const DetailPass();
+    then = (original, path) => runDetailOn(state, original, path, kind: server, pass: pass, skip: skip);
+    label = model == null ? 'faces and hands on $name' : 'then faces and hands on $name';
+  }
+  if (model == null) {
+    unawaited(state.startWithoutUpscale(plan.items, then, label: label));
+  } else {
+    await state.startUpscales(plan.items, model: model, factor: plan.factor, keepMetadata: plan.keepMetadata, then: then, thenLabel: label);
+  }
+}
 
 /// Why a hires fix was not sent, though its upscale was made.
 class HiresNotSent implements Exception {

@@ -284,6 +284,12 @@ class BackendException implements Exception {
   String toString() => message;
 }
 
+/// The server could not be reached at all: it is off, asleep or not on
+/// this network. What was asked of it can wait for it in the render queue.
+class BackendOffline extends BackendException {
+  BackendOffline(super.message);
+}
+
 /// The backends, by the key their address is saved under.
 const Map<String, String> backendNames = {
   'comfyui': 'ComfyUI',
@@ -431,9 +437,9 @@ Future<RemixTicket> sendRemix(String kind, String base, Remix remix) async {
       _ => throw BackendException('Unknown backend $kind'),
     };
   } on SocketException catch (e) {
-    throw BackendException('Could not reach ${backendNames[kind]} at $base (${e.message}).');
+    throw BackendOffline('Could not reach ${backendNames[kind]} at $base (${e.message}).');
   } on TimeoutException {
-    throw BackendException('${backendNames[kind]} at $base did not answer.');
+    throw BackendOffline('${backendNames[kind]} at $base did not answer.');
   } finally {
     // Not forced: Forge may still be sending its answer.
     client.close();
@@ -457,9 +463,9 @@ Future<String> probeBackend(String kind, String base) async {
       _ => 'Model: ${reply['sd_model_checkpoint'] ?? 'unknown'}',
     };
   } on SocketException catch (e) {
-    throw BackendException('Could not reach $base (${e.message}).');
+    throw BackendOffline('Could not reach $base (${e.message}).');
   } on TimeoutException {
-    throw BackendException('$base did not answer.');
+    throw BackendOffline('$base did not answer.');
   } finally {
     client.close(force: true);
   }

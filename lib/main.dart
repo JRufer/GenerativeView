@@ -50,6 +50,7 @@ Future<void> main(List<String> args) async {
       thumbs: thumbs,
       pollMs: pollIntervalMs,
       videoPlayback: videoPlayback,
+      queueDir: '${dirs.data}/queue',
     );
     // `generativeview /some/folder` opens that folder; `generativeview
     // picture.png` (what a double-click in the file manager runs) opens the
@@ -89,6 +90,10 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
   RemixAlerts? _remixAlerts;
   UpdateAnnouncer? _updates;
 
+  /// Back on screen, an offline server is looked for at once: the checks
+  /// may not have run while the app was away.
+  AppLifecycleListener? _life;
+
   @override
   void initState() {
     super.initState();
@@ -98,6 +103,7 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
     if (state != null) {
       _mouse = MouseNavigation(state: state, routes: _routes)..attach();
       _remixAlerts = RemixAlerts(state)..attach();
+      _life = AppLifecycleListener(onResume: state.renderQueue.appResumed);
     }
     final updater = appUpdater;
     if (updater != null) _updates = UpdateAnnouncer(updater, appNavigator)..attach();
@@ -108,6 +114,7 @@ class _GenerativeViewAppState extends State<GenerativeViewApp> {
     _mouse?.detach();
     _remixAlerts?.detach();
     _updates?.detach();
+    _life?.dispose();
     super.dispose();
   }
 

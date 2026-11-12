@@ -356,6 +356,35 @@ class GenInfo {
     );
   }
 
+  /// As [GenInfo.fromJson] reads it back: to keep a recipe on disk until
+  /// the server it is for is online again.
+  Map<String, Object?> toJson() {
+    List<List<String>> pairs(List<MapEntry<String, String>> list) => [
+      for (final e in list) [e.key, e.value],
+    ];
+    return {
+      'source': source,
+      'prompt': prompt,
+      'negative': negative,
+      'seed': seed,
+      'model': model,
+      'models': [
+        for (final m in models) {'kind': m.kind, 'name': m.name, 'hash': m.hash},
+      ],
+      'loras': [
+        for (final l in loras) {'name': l.name, 'weight': l.weight, 'weight_clip': l.weightClip, 'hash': l.hash},
+      ],
+      'params': pairs(params),
+      'nodes': [
+        for (final n in nodes) {'id': n.id, 'class': n.type, 'title': n.title, 'inputs': pairs(n.inputs)},
+      ],
+      'raw': pairs(raw),
+      'width': width,
+      'height': height,
+      'duration_ms': durationMs,
+    };
+  }
+
   static String sourceLabel(String source) => switch (source) {
     'comfyui' => 'ComfyUI',
     'invokeai' => 'InvokeAI',

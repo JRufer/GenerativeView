@@ -21,6 +21,7 @@ import 'core/native_core.dart';
 import 'core/taste.dart';
 import 'core/wildcards.dart' show wordListsFromJson;
 import 'core/thumb_cache.dart';
+import 'render_queue.dart';
 import 'platform.dart' show PasteSource, TrashOutcome, scanMediaFiles, sharedFiles, trashFiles;
 
 enum ViewMode { grid, focus }
@@ -171,6 +172,7 @@ class AppState extends ChangeNotifier {
     this.modelSource,
     this.modelFiles,
     this.contentBar,
+    this.queueDir,
   }) {
     _events = core.events.listen(_onEvent);
     jxlPixels = core.jxlPixels;
@@ -203,6 +205,13 @@ class AppState extends ChangeNotifier {
   double? contentBar;
 
   late final StreamSubscription<Map<String, dynamic>> _events;
+
+  /// Where renders queued for an offline server are kept between runs of
+  /// the app; null for a folder that is not read back from.
+  final String? queueDir;
+
+  /// Renders asked for while their server was offline, waiting for it.
+  late final RenderQueue renderQueue = RenderQueue(this, dir: queueDir);
 
   /// Short messages for the user ("Saved fox_up4x.png"), shown as toasts by
   /// the home page.
@@ -465,6 +474,7 @@ class AppState extends ChangeNotifier {
     dimRejected = prefFlag('pref_dim_rejected', true);
     remixPollEvery = Duration(seconds: prefNumber('pref_poll', 2).round());
     remixPatience = Duration(hours: prefNumber('pref_patience', 3).round());
+    renderQueue.reschedule();
   }
 
   /// Saved parts of recipes, kept with the app's settings rather than in any
@@ -706,6 +716,7 @@ class AppState extends ChangeNotifier {
     _sharedIn ??= sharedFiles.listen((paths) => unawaited(showShared(paths)));
     notesTick.addListener(_smartSoon);
     _resumeRemixes(saved['pending_remixes']);
+    renderQueue.restore();
   }
 
   StreamSubscription<List<String>>? _sharedIn;
@@ -2467,6 +2478,11 @@ class AppState extends ChangeNotifier {
   void collectRemix(MediaItem original, RemixTicket ticket, {String label = 'remix', String? batch}) =>
       _collectRemix(original.path, original.name, ticket, label: label, batch: batch);
 
+  /// [collectRemix] for a picture known only by its [path] and [name]: one
+  /// queued before the app was last closed.
+  void collectRemixAt(String path, String name, RemixTicket ticket, {String label = 'remix', String? batch}) =>
+      _collectRemix(path, name, ticket, label: label, batch: batch);
+
   /// Save each picture [ticket] brings back in [dir], as
   /// `<words of the prompt>_new1.png` and so on: pictures made from nothing
   /// but a prompt and settings, which have no original to sit beside.
@@ -3153,6 +3169,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    renderQueue.dispose();
     final finder = regionFinder;
     if (finder is DetailModels) finder.dispose();
     _selectModel?.dispose();

@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../core/media_image.dart';
 import '../core/models.dart';
 import '../desktop_integration.dart';
+import '../render_queue.dart';
 import '../theme.dart';
 import 'meta_panel.dart' show toast;
 import '../platform.dart' show trashAsksFirst;
@@ -340,6 +341,24 @@ class _Remix extends StatelessWidget {
       _Slide(state, 'pref_poll', 'Check servers for results every', 2, 1, 30, 29, ' s'),
       _Slide(state, 'pref_patience', 'Give up on a job after', 3, 1, 24, 23, ' h'),
       _Slide(state, 'pref_keep_days', 'Keep waiting for unfinished jobs for', 7, 1, 30, 29, ' days'),
+      _Pref(
+        state,
+        queueAutoPref,
+        'Look for an offline server automatically',
+        true,
+        detail: 'Renders queued while a server was offline start once it answers. Off, it is only looked for from "Check now" on the round button.',
+      ),
+      _Choice(
+        id: queuePollPref,
+        title: 'Look for an offline server every',
+        detail: 'How often the app asks a server with renders queued for it whether it is back, while the app is open.',
+        value: () {
+          final seconds = state.prefNumber(queuePollPref, queuePollDefault.toDouble()).round();
+          return '${queuePollChoices.contains(seconds) ? seconds : queuePollDefault}';
+        }(),
+        options: {for (final s in queuePollChoices) '$s': everyText(s)},
+        onChanged: (v) => state.setPref(queuePollPref, v),
+      ),
     ],
   );
 }

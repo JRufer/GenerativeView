@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/backends.dart' show backendNames;
+import '../render_queue.dart';
 import '../theme.dart';
 import 'upscale_dialog.dart' show scaleText;
 
@@ -51,7 +53,9 @@ class _Activity {
         waiting = state.upscalesWaiting.value,
         upscaled = state.upscaled.value,
         sending = state.afterUpscale.value,
-        problems = state.problems.value;
+        problems = state.problems.value,
+        queued = state.renderQueue.queued.value,
+        checking = state.renderQueue.checking.value;
 
   final List<RemixJob> remixesRunning;
   final List<RemixJob> remixesDone;
@@ -65,13 +69,34 @@ class _Activity {
   /// What went wrong, kept until put away.
   final List<String> problems;
 
+  /// Renders waiting for a server that was offline when they were asked
+  /// for, and whether the servers are being asked just now.
+  final List<QueuedRender> queued;
+  final bool checking;
+
+  /// What is queued, one entry to cancel for each run: those queued
+  /// together (a Breed's pictures) are one.
+  List<List<QueuedRender>> get queuedRuns {
+    final byRun = <String, List<QueuedRender>>{};
+    for (final entry in queued) {
+      byRun.putIfAbsent(entry.group ?? entry.id, () => []).add(entry);
+    }
+    return byRun.values.toList();
+  }
+
+  /// How many renders the queue holds.
+  int get queuedCount => queued.fold<int>(0, (n, e) => n + e.renders);
+
+  /// The servers waited for: "InvokeAI", or "InvokeAI and ComfyUI".
+  String get queuedFor => {for (final e in queued) backendNames[e.kind] ?? e.kind}.join(' and ');
+
   bool get busy => remixesRunning.isNotEmpty || upscales.isNotEmpty || waiting > 0 || sending.isNotEmpty;
   /// Every run that is done made new pictures, not remixes: they are shown
   /// in their own collection.
   bool get onlyNewDone => remixesDone.isNotEmpty && remixesDone.every((j) => j.label == 'new');
 
   bool get anyDone => remixesDone.isNotEmpty || upscaled.isNotEmpty;
-  bool get none => !busy && !anyDone && problems.isEmpty;
+  bool get none => !busy && !anyDone && problems.isEmpty && queued.isEmpty;
 
   /// What is running, one entry to cancel for each run: a Breed's pictures
   /// are one run, however many.
@@ -89,9 +114,13 @@ class _Activity {
   /// Renders still to finish, for the badge: each picture a remix still
   /// waits on from the server (a remix of 4 counts 4, then 3 as one comes
   /// back), each hires fix being sent, and each upscale running or waiting.
-  /// What is done is not counted.
+  /// What is done is not counted; what waits in the queue for its server is.
   int get count =>
-      remixesRunning.fold<int>(0, (n, j) => n + (j.remaining < 1 ? 1 : j.remaining)) + upscales.length + waiting + sending.length;
+      remixesRunning.fold<int>(0, (n, j) => n + (j.remaining < 1 ? 1 : j.remaining)) +
+      upscales.length +
+      waiting +
+      sending.length +
+      queuedCount;
 
   /// One upscale and nothing else: its progress can be shown on the ring.
   double? get progress =>
@@ -128,7 +157,16 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
   AppState get state => widget.state;
 
   late final Listenable _changes = Listenable.merge(
-    [state.remixes, state.upscales, state.upscalesWaiting, state.upscaled, state.afterUpscale, state.problems],
+    [
+      state.remixes,
+      state.upscales,
+      state.upscalesWaiting,
+      state.upscaled,
+      state.afterUpscale,
+      state.problems,
+      state.renderQueue.queued,
+      state.renderQueue.checking,
+    ],
   );
 
   @override
@@ -169,7 +207,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
   }
 
   void _tap(_Activity now) {
-    if (now.busy || now.doneBothKinds || now.problems.isNotEmpty) {
+    if (now.busy || now.doneBothKinds || now.problems.isNotEmpty || now.queued.isNotEmpty) {
       setState(_toggle);
     } else if (now.remixesDone.isNotEmpty) {
       state.showRemixes();
@@ -181,7 +219,7 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
   /// Held while something runs, the card opens to cancel it; otherwise
   /// what is finished is put away.
   void _hold(_Activity now) {
-    if (now.busy) {
+    if (now.busy || now.queued.isNotEmpty) {
       if (!_card.isShowing) setState(_card.show);
     } else {
       _dismissDone();
@@ -204,6 +242,10 @@ class _ActivityButtonState extends State<ActivityButton> with SingleTickerProvid
       return 'Running ${parts.join(' and ')}: tap for details, or to cancel';
     }
     if (now.problems.isNotEmpty) return 'Something went wrong: tap to see what, press and hold to dismiss';
+    if (now.queued.isNotEmpty) {
+      final n = now.queuedCount;
+      return '${n == 1 ? '1 render' : '$n renders'} queued until ${now.queuedFor} is online: tap to check now, or to cancel';
+    }
     if (now.doneBothKinds) return 'Remixes and upscales done: tap to choose';
     final what = now.remixesDone.isNotEmpty
         ? (now.onlyNewDone
@@ -298,10 +340,14 @@ class _RoundButton extends StatelessWidget {
     final busy = activity.busy;
     final ring = size - (compact ? 8 : 12);
     final failed = !busy && activity.problems.isNotEmpty;
+    // Nothing running, wrong or done: only renders waiting for a server.
+    final waiting = !busy && !failed && !activity.anyDone && activity.queued.isNotEmpty;
     final icon = busy
         ? (activity.remixesRunning.isEmpty && activity.sending.isEmpty ? Icons.photo_size_select_large : Icons.auto_fix_high)
         : failed
         ? Icons.priority_high
+        : waiting
+        ? Icons.schedule
         : Icons.check;
     final Widget face = Stack(
       alignment: Alignment.center,
@@ -320,7 +366,9 @@ class _RoundButton extends StatelessWidget {
           ),
         Icon(
           icon,
-          key: ValueKey<String>(busy ? 'activity-running-icon' : (failed ? 'activity-problem-icon' : 'activity-done-icon')),
+          key: ValueKey<String>(
+            busy ? 'activity-running-icon' : (failed ? 'activity-problem-icon' : (waiting ? 'activity-queued-icon' : 'activity-done-icon')),
+          ),
           size: busy ? (compact ? 14 : 18) : (compact ? 19 : 26),
           color: Colors.white,
         ),
@@ -344,8 +392,8 @@ class _RoundButton extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         circle,
-        // How many renders are left, while any are.
-        if (busy && count > 0)
+        // How many renders are left, while any are: running, or queued.
+        if ((busy || activity.queued.isNotEmpty) && count > 0)
           Positioned(
             right: compact ? -4 : -2,
             top: compact ? -4 : -2,
@@ -475,6 +523,26 @@ class _ActivityCard extends StatelessWidget {
             state.showUpscales();
           },
           onDismiss: state.dismissDoneUpscales,
+        ),
+      // Waiting for a server that was offline: checked for now, or dropped.
+      if (a.queued.isNotEmpty) _QueuedHeader(state: state, activity: a),
+      for (final run in a.queuedRuns)
+        _RunRow(
+          key: ValueKey<String>('activity-queued-${run.first.id}'),
+          label: () {
+            final n = run.fold<int>(0, (sum, e) => sum + e.renders);
+            return n > 1 ? '${run.first.title}, $n queued' : run.first.title;
+          }(),
+          onCancel: () => state.renderQueue.cancel(run.map((e) => e.id)),
+        ),
+      if (a.queuedRuns.length > 1)
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            key: const ValueKey<String>('activity-queued-cancel-all'),
+            onPressed: state.renderQueue.cancelAll,
+            child: const Text('Cancel all queued'),
+          ),
         ),
     ];
     if (a.problems.isNotEmpty) {
@@ -632,6 +700,58 @@ class _Pill extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Above the renders waiting in the queue: which server they wait for, how
+/// it is looked for, and a way to look now.
+class _QueuedHeader extends StatelessWidget {
+  const _QueuedHeader({required this.state, required this.activity});
+  final AppState state;
+  final _Activity activity;
+
+  @override
+  Widget build(BuildContext context) {
+    final queue = state.renderQueue;
+    final n = activity.queuedCount;
+    final how = queue.automatic ? 'Checked every ${everyText(queue.every.inSeconds)}.' : 'Not checked automatically.';
+    return Container(
+      key: const ValueKey<String>('activity-queued'),
+      padding: const EdgeInsets.only(left: 10, top: 6, bottom: 6, right: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Palette.line),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule, size: 16, color: Palette.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${n == 1 ? '1 render' : '$n renders'} queued',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Waiting for ${activity.queuedFor} to come online. $how',
+                  style: const TextStyle(fontSize: 12, color: Palette.muted, height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 4),
+          TextButton(
+            key: const ValueKey<String>('activity-queued-check'),
+            onPressed: activity.checking ? null : () => queue.check(asked: true),
+            child: Text(activity.checking ? 'Checking…' : 'Check now'),
+          ),
+        ],
       ),
     );
   }
