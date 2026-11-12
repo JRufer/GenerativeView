@@ -23,6 +23,7 @@ import '../detail_run.dart';
 import 'mask_editor.dart';
 import 'meta_panel.dart' show copyText, toast;
 import 'presets_ui.dart';
+import 'queue_offer.dart';
 import 'prompt_editor.dart';
 import 'kit.dart';
 import 'lora_picker.dart';
@@ -776,8 +777,41 @@ class _RemixPanelState extends State<RemixPanel> {
       RemixTicket fixed(RemixTicket t, String prompt, String negative) => _detail.on
           ? withDetailPass(t, widget.state, kind: kind, base: base, info: info, prompt: prompt, negative: negative, pass: _detail)
           : t;
+      // The server is off: what was to be sent waits for it in the queue
+      // instead, if wanted. True once it is queued and the panel closed.
+      Future<bool> queue(List<Remix> unsent) async {
+        if (!mounted) return false;
+        final renders = unsent.fold<int>(0, (n, r) => n + r.count);
+        if (!await offerToQueue(context, widget.state, kind, renders: renders)) return false;
+        final group = unsent.length > 1 ? widget.state.renderQueue.newGroup() : null;
+        for (final r in unsent) {
+          widget.state.renderQueue.addRemix(
+            kind,
+            r,
+            path: item?.path,
+            name: item?.name,
+            dir: folder,
+            label: item != null ? 'remix' : 'new',
+            group: group,
+            detail: _detail.on ? _detail : null,
+            sources: [?item],
+          );
+        }
+        if (!mounted) return true;
+        toast(context, queuedText(kind, renders));
+        Navigator.of(context).maybePop();
+        return true;
+      }
+
       if (picks == null) {
-        final ticket = await sendRemix(kind, base, remix(prompt: _prompt.text, negative: _negative.text, seed: seed, count: _count));
+        final one = remix(prompt: _prompt.text, negative: _negative.text, seed: seed, count: _count);
+        final RemixTicket ticket;
+        try {
+          ticket = await sendRemix(kind, base, one);
+        } on BackendOffline {
+          if (await queue([one])) return;
+          rethrow;
+        }
         // Waited for in the background, panel or no panel.
         collect(fixed(ticket, _prompt.text, _negative.text), _prompt.text);
         if (!mounted) return;
@@ -790,22 +824,37 @@ class _RemixPanelState extends State<RemixPanel> {
         // A prompt of its own for each picture: one remix each, sent at once
         // and kept as one run, told of when all of them are back.
         final batch = widget.state.openRemixBatch();
+        final each = [
+          for (var i = 0; i < picks.length; i++) remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1),
+        ];
         var sent = 0;
         Object? failure;
+        // Those the server was not there to take.
+        final unsent = <Remix>[];
+        BackendOffline? down;
         try {
           await Future.wait([
             for (var i = 0; i < picks.length; i++)
-              sendRemix(kind, base, remix(prompt: picks[i].$1, negative: picks[i].$2, seed: seed + i, count: 1)).then((ticket) {
+              sendRemix(kind, base, each[i]).then((ticket) {
                 collect(fixed(ticket, picks[i].$1, picks[i].$2), picks[i].$1, batch: batch);
                 sent++;
               }, onError: (Object e) {
-                failure ??= e;
+                if (e is BackendOffline) {
+                  unsent.add(each[i]);
+                  down ??= e;
+                } else {
+                  failure ??= e;
+                }
               }),
           ]);
         } finally {
           widget.state.closeRemixBatch(batch);
         }
         if (failure != null) throw BackendException(sent == 0 ? '$failure' : 'Sent $sent of ${picks.length}, then: $failure');
+        if (unsent.isNotEmpty) {
+          if (await queue(unsent)) return;
+          throw BackendException(sent == 0 ? '$down' : 'Sent $sent of ${picks.length}, then: $down');
+        }
         if (!mounted) return;
         toast(
           context,

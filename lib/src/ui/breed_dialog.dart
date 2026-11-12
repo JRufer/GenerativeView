@@ -14,6 +14,7 @@ import 'audience_widgets.dart' show AudienceBadge, BreedAudienceSection;
 import 'kit.dart';
 import 'meta_panel.dart' show toast;
 import 'presets_ui.dart';
+import 'queue_offer.dart';
 import 'remix_dialog.dart' show SizeField, SizeSlider, cfgText, openBackendSettings, remixTwoColumns, snapSize;
 import 'sheet.dart';
 import 'thumb_image.dart' show ThumbImage;
@@ -324,6 +325,9 @@ class _BreedPanelState extends State<BreedPanel> {
     _width.text = '$width';
     _height.text = '$height';
     var sent = 0;
+    // Those the server was not there to take, each with its parent.
+    final unsent = <(MediaItem, Remix)>[];
+    BackendOffline? down;
     // One run, however many are ticked: told of once, when all are back.
     final batch = widget.state.openRemixBatch();
     try {
@@ -348,35 +352,56 @@ class _BreedPanelState extends State<BreedPanel> {
         final preset = _preset;
         if (preset != null) applyPresetLoras(loras, preset.loras);
         final aimed = _audience != 0 && i < _steers.length ? _steers[i] : null;
-        final ticket = await sendRemix(
-          kind,
-          widget.state.backendUrls[kind]!,
-          Remix(
-            info: model == null ? info : withModel(info, model),
-            prompt: () {
-              var text = aimed == null ? child.prompt : weightUp(aimed.prompt, aimed.emphasize);
-              if (preset?.prompt case final add?) text = applyPresetText(text, add, replace: preset!.replacePrompt);
-              return tags.isEmpty ? text : '$text $tags';
-            }(),
-            negative: () {
-              final text = aimed?.negative ?? info.negative;
-              final add = preset?.negative;
-              return add == null ? text : applyPresetText(text, add, replace: preset!.replaceNegative);
-            }(),
-            seed: 0,
-            randomSeed: true,
-            count: 1,
-            width: width,
-            height: height,
-            steps: preset?.steps ?? child.steps,
-            cfg: preset?.cfg ?? child.cfg,
-            loras: loras.isEmpty ? null : loras,
-          ),
+        final remix = Remix(
+          info: model == null ? info : withModel(info, model),
+          prompt: () {
+            var text = aimed == null ? child.prompt : weightUp(aimed.prompt, aimed.emphasize);
+            if (preset?.prompt case final add?) text = applyPresetText(text, add, replace: preset!.replacePrompt);
+            return tags.isEmpty ? text : '$text $tags';
+          }(),
+          negative: () {
+            final text = aimed?.negative ?? info.negative;
+            final add = preset?.negative;
+            return add == null ? text : applyPresetText(text, add, replace: preset!.replaceNegative);
+          }(),
+          seed: 0,
+          randomSeed: true,
+          count: 1,
+          width: width,
+          height: height,
+          steps: preset?.steps ?? child.steps,
+          cfg: preset?.cfg ?? child.cfg,
+          loras: loras.isEmpty ? null : loras,
         );
+        // Once the server is found to be off, the rest are not tried.
+        if (down != null) {
+          unsent.add((base, remix));
+          continue;
+        }
+        final RemixTicket ticket;
+        try {
+          ticket = await sendRemix(kind, widget.state.backendUrls[kind]!, remix);
+        } on BackendOffline catch (e) {
+          down = e;
+          unsent.add((base, remix));
+          continue;
+        }
         widget.state.collectRemix(base, ticket, label: 'bred', batch: batch);
         sent++;
       }
       if (!mounted) return;
+      if (down != null) {
+        // The server is off: they wait for it in the queue, if wanted.
+        if (!await offerToQueue(context, widget.state, kind, renders: unsent.length)) throw down;
+        final group = unsent.length > 1 ? widget.state.renderQueue.newGroup() : null;
+        for (final (parent, remix) in unsent) {
+          widget.state.renderQueue.addRemix(kind, remix, path: parent.path, name: parent.name, label: 'bred', group: group, sources: _parents);
+        }
+        if (!mounted) return;
+        toast(context, queuedText(kind, unsent.length));
+        Navigator.of(context).maybePop();
+        return;
+      }
       toast(context, 'Sent $sent to ${backendNames[kind]}. They will be saved beside their parents and added to ${AppState.remixCollection}.');
       Navigator.of(context).maybePop();
     } catch (e) {
