@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8 and later: the launcher cuts the icon to its own shape (circle,
+     squircle, rounded square...). Layers are made by tool/gen-android-icon.py
+     from assets/Icon-square-full-size.png. Older Android uses the
+     ic_launcher.png in each mipmap folder. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
