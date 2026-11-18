@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Written by tool/gen-android-icon.py: the launcher icon's background,
+     matched to the edge of the artwork. -->
+<resources>
+    <color name="ic_launcher_background">#1E1B21</color>
+</resources>
