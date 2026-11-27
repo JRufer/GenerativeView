@@ -1052,6 +1052,24 @@ void main() {
     }
     await close(tester, state);
   });
+  testWidgets('two remixes of one picture coming back together keep both pictures', (tester) async {
+    final state = await launch(tester);
+    await pumpUntil(tester, () => indexOf(state, 'owl_01.png') >= 0, what: 'the pictures');
+    final owl = state.items[indexOf(state, 'owl_01.png')];
+    final a = pngWithText(320, 320, 91, const {});
+    final b = pngWithText(320, 320, 92, const {});
+    state.collectRemix(owl, RemixTicket('', 1, Stream.value(RemixImage(a))));
+    state.collectRemix(owl, RemixTicket('', 1, Stream.value(RemixImage(b))));
+    final one = File('${library.path}/owl_01_remix1.png');
+    final two = File('${library.path}/owl_01_remix2.png');
+    await pumpUntil(tester, () => one.existsSync() && two.existsSync(), what: 'both remixes saved');
+    // Each picture once: neither was written over by the other.
+    expect({String.fromCharCodes(one.readAsBytesSync()), String.fromCharCodes(two.readAsBytesSync())},
+        {String.fromCharCodes(a), String.fromCharCodes(b)});
+    one.deleteSync();
+    two.deleteSync();
+    await close(tester, state);
+  });
   testWidgets('collections are deleted from their menu, after asking', (tester) async {
     final state = await launch(tester);
     await pumpUntil(tester, () => fixtures.every((n) => indexOf(state, n) >= 0), what: 'the listing');
