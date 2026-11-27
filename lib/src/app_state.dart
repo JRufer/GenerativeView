@@ -2730,6 +2730,21 @@ class AppState extends ChangeNotifier {
   /// (a hires fix: the upscale collection); answers with where it went, or
   /// null if it could not be saved.
   Future<String?> _saveRemix(String dir, String stem, RemixImage image, {String label = 'remix'}) async {
+    // One save at a time across every run, so two never take the same name.
+    final before = _saving;
+    final turn = Completer<void>();
+    _saving = turn.future;
+    await before;
+    try {
+      return await _saveRemixNow(dir, stem, image, label: label);
+    } finally {
+      turn.complete();
+    }
+  }
+
+  Future<void> _saving = Future<void>.value();
+
+  Future<String?> _saveRemixNow(String dir, String stem, RemixImage image, {required String label}) async {
     late String path;
     late String name;
     try {
