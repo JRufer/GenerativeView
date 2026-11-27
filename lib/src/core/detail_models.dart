@@ -23,14 +23,14 @@ class DetailModelFile {
 /// models (MIT for faces, OpenRAIL for hands) trained on anime and
 /// illustration, from Hugging Face.
 const List<DetailModelFile> detailModelFiles = [
-  DetailModelFile('https://huggingface.co/py-feat/retinaface/resolve/main/', 'retinaface', ModelFile('mobilenet0.25_Final.pth', 1786259)),
+  DetailModelFile('https://huggingface.co/py-feat/retinaface/resolve/31702389094fccc7060c15299e6ad712ee880de6/', 'retinaface', ModelFile('mobilenet0.25_Final.pth', 1786259)),
   DetailModelFile(
-    'https://huggingface.co/deepghs/anime_face_detection/resolve/main/face_detect_v1.4_n/',
+    'https://huggingface.co/deepghs/anime_face_detection/resolve/784dc4c0bb692351ddcdbe6131a050b17d3025d5/face_detect_v1.4_n/',
     'anime_face_v1.4_n',
     ModelFile('model.pt', 6229496),
   ),
   DetailModelFile(
-    'https://huggingface.co/deepghs/anime_hand_detection/resolve/main/hand_detect_v1.0_n/',
+    'https://huggingface.co/deepghs/anime_hand_detection/resolve/dba2c5bec15fcee9ac4909b244a84e8783cf46a2/hand_detect_v1.0_n/',
     'anime_hand_v1.0_n',
     ModelFile('model.pt', 6229496),
   ),

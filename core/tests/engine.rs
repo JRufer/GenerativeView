@@ -927,6 +927,30 @@ fn artist_tools_learn_from_ratings() {
 }
 
 #[test]
+fn a_move_whose_note_cannot_follow_still_reports_the_move() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = Harness::new();
+    let root = tmp.path().join("pics");
+    std::fs::create_dir_all(root.join("keepers")).unwrap();
+    let dir = root.to_str().unwrap().to_string();
+    write_png(&root.join("a.png"), 1, &[("prompt", &comfy_prompt("a lynx", 1, "flux.safetensors"))]);
+    h.call("set_folder", json!({ "dir": dir, "recursive": true, "poll_ms": 0 }));
+    h.wait_scan_done();
+    let path = |name: &str| root.join(name).to_str().unwrap().to_string();
+    h.call("notes_set", json!({ "paths": [path("a.png")], "rating": 5 }));
+    // The target's notes file is half synced: it cannot be read.
+    std::fs::write(root.join("keepers/.generativeview.json"), r#"{"generativeview":1,"ima"#).unwrap();
+
+    let out = h.call("move", json!({ "paths": [path("a.png")], "to": path("keepers") }));
+    assert_eq!(out[0]["to"], json!(path("keepers/a.png")));
+    assert!(out[0]["error"].is_null());
+    assert!(out[0]["warning"].as_str().unwrap().contains("stayed in the old folder"));
+    assert!(!root.join("a.png").exists() && root.join("keepers/a.png").exists());
+    // The unreadable file was not overwritten.
+    assert_eq!(std::fs::read_to_string(root.join("keepers/.generativeview.json")).unwrap(), r#"{"generativeview":1,"ima"#);
+}
+
+#[test]
 fn moved_pictures_keep_their_notes() {
     let tmp = tempfile::tempdir().unwrap();
     let h = Harness::new();

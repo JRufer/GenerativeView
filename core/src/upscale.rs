@@ -84,7 +84,14 @@ pub fn save_as(source: &Path, picture: &DynamicImage, metadata: Metadata, jxl: O
         None => (encode(format, picture, &original, metadata)?, format),
     };
     let dest = destination(source, ow, picture.width(), format);
-    std::fs::write(&dest, bytes).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
+    // Written aside and renamed, so the folder watcher never sees half a picture.
+    let name = dest.file_name().unwrap_or_default().to_string_lossy();
+    let part = dest.with_file_name(format!(".{name}.part"));
+    std::fs::write(&part, bytes).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
+    std::fs::rename(&part, &dest).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        format!("cannot write {}: {e}", dest.display())
+    })?;
     Ok(dest)
 }
 

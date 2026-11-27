@@ -298,16 +298,7 @@ impl Notes {
             }
             out.push(note);
         }
-        let empty = images.is_empty() && file.len() <= 2;
-        if empty {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("cannot update {}: {e}", path.display())),
-            }
-        } else {
-            write_atomic(&path, &file)?;
-        }
+        save_file(&path, &mut file)?;
         // The index follows the file.
         self.reload(db, dir, true);
         Ok(out)
@@ -433,18 +424,7 @@ impl Notes {
         } else {
             file.insert("smart".into(), Value::Array(list.iter().map(Smart::to_json).collect()));
         }
-        file.insert("generativeview".into(), json!(1));
-        let images_empty = file.get("images").and_then(Value::as_object).is_none_or(Map::is_empty);
-        let others = file.keys().filter(|k| *k != "generativeview" && *k != "images").count();
-        if images_empty && others == 0 {
-            match std::fs::remove_file(&path) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(format!("cannot update {}: {e}", path.display())),
-            }
-        } else {
-            write_atomic(&path, &file)
-        }
+        save_file(&path, &mut file)
     }
 }
 
@@ -477,13 +457,6 @@ pub fn parse_smart(file: &Map<String, Value>) -> Vec<Smart> {
     out
 }
 
-/// Write `file` to `path` so that a reader (or a sync tool) never sees half
-/// of it: to a temporary file beside it, then renamed over it.
-///
-/// On Windows, file watchers (`ReadDirectoryChangesW`) or search indexers may
-/// briefly hold a handle on `.generativeview.json` without `FILE_SHARE_DELETE`,
-/// causing `std::fs::rename` to return `PermissionDenied` or sharing violation
-/// (OS error 32). A bounded retry loop resolves transient locks cleanly.
 /// Write a notes file, or remove it when nothing is left in it.
 fn save_file(path: &Path, file: &mut Map<String, Value>) -> Result<(), String> {
     file.insert("generativeview".into(), json!(1));
@@ -503,9 +476,18 @@ fn save_file(path: &Path, file: &mut Map<String, Value>) -> Result<(), String> {
     }
 }
 
+/// Write `file` to `path` so that a reader (or a sync tool) never sees half
+/// of it: to a temporary file beside it, then renamed over it.
+///
+/// On Windows, file watchers (`ReadDirectoryChangesW`) or search indexers may
+/// briefly hold a handle on `.generativeview.json` without `FILE_SHARE_DELETE`,
+/// causing `std::fs::rename` to return `PermissionDenied` or sharing violation
+/// (OS error 32). A bounded retry loop resolves transient locks cleanly.
 fn write_atomic(path: &Path, file: &Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Value::Object(file.clone())).map_err(|e| e.to_string())? + "\n";
-    let tmp = path.with_file_name(format!("{FILE_NAME}.{}.tmp", std::process::id()));
+    // Process ids repeat across devices sharing a drive; the clock tells them apart.
+    let nanos = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+    let tmp = path.with_file_name(format!("{FILE_NAME}.{}-{nanos}.tmp", std::process::id()));
     std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
 
     let mut last_err = None;

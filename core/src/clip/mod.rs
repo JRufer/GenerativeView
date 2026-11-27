@@ -39,7 +39,7 @@ use store::{Key, Vectors};
 pub const MODEL: &str = "datacomp-clip-vit-b-32";
 
 /// Where the model's files come from.
-pub const SOURCE: &str = "https://huggingface.co/laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K/resolve/main/";
+pub const SOURCE: &str = "https://huggingface.co/laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K/resolve/f0e2ffa09cbadab3db6a261ec1ec56407ce42912/";
 
 /// The files the model is downloaded as (OpenCLIP's layout), and how many
 /// bytes each must be.
