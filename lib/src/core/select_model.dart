@@ -11,7 +11,7 @@ import 'native_core.dart';
 import 'object_select.dart';
 
 /// Where MobileSAM comes from, and its one file with its exact size.
-const String selectModelSource = 'https://huggingface.co/nielsr/mobilesam/resolve/main/';
+const String selectModelSource = 'https://huggingface.co/nielsr/mobilesam/resolve/9b28ec885ee6e1a2893c0f105d55c625b69ce0a9/';
 const ModelFile selectModelFile = ModelFile('model.safetensors', 40613056);
 
 /// The model, shared by every picture: whether it is here, and fetching it.
