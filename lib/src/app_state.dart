@@ -2623,7 +2623,7 @@ class AppState extends ChangeNotifier {
         // round button keeps it.
         if (!failed) _remixProblem('$what of $originalName', '${server}finished, but brought no picture back');
         list.removeAt(at);
-      } else if (label == 'hires' || label == 'detail') {
+      } else if (_isUpscale(label)) {
         // An upscale, finished on the server: done with the upscales.
         list.removeAt(at);
         upscaled.value = [...upscaled.value, ...saved];
@@ -2762,7 +2762,8 @@ class AppState extends ChangeNotifier {
       final base = (dir.endsWith('/') || dir.endsWith(r'\')) ? dir : '$dir$sep';
       var n = 1;
       String next() => '${stem}_$label$n.${image.extension}';
-      while (await File('$base${next()}').exists()) {
+      // Saved as JXL, a remix's name ends in .jxl: that one is taken too.
+      while (await File('$base${next()}').exists() || await File('$base${stem}_$label$n.jxl').exists()) {
         n++;
       }
       name = next();
