@@ -2250,6 +2250,8 @@ class AppState extends ChangeNotifier {
         final dest = m['to'] as String?;
         if (dest != null) {
           moved.add((m['from'] as String, dest));
+          final warning = m['warning'] as String?;
+          if (warning != null) _notices.add(warning);
         } else {
           failed.add(m['error'] as String? ?? 'could not move ${m['from']}');
         }

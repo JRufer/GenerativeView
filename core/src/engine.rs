@@ -690,18 +690,21 @@ impl Engine {
         let mut out = Vec::with_capacity(paths.len());
         for path in paths {
             out.push(match self.move_one(path, &to_dir) {
-                Ok(to) => json!({ "from": path, "to": to }),
+                Ok((to, None)) => json!({ "from": path, "to": to }),
+                Ok((to, Some(warning))) => json!({ "from": path, "to": to, "warning": warning }),
                 Err(e) => json!({ "from": path, "error": e }),
             });
         }
         Ok(Value::Array(out).to_string())
     }
 
-    fn move_one(&self, path: &str, to_dir: &str) -> Result<String, String> {
+    /// Move one file. Once the file has moved this succeeds, with a warning
+    /// if its note could not follow it.
+    fn move_one(&self, path: &str, to_dir: &str) -> Result<(String, Option<String>), String> {
         let (from_dir, name) = split_path(path)?;
         let from = join_path(&from_dir, &name);
         if from_dir == to_dir {
-            return Ok(from);
+            return Ok((from, None));
         }
         let (mtime, size) = file_stamp(Path::new(path)).ok_or_else(|| format!("{name} is no longer there"))?;
         let to_name = free_name(to_dir, &name);
@@ -711,11 +714,15 @@ impl Engine {
         // The file has moved; from here on nothing undoes that, so what
         // follows only keeps the app's records in step, as best it can.
         let _ = self.db.move_path(&from_dir, &name, to_dir, &to_name, new_mtime, new_size);
-        self.notes.transfer(&self.db, &from_dir, &name, to_dir, &to_name)?;
+        let warning = self
+            .notes
+            .transfer(&self.db, &from_dir, &name, to_dir, &to_name)
+            .err()
+            .map(|e| format!("Moved {name}, but its stars, flags and collections stayed in the old folder: {e}"));
         self.thumbs.moved(&from, mtime, size, &to, new_mtime, new_size);
         self.dupes.moved(&from, mtime, size, &to, new_mtime, new_size);
         self.content.moved(&from, mtime, size, &to, new_mtime, new_size);
-        Ok(to)
+        Ok((to, warning))
     }
 
     /// Take every picture out of the collection `name`, which then no
