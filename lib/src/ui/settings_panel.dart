@@ -638,12 +638,13 @@ class _ConvertPanelState extends State<ConvertPanel> {
       _done = _failed = _saved = 0;
       _error = null;
     });
-    final converted = <MediaItem>[];
+    final converted = <(MediaItem, String)>[];
     for (final item in items) {
       if (_stop) break;
       try {
-        _saved += await widget.state.convertToJxl(item);
-        converted.add(item);
+        final (saved, dest) = await widget.state.convertToJxl(item);
+        _saved += saved;
+        converted.add((item, dest));
       } catch (e) {
         _failed++;
         _error = '$e';

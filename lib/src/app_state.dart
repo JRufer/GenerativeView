@@ -1633,9 +1633,10 @@ class AppState extends ChangeNotifier {
     ];
   }
 
-  /// Save [item] as a `.jxl` beside it, with its stars, flags and collections.
-  /// Answers with the bytes saved. See [trashConverted] for the original.
-  Future<int> convertToJxl(MediaItem item) async {
+  /// Save [item] as a `.jxl` beside it. Answers with the bytes saved and the
+  /// new file. Its stars, flags and collections stay on the original until
+  /// [trashConverted] puts that in the trash.
+  Future<(int, String)> convertToJxl(MediaItem item) async {
     final original = File(item.path);
     final before = await original.length();
     final made = await original.lastModified();
@@ -1649,18 +1650,25 @@ class AppState extends ChangeNotifier {
     // Keeps its place in date order.
     await done.setLastModified(made);
     final after = await done.length();
-    await core.call('notes_transfer', {'from': item.path, 'to': dest});
     _rescanSoon();
-    return before - after;
+    return (before - after, dest);
   }
 
   /// Put the originals of pictures converted in the trash, together, so
-  /// Android asks once. Answers with why not, if they stayed.
-  Future<String?> trashConverted(List<MediaItem> items) async {
-    if (items.isEmpty) return null;
-    final (outcome, why) = await trashFiles([for (final i in items) i.path]);
+  /// Android asks once, and only then give their notes to the `.jxl` each
+  /// became. Answers with why not, if they stayed (keeping their notes).
+  Future<String?> trashConverted(List<(MediaItem, String)> converted) async {
+    if (converted.isEmpty) return null;
+    final (outcome, why) = await trashFiles([for (final (i, _) in converted) i.path]);
     if (outcome != TrashOutcome.trashed) return why ?? 'the originals were kept';
-    await forgetFiles(items);
+    for (final (item, dest) in converted) {
+      try {
+        await core.call('notes_transfer', {'from': item.path, 'to': dest});
+      } catch (e) {
+        _notices.add('Could not carry the notes of ${item.name} over to its JXL: $e');
+      }
+    }
+    await forgetFiles([for (final (i, _) in converted) i]);
     return null;
   }
 
