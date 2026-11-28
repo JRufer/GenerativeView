@@ -12,8 +12,11 @@ import '../theme.dart';
 import 'meta_panel.dart' show toast;
 import 'sheet.dart';
 
-/// What a preset of [info] could carry, for the Save panel to pick from.
-Preset presetOf(GenInfo info) => Preset(
+/// What a preset of [info] could carry, for the Save panel to pick from:
+/// its prompt as the servers read it (NovelAI's converted).
+Preset presetOf(GenInfo info) => _presetOf(info.forServer());
+
+Preset _presetOf(GenInfo info) => Preset(
   id: '',
   name: '',
   prompt: info.prompt,

@@ -1993,7 +1993,7 @@ class AppState extends ChangeNotifier {
   /// here. Null when it cannot be remade.
   Future<GenInfo?> remakeRecipe(MediaItem item) async {
     final info = await metadata(item);
-    if (info.hasGeneration) return info;
+    if (info.hasGeneration) return info.forServer();
     if (item.isVideo || !await canDescribe()) return null;
     return describedRecipe(item);
   }

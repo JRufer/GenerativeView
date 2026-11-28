@@ -1,5 +1,5 @@
 //! AUTOMATIC1111 / Forge "parameters" text, plus the JSON dialects that reuse
-//! the same slot (SwarmUI, Fooocus) and NovelAI.
+//! the same slot (SwarmUI, Fooocus). NovelAI has its own reader.
 //!
 //! The classic layout is:
 //! ```text
@@ -286,30 +286,6 @@ pub fn parse_json_params(text: &str, info: &mut GenInfo) {
         info.models.clear();
         info.loras.clear();
         info.model.clear();
-    }
-}
-
-pub fn parse_novelai(description: &str, comment: &str, info: &mut GenInfo) {
-    info.source = "novelai".into();
-    info.prompt = description.to_string();
-    if let Some(Value::Object(map)) = parse_lenient(comment) {
-        for (k, v) in &map {
-            match k.as_str() {
-                "prompt" => {
-                    if let Some(s) = v.as_str() {
-                        info.prompt = s.to_string();
-                    }
-                }
-                "uc" => info.negative = display(v),
-                "seed" => info.seed = display(v),
-                _ => {
-                    let shown = display(v);
-                    if !shown.is_empty() && shown.len() < 400 {
-                        info.param(k, shown);
-                    }
-                }
-            }
-        }
     }
 }
 

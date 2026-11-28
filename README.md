@@ -168,8 +168,11 @@ In the prompt editor, `Ctrl` `↑` / `↓` change the weight of the selected wor
 | --- | --- |
 | ComfyUI | `prompt` / `workflow` PNG chunks; EXIF in WebP and JPEG; tags in MP4, MOV and WebM (ComfyUI's own video nodes and VideoHelperSuite) |
 | InvokeAI | `invokeai_metadata` (v3 and later) and `sd-metadata` (v2) |
-| A1111 / Forge | `parameters` PNG chunk; EXIF UserComment in JPEG and WebP |
-| Also | SwarmUI, Fooocus and NovelAI basics. Anything unrecognised still appears under "Raw metadata". |
+| A1111 / Forge | `parameters` PNG chunk; EXIF UserComment in JPEG and WebP; the stealth-pnginfo extension's copy in the alpha channel |
+| NovelAI | `Description`, `Source` and `Comment` PNG chunks; EXIF in WebP; the copy NovelAI hides in the alpha channel, when a site or app has stripped the rest |
+| Also | SwarmUI and Fooocus. Anything unrecognised still appears under "Raw metadata". |
+
+NovelAI pictures show the model (V5, V4.5… with its hash), seed, steps, CFG, sampler, schedule, size and generation time, plus SMEA, Decrisp, Variety+, vibe transfer and character reference when used; NovelAI's own sampler switches stay in the raw Comment block. A V4-or-later picture's **characters** each get their own prompt block, with where in the picture they were placed, and search, audience ratings and prompt checks read them along with the base prompt. Remix, Breed, presets and the hires fix send other servers one prompt in their syntax: the characters folded in after the base prompt, `source#`/`target#`/`mutual#` marks taken off, `{word}` and `[word]` as `(word:1.05)` and `(word:0.95)` per brace, `1.3::words::` as `(words:1.3)`, words NovelAI weighed below zero moved to the negative prompt, and literal brackets escaped. The NovelAI model itself is only on NovelAI's servers, so Remix warns and lets you pick one of the server's models, as with any model the server does not have.
 
 ComfyUI has no fixed schema, so prompts and settings are found by walking the graph back from the sampler. That handles custom samplers, ControlNet, prompt-concatenation and primitive nodes, rgthree's Power Lora Loader and similar; an unusual custom node may still be missed. The full node list and raw JSON are always there to fall back on.
 

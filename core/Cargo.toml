@@ -25,6 +25,7 @@ jpeg-encoder = "0.6"
 libc = "0.2"
 notify = "8"
 parking_lot = "0.12"
+png = "0.18"
 rayon = "1"
 rusqlite = { version = "0.37", features = ["bundled", "functions"] }
 serde = { version = "1", features = ["derive"] }

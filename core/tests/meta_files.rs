@@ -258,3 +258,145 @@ fn plain_and_broken_files_are_harmless() {
     let _ = extract(&junk);
     assert_eq!(extract(&tmp.path().join("missing.png")).source, "");
 }
+
+// ---------------------------------------------------------------- NovelAI
+
+/// The real text chunks of a NovelAI V5 picture with three characters.
+fn novelai_chunks() -> Vec<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(&fixture("novelai_v5.json")).unwrap();
+    v.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string())).collect()
+}
+
+fn chunk<'a>(chunks: &'a [(String, String)], key: &str) -> &'a str {
+    &chunks.iter().find(|(k, _)| k == key).unwrap().1
+}
+
+fn assert_novelai_v5(info: &GenInfo) {
+    assert_eq!(info.source, "novelai");
+    assert!(info.prompt.starts_with("1boy, 1girl, stage, indoors"), "{}", info.prompt);
+    assert!(info.negative.starts_with("lowres, artistic error"), "{}", info.negative);
+    assert_eq!(info.seed, "594043650");
+    assert_eq!(info.model, "NovelAI Diffusion V5");
+    assert_eq!(info.models[0].hash, "DB276663");
+    assert_eq!(param(info, "Steps"), Some("23"));
+    assert_eq!(param(info, "CFG"), Some("7"));
+    assert_eq!(param(info, "Sampler"), Some("k_euler_ancestral"));
+    assert_eq!(param(info, "Scheduler"), Some("karras"));
+    assert_eq!(param(info, "Size"), Some("1216x832"));
+    assert_eq!(param(info, "Characters"), Some("3"));
+    // NovelAI's own sampler switches stay in the raw block, not the list.
+    for hidden in ["wonky_vibe_correlation", "extra_passthrough_testing", "signed_hash", "stream", "uncond_scale"] {
+        assert!(param(info, hidden).is_none(), "{hidden} shown");
+    }
+    assert!(info.params.len() <= 10, "{:?}", info.params);
+
+    assert_eq!(info.characters.len(), 3);
+    assert_eq!(info.characters[0].prompt, "girl, violin, dress, playing instrument, target#hand on another's shoulder");
+    assert_eq!((info.characters[0].x, info.characters[0].y), (Some(0.257), Some(0.507)));
+    assert_eq!(info.characters[2].x, Some(0.773));
+
+    // For other servers: one prompt, no NovelAI marks, no empty items, no repeats.
+    let server = &info.server_prompt;
+    assert!(server.starts_with(&info.prompt), "{server}");
+    for gone in ["#", ", ,", "  "] {
+        assert!(!server.contains(gone), "{gone:?} in {server}");
+    }
+    assert!(server.contains("playing instrument, hand on another's shoulder, girl sandwich, holding microphone"), "{server}");
+    assert_eq!(server.matches("hand on another's shoulder").count(), 1);
+    assert!(server.ends_with("angry, looking at boy"), "{server}");
+    assert_eq!(info.prompt_for_server(), server);
+
+    // Search sees every character's words.
+    assert!(info.whole_prompt().contains("red hair, angry"));
+    assert!(info.facets_text().contains("\nmodel\tnovelai diffusion v5\t"));
+    assert!(info.facets_text().contains("\ncfg\t7\t"));
+}
+
+#[test]
+fn novelai_png_text_chunks() {
+    let chunks = novelai_chunks();
+    let pairs: Vec<(&str, &str)> = chunks.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("nai.png");
+    write_png(&path, 8, &pairs);
+    let info = extract(&path);
+    assert_novelai_v5(&info);
+    assert!(info.raw.iter().any(|(k, v)| k == "Comment" && v.contains("signed_hash")));
+    // The Comment's own `prompt` is not lifted out as a ComfyUI graph text.
+    assert_eq!(info.raw.iter().filter(|(k, _)| k == "prompt").count(), 0);
+}
+
+#[test]
+fn novelai_webp_exif() {
+    // In a WebP, Software holds the model and UserComment the JSON: before,
+    // the generic JSON reader took it as "json".
+    let chunks = novelai_chunks();
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("nai.webp");
+    std::fs::write(
+        &path,
+        webp_with_novelai_exif(chunk(&chunks, "Description"), chunk(&chunks, "Source"), chunk(&chunks, "Comment")),
+    )
+    .unwrap();
+    assert_novelai_v5(&extract(&path));
+}
+
+#[test]
+fn novelai_hidden_in_alpha_only() {
+    // Text chunks stripped (a re-save, a site): the copy in the alpha
+    // channel's low bits still says it all.
+    let chunks = novelai_chunks();
+    let mut map = serde_json::Map::new();
+    for (k, v) in &chunks {
+        if k != "Title" {
+            map.insert(k.clone(), serde_json::Value::String(v.clone()));
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("stripped.png");
+    rgba_hiding(160, 256, &serde_json::Value::Object(map).to_string()).save(&path).unwrap();
+    let info = extract(&path);
+    assert_novelai_v5(&info);
+    assert_eq!((info.width, info.height), (160, 256));
+
+    // The same in a lossless WebP.
+    let webp = tmp.path().join("stripped.webp");
+    image::open(&path).unwrap().save(&webp).unwrap();
+    assert_novelai_v5(&extract(&webp));
+
+    // And A1111's stealth extension: its parameters text.
+    let a1111 = tmp.path().join("a1111.png");
+    rgba_hiding(96, 200, A1111_TEXT).save(&a1111).unwrap();
+    let info = extract(&a1111);
+    assert_eq!(info.source, "a1111");
+    assert_eq!(info.seed, "3958203417");
+}
+
+#[test]
+fn novelai_v3_emphasis_and_smea() {
+    let comment = r#"{"prompt": "1girl, {{red eyes}}, [hat], 1.5::smile::, -1::glasses::", "steps": 28, "height": 1216, "width": 832, "scale": 5.0, "uncond_scale": 1.0, "cfg_rescale": 0.2, "seed": 42, "n_samples": 1, "strength": 0.7, "noise": 0.1, "noise_schedule": "native", "sampler": "k_dpmpp_2m", "sm": true, "sm_dyn": true, "dynamic_thresholding": false, "uc": "lowres, {bad hands}", "request_type": "Img2ImgRequest", "legacy_v3_extend": false}"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("v3.png");
+    write_png(
+        &path,
+        9,
+        &[
+            ("Title", "NovelAI generated image"),
+            ("Description", "1girl, {{red eyes}}, [hat], 1.5::smile::, -1::glasses::"),
+            ("Software", "NovelAI"),
+            ("Source", "Stable Diffusion XL C1E1DE52"),
+            ("Comment", comment),
+        ],
+    );
+    let info = extract(&path);
+    assert_eq!(info.source, "novelai");
+    assert_eq!(info.model, "Stable Diffusion XL");
+    assert_eq!(info.models[0].hash, "C1E1DE52");
+    assert!(info.characters.is_empty());
+    assert_eq!(param(&info, "SMEA"), Some("on, DYN"));
+    assert_eq!(param(&info, "CFG rescale"), Some("0.2"));
+    assert_eq!(param(&info, "Strength"), Some("0.7"));
+    assert_eq!(param(&info, "Request"), Some("Img2ImgRequest"));
+    assert_eq!(info.server_prompt, "1girl, (red eyes:1.1), (hat:0.95), (smile:1.5)");
+    assert_eq!(info.server_negative, "lowres, (bad hands:1.05), glasses");
+}

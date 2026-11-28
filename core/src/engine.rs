@@ -430,7 +430,7 @@ impl Engine {
             .map(|info| {
                 let param = |names: &[&str]| info.params.iter().find(|(k, _)| names.contains(&k.to_ascii_lowercase().as_str())).and_then(|(_, v)| v.trim().parse::<f64>().ok());
                 crate::works::Parent {
-                    phrases: crate::clip::prompt_phrases(&info.prompt),
+                    phrases: crate::clip::prompt_phrases(info.prompt_for_server()),
                     loras: info.loras.iter().filter_map(|l| l.weight.map(|w| (l.name.clone(), w))).collect(),
                     steps: param(&["steps"]),
                     cfg: param(&["cfg", "cfg scale"]),
@@ -536,7 +536,7 @@ impl Engine {
                             (!s.is_nan()).then(|| m.stars(s))
                         });
                         let seen = if installed {
-                            let prompt = meta::extract(Path::new(&path)).prompt;
+                            let prompt = meta::extract(Path::new(&path)).whole_prompt().into_owned();
                             self.content.check_prompt(&path, &prompt, false).ok().filter(|c| !c.is_null()).and_then(|c| Some((c["seen"].as_u64()? as u32, c["checked"].as_u64()? as u32)))
                         } else {
                             None

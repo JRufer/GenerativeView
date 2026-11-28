@@ -22,7 +22,8 @@ use std::path::Path;
 
 pub type DbResult<T> = Result<T, rusqlite::Error>;
 
-const SCHEMA_VERSION: i64 = 8;
+// 9: NovelAI characters and alpha-hidden metadata are indexed.
+const SCHEMA_VERSION: i64 = 9;
 
 // `files` stays narrow so listing a folder touches few pages. The search
 // text lives beside it in `ftext`, lower-cased; it is only ever searched,
@@ -431,12 +432,12 @@ impl Db {
             for r in records {
                 let i = &r.info;
                 let id: i64 = file.query_row(
-                    params![r.dir, r.name, r.size, r.mtime, r.video as i64, i.width, i.height, i.duration_ms as i64, i.source, i.seed, crate::audience::from_prompt(&i.prompt).0 as u8],
+                    params![r.dir, r.name, r.size, r.mtime, r.video as i64, i.width, i.height, i.duration_ms as i64, i.source, i.seed, crate::audience::from_prompt(&i.whole_prompt()).0 as u8],
                     |row| row.get(0),
                 )?;
                 let lname = r.name.to_lowercase();
-                let prompt = i.prompt.to_lowercase();
-                let negative = i.negative.to_lowercase();
+                let prompt = i.whole_prompt().to_lowercase();
+                let negative = i.whole_negative().to_lowercase();
                 let model = i.models_text().to_lowercase();
                 let loras = i.loras_text().to_lowercase();
                 let extra = i.extra_text().to_lowercase();

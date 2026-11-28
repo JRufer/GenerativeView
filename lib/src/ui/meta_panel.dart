@@ -141,7 +141,9 @@ class _MetaPanelState extends State<MetaPanel> {
 
   /// The menu of a prompt: show the pictures made with exactly it, or
   /// remix it.
-  Future<void> _promptMenu(Offset position, String field, String text, MediaItem item) async {
+  /// [match] is what the filter compares against when it differs from the
+  /// text shown (a NovelAI base prompt: search keeps its characters too).
+  Future<void> _promptMenu(Offset position, String field, String text, MediaItem item, {String? match}) async {
     final negative = field == 'fullneg';
     final choice = await showContextMenu<String>(context, position, [
       MenuEntry(
@@ -153,7 +155,7 @@ class _MetaPanelState extends State<MetaPanel> {
       const MenuEntry('preset', 'Save as preset…', Icons.bookmark_add_outlined),
     ]);
     if (!mounted) return;
-    if (choice == 'filter') widget.state.applyFilter(exactTerm(field, text));
+    if (choice == 'filter') widget.state.applyFilter(exactTerm(field, match ?? text));
     if (choice == 'remix') {
       await openRemix(context, widget.state, item);
     } else if (choice == 'preset') {
@@ -188,7 +190,7 @@ class _MetaPanelState extends State<MetaPanel> {
       _FileHeader(item: item, info: info),
       NotesBar(state: state, item: item),
       TasteHint(state: state, item: item),
-      AudienceRow(state: state, item: item, prompt: info.prompt),
+      AudienceRow(state: state, item: item, prompt: info.wholePrompt),
       Wrap(
         spacing: 6,
         runSpacing: 6,
@@ -218,16 +220,37 @@ class _MetaPanelState extends State<MetaPanel> {
       if (!info.hasGeneration) DescribeCard(key: const ValueKey<String>('describe'), state: state, item: item),
       if (info.prompt.isNotEmpty)
         _Section(
-          label: 'Prompt',
-          onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item),
+          label: info.characters.isEmpty ? 'Prompt' : 'Base prompt',
+          onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item, match: info.wholePrompt),
           child: _CopyBlock(
             text: info.prompt,
             what: 'prompt',
-            semanticsLabel: 'Prompt',
-            onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item),
+            semanticsLabel: info.characters.isEmpty ? 'Prompt' : 'Base prompt',
+            onMenu: (at) => _promptMenu(at, 'fullprompt', info.prompt, item, match: info.wholePrompt),
           ),
         ),
-      if (info.prompt.isNotEmpty && !item.isVideo) PromptCheckView(state: state, item: item, prompt: info.prompt),
+      // NovelAI V4+: each character's own prompt, and where it stands.
+      for (final (i, c) in info.characters.indexed) ...[
+        if (c.prompt.isNotEmpty)
+          _Section(
+            label: c.place.isEmpty ? 'Character ${i + 1}' : 'Character ${i + 1} · ${c.place}',
+            child: _CopyBlock(
+              text: c.prompt,
+              what: 'character prompt',
+              semanticsLabel: 'Character ${i + 1} prompt',
+            ),
+          ),
+        if (c.negative.isNotEmpty)
+          _Section(
+            label: 'Character ${i + 1} negative',
+            child: _CopyBlock(
+              text: c.negative,
+              what: 'character negative prompt',
+              semanticsLabel: 'Character ${i + 1} negative prompt',
+            ),
+          ),
+      ],
+      if (info.prompt.isNotEmpty && !item.isVideo) PromptCheckView(state: state, item: item, prompt: info.wholePrompt),
       if (info.negative.isNotEmpty)
         _Section(
           label: 'Negative prompt',

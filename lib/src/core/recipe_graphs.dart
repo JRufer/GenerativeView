@@ -124,6 +124,10 @@ const Set<String> _encoderKinds = {'clip', 'qwen3_vl_encoder', 'text_encoder'};
     return (null, scheduler);
   }
   var s = sampler.trim().toLowerCase();
+  // NovelAI: k-diffusion names with a `k_` in front ("k_euler_ancestral"),
+  // and its own DDIM.
+  if (s.startsWith('k_')) s = s.substring(2);
+  if (s == 'ddim_v3') s = 'ddim';
 
   // A1111 / Forge spell the schedule into the name: "DPM++ 2M Karras".
   for (final (word, value) in const [

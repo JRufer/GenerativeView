@@ -171,3 +171,89 @@ pub fn webp_with_comfy_exif(prompt: &str, workflow: &str) -> Vec<u8> {
 pub const A1111_TEXT: &str = "cinematic photo of a lighthouse on a cliff, stormy sea <lora:add_detail:0.7>\nNegative prompt: cartoon, lowres, text\nSteps: 30, Sampler: DPM++ 2M Karras, CFG scale: 7, Seed: 3958203417, Size: 768x1152, Model hash: 31e35c80fc, Model: sd_xl_base_1.0, VAE: sdxl_vae.safetensors, Lora hashes: \"add_detail: 7c6bad76eb54\", Version: v1.7.0";
 
 pub const INVOKE_TEXT: &str = r#"{"generation_mode":"sdxl_txt2img","positive_prompt":"an isometric cutaway of a cozy submarine cabin","negative_prompt":"blurry, people","width":1216,"height":832,"seed":2718281828,"rand_device":"cpu","cfg_scale":6.0,"cfg_rescale_multiplier":0.0,"steps":28,"scheduler":"dpmpp_2m_sde_k","model":{"key":"3b0f","hash":"blake3:1f2e","name":"Juggernaut XL v9","base":"sdxl","type":"main"},"loras":[{"model":{"key":"77aa","hash":"blake3:9c","name":"cutaway-diagram-xl","base":"sdxl","type":"lora"},"weight":0.85}],"vae":{"key":"aa01","hash":"blake3:44","name":"sdxl-vae-fp16-fix","base":"sdxl","type":"vae"},"positive_style_prompt":"an isometric cutaway of a cozy submarine cabin","negative_style_prompt":"","controlnets":[],"ipAdapters":[],"t2iAdapters":[],"app_version":"5.6.0"}"#;
+
+/// NovelAI's WebP layout: the prompt in ImageDescription, the model in
+/// Software and the settings JSON in the Exif IFD's UserComment (ASCII).
+pub fn webp_with_novelai_exif(description: &str, software: &str, comment: &str) -> Vec<u8> {
+    let (w, h) = (72u32, 40u32);
+    let mut plain = Vec::new();
+    pixels(w, h, 4).write_to(&mut Cursor::new(&mut plain), image::ImageFormat::WebP).unwrap();
+    let image_chunks = &plain[12..];
+
+    let desc = format!("{description}\0");
+    let soft = format!("{software}\0");
+    let mut user = b"ASCII\0\0\0".to_vec();
+    user.extend_from_slice(comment.as_bytes());
+
+    // IFD0: ImageDescription, Software, Exif pointer; then the Exif IFD.
+    let ifd0_len = 2 + 3 * 12 + 4;
+    let exif_at = 8 + ifd0_len;
+    let exif_len = 2 + 12 + 4;
+    let data_at = exif_at + exif_len;
+    let (desc_at, soft_at, user_at) = (data_at, data_at + desc.len(), data_at + desc.len() + soft.len());
+    let mut t = b"II*\0".to_vec();
+    t.extend_from_slice(&8u32.to_le_bytes());
+    t.extend_from_slice(&3u16.to_le_bytes());
+    for (tag, typ, n, value) in [
+        (0x010eu16, 2u16, desc.len(), desc_at),
+        (0x0131, 2, soft.len(), soft_at),
+        (0x8769, 4, 1, exif_at),
+    ] {
+        t.extend_from_slice(&tag.to_le_bytes());
+        t.extend_from_slice(&typ.to_le_bytes());
+        t.extend_from_slice(&(n as u32).to_le_bytes());
+        t.extend_from_slice(&(value as u32).to_le_bytes());
+    }
+    t.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(t.len(), exif_at);
+    t.extend_from_slice(&1u16.to_le_bytes());
+    t.extend_from_slice(&0x9286u16.to_le_bytes());
+    t.extend_from_slice(&7u16.to_le_bytes());
+    t.extend_from_slice(&(user.len() as u32).to_le_bytes());
+    t.extend_from_slice(&(user_at as u32).to_le_bytes());
+    t.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(t.len(), data_at);
+    t.extend_from_slice(desc.as_bytes());
+    t.extend_from_slice(soft.as_bytes());
+    t.extend_from_slice(&user);
+
+    let mut body = b"WEBP".to_vec();
+    body.extend_from_slice(b"VP8X");
+    body.extend_from_slice(&10u32.to_le_bytes());
+    body.push(0x08); // EXIF present
+    body.extend_from_slice(&[0, 0, 0]);
+    body.extend_from_slice(&(w - 1).to_le_bytes()[..3]);
+    body.extend_from_slice(&(h - 1).to_le_bytes()[..3]);
+    body.extend_from_slice(image_chunks);
+    body.extend_from_slice(b"EXIF");
+    body.extend_from_slice(&(t.len() as u32).to_le_bytes());
+    body.extend_from_slice(&t);
+    if t.len() % 2 == 1 {
+        body.push(0);
+    }
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend(body);
+    out
+}
+
+/// A w×h RGBA picture with `payload` gzipped into the low bits of its
+/// alpha, down each column then across, as NovelAI hides its metadata.
+pub fn rgba_hiding(w: u32, h: u32, payload: &str) -> image::RgbaImage {
+    use std::io::Write;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(payload.as_bytes()).unwrap();
+    let body = gz.finish().unwrap();
+    let mut bytes = b"stealth_pngcomp".to_vec();
+    bytes.extend(((body.len() * 8) as u32).to_be_bytes());
+    bytes.extend(body);
+    let mut img = image::RgbaImage::from_fn(w, h, |x, y| image::Rgba([(x % 256) as u8, (y % 256) as u8, 120, 255]));
+    let total = bytes.len() * 8;
+    assert!(total <= (w * h) as usize, "picture too small for the payload");
+    for i in 0..total {
+        let (x, y) = ((i as u32) / h, (i as u32) % h);
+        let bit = (bytes[i / 8] >> (7 - i % 8)) & 1;
+        img.get_pixel_mut(x, y).0[3] = 0xfe | bit;
+    }
+    img
+}
