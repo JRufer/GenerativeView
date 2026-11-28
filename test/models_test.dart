@@ -138,6 +138,40 @@ void main() {
     expect(GenInfo.fromJson(const {}).hasGeneration, isFalse);
   });
 
+  test('NovelAI characters and the prompt for other servers', () {
+    final info = GenInfo.fromJson(
+      jsonDecode('''
+      {"source":"novelai","prompt":"2girls, stage","negative":"lowres","seed":"7","model":"NovelAI Diffusion V5",
+       "models":[{"kind":"checkpoint","name":"NovelAI Diffusion V5","hash":"DB276663"}],
+       "params":[["Steps","23"],["Sampler","k_euler_ancestral"]],
+       "characters":[{"prompt":"girl, violin, target#hug","x":0.257,"y":0.507},{"prompt":"girl, red hair","negative":"hat","x":0.773,"y":0.2}],
+       "server_prompt":"2girls, stage, girl, violin, hug, red hair","server_negative":"lowres, hat",
+       "width":1216,"height":832,"duration_ms":0}
+      ''') as Map<String, dynamic>,
+    );
+    expect(info.characters.length, 2);
+    expect(info.characters[0].place, 'left');
+    expect(info.characters[1].place, 'right, top');
+    expect(info.characters[1].negative, 'hat');
+    expect(info.wholePrompt, '2girls, stage\ngirl, violin, target#hug\ngirl, red hair');
+    expect(info.summary(), contains('Character 1 (left): girl, violin, target#hug\n'));
+    expect(info.summary(), contains('Character 2 negative: hat\n'));
+
+    final server = info.forServer();
+    expect(server.prompt, '2girls, stage, girl, violin, hug, red hair');
+    expect(server.negative, 'lowres, hat');
+    expect(server.characters, isEmpty);
+    expect(server.model, info.model);
+    expect(server.params, info.params);
+    // Kept through the render queue's JSON.
+    final back = GenInfo.fromJson(jsonDecode(jsonEncode(info.toJson())) as Map<String, dynamic>);
+    expect(back.characters[1].x, 0.773);
+    expect(back.serverPrompt, info.serverPrompt);
+    // Anything else goes as it is.
+    final plain = GenInfo.fromJson(const {'source': 'comfyui', 'prompt': 'a fox'});
+    expect(identical(plain.forServer(), plain), isTrue);
+  });
+
   test('formatting', () {
     expect(formatNumber(1), '1');
     expect(formatNumber(0.85), '0.85');

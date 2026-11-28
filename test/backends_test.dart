@@ -402,6 +402,10 @@ void main() {
     expect(canonicalSampler('dpmpp_2m_sde_k', null), ('dpmpp_2m_sde', 'karras'));
     expect(canonicalSampler('euler_ancestral', 'normal'), ('euler_ancestral', 'normal'));
     expect(canonicalSampler('something new', null), (null, null));
+    // NovelAI: a `k_` in front, its schedule apart.
+    expect(canonicalSampler('k_euler_ancestral', 'karras'), ('euler_ancestral', 'karras'));
+    expect(canonicalSampler('k_dpmpp_2m_sde', 'native'), ('dpmpp_2m_sde', null));
+    expect(canonicalSampler('ddim_v3', null), ('ddim', null));
     // InvokeAI's one setting names both.
     expect(canonicalSampler(null, 'dpmpp_2m_k'), ('dpmpp_2m', 'karras'));
     expect(canonicalSampler(null, 'euler_a'), ('euler_ancestral', null));

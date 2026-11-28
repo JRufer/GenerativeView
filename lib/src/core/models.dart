@@ -249,6 +249,26 @@ class LoraRef {
   }
 }
 
+/// One character of a NovelAI V4+ prompt: its own caption, and where in
+/// the picture it stands (0..1 across and down) when that was set.
+class CharacterPrompt {
+  const CharacterPrompt(this.prompt, this.negative, this.x, this.y);
+  final String prompt;
+  final String negative;
+  final double? x;
+  final double? y;
+
+  /// Where it stands, in words: "left", "right, top"; empty if not set.
+  String get place {
+    final across = x;
+    final down = y;
+    if (across == null || down == null) return '';
+    final h = across < 0.4 ? 'left' : (across > 0.6 ? 'right' : 'centre');
+    final v = down < 0.4 ? 'top' : (down > 0.6 ? 'bottom' : '');
+    return v.isEmpty ? h : '$h, $v';
+  }
+}
+
 class GraphNode {
   const GraphNode(this.id, this.type, this.title, this.inputs);
   final String id;
@@ -291,6 +311,9 @@ class GenInfo {
     required this.width,
     required this.height,
     required this.durationMs,
+    this.characters = const [],
+    this.serverPrompt = '',
+    this.serverNegative = '',
   });
 
   final String source;
@@ -309,7 +332,46 @@ class GenInfo {
   final int height;
   final int durationMs;
 
+  /// NovelAI V4+: each character's own prompt, beside the base [prompt].
+  final List<CharacterPrompt> characters;
+
+  /// The prompt and negative as other programs' servers read them, where
+  /// the maker's own syntax differs (NovelAI's emphasis and characters);
+  /// empty when [prompt] and [negative] serve as they are.
+  final String serverPrompt;
+  final String serverNegative;
+
   bool get hasGeneration => source.isNotEmpty;
+
+  /// The prompt with every character's caption after it, as search keeps
+  /// it: what "show only images with this prompt" has to match.
+  String get wholePrompt => [
+    prompt,
+    for (final c in characters)
+      if (c.prompt.isNotEmpty) c.prompt,
+  ].join('\n');
+
+  /// This recipe as another program's server takes it: NovelAI's prompt
+  /// converted (characters folded in, emphasis as `(words:1.1)`); any
+  /// other unchanged.
+  GenInfo forServer() {
+    if (serverPrompt.isEmpty && serverNegative.isEmpty && characters.isEmpty) return this;
+    return GenInfo(
+      source: source,
+      prompt: serverPrompt.isEmpty ? prompt : serverPrompt,
+      negative: serverNegative.isEmpty ? negative : serverNegative,
+      seed: seed,
+      model: model,
+      models: models,
+      loras: loras,
+      params: params,
+      nodes: nodes,
+      raw: raw,
+      width: width,
+      height: height,
+      durationMs: durationMs,
+    );
+  }
 
   factory GenInfo.fromJson(Map<String, dynamic> j) {
     double? num_(Object? v) => v is num ? v.toDouble() : null;
@@ -353,6 +415,18 @@ class GenInfo {
       width: (j['width'] as num?)?.toInt() ?? 0,
       height: (j['height'] as num?)?.toInt() ?? 0,
       durationMs: (j['duration_ms'] as num?)?.toInt() ?? 0,
+      characters: [
+        for (final c in (j['characters'] as List? ?? const []))
+          if (c is Map)
+            CharacterPrompt(
+              c['prompt'] as String? ?? '',
+              c['negative'] as String? ?? '',
+              num_(c['x']),
+              num_(c['y']),
+            ),
+      ],
+      serverPrompt: j['server_prompt'] as String? ?? '',
+      serverNegative: j['server_negative'] as String? ?? '',
     );
   }
 
@@ -382,6 +456,12 @@ class GenInfo {
       'width': width,
       'height': height,
       'duration_ms': durationMs,
+      if (characters.isNotEmpty)
+        'characters': [
+          for (final c in characters) {'prompt': c.prompt, 'negative': c.negative, 'x': c.x, 'y': c.y},
+        ],
+      if (serverPrompt.isNotEmpty) 'server_prompt': serverPrompt,
+      if (serverNegative.isNotEmpty) 'server_negative': serverNegative,
     };
   }
 
@@ -401,6 +481,11 @@ class GenInfo {
   String summary() {
     final b = StringBuffer();
     if (prompt.isNotEmpty) b.writeln('Prompt: $prompt');
+    for (final (i, c) in characters.indexed) {
+      final where = c.place.isEmpty ? '' : ' (${c.place})';
+      if (c.prompt.isNotEmpty) b.writeln('Character ${i + 1}$where: ${c.prompt}');
+      if (c.negative.isNotEmpty) b.writeln('Character ${i + 1} negative: ${c.negative}');
+    }
     if (negative.isNotEmpty) b.writeln('Negative prompt: $negative');
     if (seed.isNotEmpty) b.writeln('Seed: $seed');
     if (model.isNotEmpty) b.writeln('Model: $model');

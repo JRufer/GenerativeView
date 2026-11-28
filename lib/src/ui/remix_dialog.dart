@@ -56,7 +56,8 @@ Future<void> openRemix(
 }) async {
   GenInfo info;
   try {
-    info = recipe ?? await state.metadata(item);
+    // NovelAI's prompt in the syntax the servers here read.
+    info = (recipe ?? await state.metadata(item)).forServer();
   } catch (e) {
     if (context.mounted) toast(context, 'Could not read this file');
     return;

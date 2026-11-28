@@ -11,6 +11,8 @@ pub mod a1111;
 pub mod comfy;
 pub mod container;
 pub mod invoke;
+mod novelai;
+mod stealth;
 mod json;
 
 use serde::Serialize;
@@ -38,6 +40,19 @@ pub struct Lora {
     pub hash: String,
 }
 
+/// One character of a NovelAI V4+ prompt: its own caption, and where in
+/// the picture it stands (0..1 across and down) when that was set.
+#[derive(Debug, Default, Clone, Serialize, PartialEq)]
+pub struct Character {
+    pub prompt: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub negative: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+}
+
 /// One node of a ComfyUI graph, flattened for display.
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct Node {
@@ -63,6 +78,16 @@ pub struct GenInfo {
     pub params: Vec<(String, String)>,
     /// ComfyUI graph, one entry per node.
     pub nodes: Vec<Node>,
+    /// NovelAI V4+: each character's own prompt, beside the base [prompt].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub characters: Vec<Character>,
+    /// The prompt and negative as other programs' servers read them, where
+    /// the maker's own syntax differs (NovelAI's emphasis and characters).
+    /// Empty when [prompt] and [negative] serve as they are.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub server_prompt: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub server_negative: String,
     pub width: u32,
     pub height: u32,
     pub duration_ms: u64,
@@ -115,6 +140,43 @@ impl GenInfo {
             return;
         }
         self.loras.push(Lora { name: name.into(), weight, weight_clip, hash: String::new() });
+    }
+
+    /// The prompt with every character's caption after it: what search,
+    /// audience ratings and prompt checks read.
+    pub fn whole_prompt(&self) -> std::borrow::Cow<'_, str> {
+        if self.characters.is_empty() {
+            return std::borrow::Cow::Borrowed(&self.prompt);
+        }
+        let mut s = self.prompt.clone();
+        for c in &self.characters {
+            if !c.prompt.is_empty() {
+                s.push('\n');
+                s.push_str(&c.prompt);
+            }
+        }
+        std::borrow::Cow::Owned(s)
+    }
+
+    /// The prompt to send to another program's server: [server_prompt]
+    /// where the maker's syntax needed converting, else the prompt itself.
+    pub fn prompt_for_server(&self) -> &str {
+        if self.server_prompt.is_empty() { &self.prompt } else { &self.server_prompt }
+    }
+
+    /// The same for the negative prompt.
+    pub fn whole_negative(&self) -> std::borrow::Cow<'_, str> {
+        if self.characters.iter().all(|c| c.negative.is_empty()) {
+            return std::borrow::Cow::Borrowed(&self.negative);
+        }
+        let mut s = self.negative.clone();
+        for c in &self.characters {
+            if !c.negative.is_empty() {
+                s.push('\n');
+                s.push_str(&c.negative);
+            }
+        }
+        std::borrow::Cow::Owned(s)
     }
 
     /// Space-joined model names, for the search index.
@@ -264,17 +326,29 @@ pub fn parse(raw: RawMeta) -> GenInfo {
         ..Default::default()
     };
     let mut texts = raw.texts;
-    expand_embedded(&mut texts);
+    // NovelAI's Comment JSON has a `prompt` too: not one to lift out.
+    let novelai = novelai::comment(&texts);
+    if novelai.is_none() {
+        expand_embedded(&mut texts);
+    }
 
     let get = |texts: &[(String, String)], key: &str| -> Option<String> {
         texts.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v.clone())
     };
 
-    // InvokeAI first: it never co-exists with the others.
-    if let Some(m) = get(&texts, "invokeai_metadata") {
-        invoke::parse_v3(&m, &mut info);
-    } else if let Some(m) = get(&texts, "sd-metadata") {
-        invoke::parse_legacy(&m, &mut info);
+    // NovelAI first: in a WebP its JSON sits in UserComment, where the
+    // A1111 reader below would otherwise take it for generic settings.
+    if let Some(map) = &novelai {
+        novelai::parse(&texts, map, &mut info);
+    }
+
+    // InvokeAI: it never co-exists with the others.
+    if info.source.is_empty() {
+        if let Some(m) = get(&texts, "invokeai_metadata") {
+            invoke::parse_v3(&m, &mut info);
+        } else if let Some(m) = get(&texts, "sd-metadata") {
+            invoke::parse_legacy(&m, &mut info);
+        }
     }
 
     // ComfyUI: API-format graph in `prompt`, UI graph in `workflow`.
@@ -299,18 +373,6 @@ pub fn parse(raw: RawMeta) -> GenInfo {
             } else if !t.is_empty() {
                 a1111::parse(&p, &mut info);
             }
-        }
-    }
-
-    // NovelAI: Description = prompt, Comment = JSON settings.
-    if info.source.is_empty() {
-        let software = get(&texts, "Software").unwrap_or_default();
-        if software.contains("NovelAI") {
-            a1111::parse_novelai(
-                get(&texts, "Description").as_deref().unwrap_or(""),
-                get(&texts, "Comment").as_deref().unwrap_or(""),
-                &mut info,
-            );
         }
     }
 

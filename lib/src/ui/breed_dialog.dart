@@ -33,7 +33,7 @@ Future<void> openBreed(BuildContext context, AppState state, List<MediaItem> par
   }
   final List<GenInfo> infos;
   try {
-    infos = await Future.wait([for (final p in pictures) state.metadata(p)]);
+    infos = [for (final info in await Future.wait([for (final p in pictures) state.metadata(p)])) info.forServer()];
   } catch (e) {
     if (context.mounted) toast(context, 'Could not read the pictures');
     return;

@@ -31,10 +31,18 @@ pub fn read_raw(path: &Path) -> io::Result<RawMeta> {
 
     if magic.starts_with(b"\x89PNG\r\n\x1a\n") {
         read_png(&mut r, &mut out)?;
+        // Nothing in the text chunks: NovelAI (and A1111's stealth
+        // extension) also hide it in the alpha channel.
+        if !has_gen_key(&out) {
+            out.texts.extend(super::stealth::from_png(path));
+        }
     } else if magic.starts_with(&[0xFF, 0xD8]) {
         read_jpeg(&mut r, &mut out)?;
     } else if n >= 12 && &magic[0..4] == b"RIFF" && &magic[8..12] == b"WEBP" {
-        read_webp(&mut r, len, &mut out)?;
+        let alpha = read_webp(&mut r, len, &mut out)?;
+        if alpha && !has_gen_key(&out) {
+            out.texts.extend(super::stealth::from_webp(path));
+        }
     } else if crate::jxl::is_jxl(magic) {
         read_jxl(&mut r, len, &mut out)?;
     } else if magic.starts_with(b"GIF8") && n >= 10 {
@@ -417,7 +425,9 @@ fn read_jpeg(r: &mut Rd, out: &mut RawMeta) -> io::Result<()> {
 
 // ---------------------------------------------------------------- WebP
 
-fn read_webp(r: &mut Rd, file_len: u64, out: &mut RawMeta) -> io::Result<()> {
+/// Reads a WebP's size and EXIF text; true when it has an alpha channel.
+fn read_webp(r: &mut Rd, file_len: u64, out: &mut RawMeta) -> io::Result<bool> {
+    let mut alpha = false;
     let mut pos = 12u64;
     let mut hdr = [0u8; 8];
     while pos + 8 <= file_len {
@@ -430,6 +440,7 @@ fn read_webp(r: &mut Rd, file_len: u64, out: &mut RawMeta) -> io::Result<()> {
             b"VP8X" if size >= 10 => {
                 let mut b = [0u8; 10];
                 r.read_exact(&mut b)?;
+                alpha |= b[0] & 0x10 != 0;
                 out.width = 1 + u32::from_le_bytes([b[4], b[5], b[6], 0]);
                 out.height = 1 + u32::from_le_bytes([b[7], b[8], b[9], 0]);
             }
@@ -448,6 +459,7 @@ fn read_webp(r: &mut Rd, file_len: u64, out: &mut RawMeta) -> io::Result<()> {
                     let bits = u32::from_le_bytes([b[1], b[2], b[3], b[4]]);
                     out.width = (bits & 0x3fff) + 1;
                     out.height = ((bits >> 14) & 0x3fff) + 1;
+                    alpha |= bits & (1 << 28) != 0;
                 }
             }
             b"EXIF" if size <= MAX_BLOB => {
@@ -459,7 +471,7 @@ fn read_webp(r: &mut Rd, file_len: u64, out: &mut RawMeta) -> io::Result<()> {
         }
         pos += 8 + size + (size & 1);
     }
-    Ok(())
+    Ok(alpha)
 }
 
 // ---------------------------------------------------------------- MP4 / MOV
